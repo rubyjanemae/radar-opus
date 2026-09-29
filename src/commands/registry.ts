@@ -19,6 +19,8 @@ export interface Command {
   checked?: () => boolean
   /** Shortcut still fires while typing in an input. */
   allowInInput?: boolean
+  /** CSS selector: the shortcut only fires when the key event target is inside a matching element (menus and the palette still run it). */
+  scope?: string
   /** Hidden from the palette (e.g. arrow-key handlers). */
   hidden?: boolean
   keywords?: string
@@ -93,6 +95,7 @@ export function installKeybindings(): () => void {
     for (const c of commands.values()) {
       if (!c.keys?.includes(combo)) continue
       if (editing && !c.allowInInput) continue
+      if (c.scope && !(e.target instanceof Element && e.target.closest(c.scope))) continue
       if (!isEnabled(c)) continue
       e.preventDefault()
       void c.run()

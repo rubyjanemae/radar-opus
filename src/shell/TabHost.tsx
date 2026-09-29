@@ -1,5 +1,6 @@
 import type { Tab } from '../state/workspace'
 import { RepertoryView } from '../features/repertory/RepertoryView'
+import { RepertoriesView } from '../features/repertory/RepertoriesView'
 import { AnalysisView } from '../features/analysis/AnalysisView'
 import { MateriaMedicaView } from '../features/mm/MateriaMedicaView'
 import { RemedyView } from '../features/mm/RemedyView'
@@ -13,6 +14,7 @@ export function TabHost({ tab }: { tab: Tab }) {
   return (
     <ErrorBoundary label="This document">
       {tab.kind === 'repertory' && <RepertoryView tab={tab} />}
+      {tab.kind === 'repertories' && <RepertoriesView tab={tab} />}
       {tab.kind === 'analysis' && <AnalysisView tab={tab} />}
       {tab.kind === 'materia-medica' && <MateriaMedicaView tab={tab} />}
       {tab.kind === 'remedy' && <RemedyView tab={tab} />}

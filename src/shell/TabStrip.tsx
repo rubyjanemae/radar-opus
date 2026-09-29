@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { BookOpen, BarChart3, BookText, FlaskConical, Users, User, Search, Network, Pin, X, Plus } from 'lucide-react'
+import { BookOpen, Library, BarChart3, BookText, FlaskConical, Users, User, Search, Network, Pin, X, Plus } from 'lucide-react'
 import { useCatalog } from '../data/CatalogContext'
 import { actions, useApp } from '../state/store'
 import type { NewTab, Tab } from '../state/workspace'
@@ -7,7 +7,7 @@ import { useContextMenu } from '../ui/Menu'
 import { tabTitle } from './tabTitle'
 
 const ICONS = {
-  repertory: BookOpen, analysis: BarChart3, 'materia-medica': BookText, remedy: FlaskConical,
+  repertory: BookOpen, repertories: Library, analysis: BarChart3, 'materia-medica': BookText, remedy: FlaskConical,
   patients: Users, patient: User, search: Search, families: Network,
 } as const
 

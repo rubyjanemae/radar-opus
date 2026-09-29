@@ -279,6 +279,14 @@ export const actions = {
     })
     set(s => s.activeConsultationId && !s.consultations[s.activeConsultationId] ? { activeConsultationId: null, activeClipboardId: null } : {})
   },
+  /** Insert (or replace) whole patients and consultations in one undo step (import, duplicate, restore). */
+  insertCaseData(patients: Patient[], consultations: Consultation[]) {
+    if (!patients.length && !consultations.length) return
+    mutateCase(set, s => ({
+      patients: { ...s.patients, ...Object.fromEntries(patients.map(p => [p.id, p])) },
+      consultations: { ...s.consultations, ...Object.fromEntries(consultations.map(c => [c.id, c])) },
+    }))
+  },
 
   // consultations
   createConsultation(patientId: string, patch: Partial<Consultation> = {}): string {
@@ -315,6 +323,7 @@ export const actions = {
     return cb.id
   },
   renameClipboard(id: string, name: string) { mutateCase(set, s => updateClipboard(s, id, cb => ({ ...cb, name }))) },
+  recolorClipboard(id: string, color: string) { mutateCase(set, s => updateClipboard(s, id, cb => cb.color === color ? cb : ({ ...cb, color }))) },
   clearClipboard(id: string) { mutateCase(set, s => updateClipboard(s, id, cb => ({ ...cb, symptoms: [] }))) },
   deleteClipboard(id: string) {
     mutateCase(set, s => updateConsultation(s, findConsultationOfClipboard(s, id), c => c.clipboards.length <= 1 ? null : ({
@@ -339,6 +348,13 @@ export const actions = {
       return fresh.length ? { ...cb, symptoms: [...cb.symptoms, ...fresh] } : cb
     }))
     return added
+  },
+  /** Add one fully specified symptom (take with options, combined sub-rubrics) in one undo step. Returns its id. */
+  addSymptom(clipboardId: string, fields: Partial<Omit<Symptom, 'id' | 'addedAt'>> & { rubrics: RubricRef[] }): string | null {
+    const sym: Symptom = { combine: 'union', weight: 1, eliminatory: false, exclusive: false, group: null, causal: false, ...fields, id: uid('s'), addedAt: Date.now() }
+    let ok = false
+    mutateCase(set, st => updateClipboard(st, clipboardId, cb => { ok = true; return { ...cb, symptoms: [...cb.symptoms, sym] } }))
+    return ok ? sym.id : null
   },
   updateSymptom(clipboardId: string, symptomId: string, patch: Partial<Symptom>) {
     mutateCase(set, s => updateClipboard(s, clipboardId, cb => ({ ...cb, symptoms: cb.symptoms.map(x => x.id === symptomId ? { ...x, ...patch } : x) })))
@@ -407,6 +423,33 @@ export const actions = {
     }))
   },
   setSelectedSymptoms(ids: string[]) { set(() => ({ selectedSymptomIds: ids })) },
+  /** Patch several symptoms in one undo step; patch may be a function of the symptom. */
+  updateSymptoms(clipboardId: string, symptomIds: string[], patch: Partial<Symptom> | ((s: Symptom) => Partial<Symptom>)) {
+    const ids = new Set(symptomIds)
+    if (!ids.size) return
+    mutateCase(set, s => updateClipboard(s, clipboardId, cb => ({
+      ...cb, symptoms: cb.symptoms.map(x => ids.has(x.id) ? { ...x, ...(typeof patch === 'function' ? patch(x) : patch) } : x),
+    })))
+  },
+  /** Reorder a clipboard to the given id order (ids not listed keep their relative order at the end). */
+  reorderSymptoms(clipboardId: string, orderedIds: string[]) {
+    mutateCase(set, s => updateClipboard(s, clipboardId, cb => {
+      const byId = new Map(cb.symptoms.map(x => [x.id, x]))
+      const seen = new Set<string>()
+      const list: Symptom[] = []
+      for (const id of orderedIds) { const x = byId.get(id); if (x && !seen.has(id)) { list.push(x); seen.add(id) } }
+      for (const x of cb.symptoms) if (!seen.has(x.id)) list.push(x)
+      return list.every((x, i) => x === cb.symptoms[i]) ? cb : { ...cb, symptoms: list }
+    }))
+  },
+  /** Re-insert symptoms at positions (used to undo a removal without touching later edits). */
+  insertSymptoms(clipboardId: string, items: { symptom: Symptom; index: number }[]) {
+    mutateCase(set, s => updateClipboard(s, clipboardId, cb => {
+      const list = cb.symptoms.filter(x => !items.some(it => it.symptom.id === x.id))
+      for (const it of [...items].sort((a, b) => a.index - b.index)) list.splice(Math.min(it.index, list.length), 0, it.symptom)
+      return { ...cb, symptoms: list }
+    }))
+  },
 
   // analysis options
   setAnalysis(consultationId: string, patch: Partial<AnalysisOptions>) {
@@ -426,6 +469,7 @@ function sameTarget(a: Tab, b: Tab): boolean {
   if (a.kind !== b.kind) return false
   switch (a.kind) {
     case 'repertory': return false
+    case 'repertories': return true
     case 'analysis': return a.consultationId === (b as typeof a).consultationId
     case 'materia-medica': return true
     case 'remedy': return a.remedyId === (b as typeof a).remedyId

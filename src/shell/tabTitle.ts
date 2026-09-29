@@ -10,6 +10,8 @@ export function tabTitle(tab: Tab, catalog: Catalog, s: Pick<AppState, 'patients
       if (!rep) return { title: info?.title ?? tab.repertory }
       return { title: rep.text(rep.chapterRoot(tab.rubric)), subtitle: info?.title }
     }
+    case 'repertories':
+      return { title: 'Repertories', subtitle: 'Table of contents' }
     case 'analysis': {
       const c = s.consultations[tab.consultationId]
       const p = c ? s.patients[c.patientId] : null
@@ -26,7 +28,8 @@ export function tabTitle(tab: Tab, catalog: Catalog, s: Pick<AppState, 'patients
       return { title: p ? `${p.lastName}, ${p.firstName}` : 'Deleted patient' }
     }
     case 'search':
-      return { title: tab.query ? `“${tab.query}”` : 'Find', subtitle: 'Search' }
+      if (tab.mode === 'remedy') return tab.remedyId != null ? { title: catalog.remedy(tab.remedyId).abbrev, subtitle: 'Remedy search' } : { title: 'Remedy search' }
+      return { title: tab.query ? `“${tab.query}”` : 'Search', subtitle: 'Search' }
     case 'families':
       return { title: 'Families & kingdoms' }
   }

@@ -1,10 +1,16 @@
 import type { Catalog } from '../data/catalog'
+import * as analysis from './analysis/commands'
+import * as clipboard from './clipboard/commands'
+import * as repertory from './repertory/commands'
+import * as search from './search/commands'
+import * as command from './command/commands'
+import * as patients from './patients/commands'
 
 /**
  * Each feature exports `register(catalog)` from its commands.ts, which registers
  * its commands and dialogs. Add new features here.
  */
-const features: { register: (catalog: Catalog) => void }[] = []
+const features: { register: (catalog: Catalog) => void }[] = [analysis, clipboard, repertory, search, command, patients]
 
 export function registerFeatureCommands(catalog: Catalog) {
   for (const f of features) f.register(catalog)

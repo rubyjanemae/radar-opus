@@ -36,6 +36,8 @@ export type StrategyId =
   | 'sum-degrees'
   | 'sum-symptoms'
   | 'weighted'
+  | 'small-rubrics'
+  /** Small rubrics + small remedies (id kept for saved cases). */
   | 'small-remedies'
   | 'kent'
   | 'boenninghausen'
@@ -52,4 +54,14 @@ export interface AnalysisOptions {
   minCoverage: number
   /** Number of remedies shown. */
   limit: number
+  /** Use symptom intensity (x1..x4) in the score; when false every scored symptom counts x1. Default true. */
+  useIntensity?: boolean
+  /** Keep excluded remedies in their sorted position (greyed, unranked) instead of hiding them. Default false. */
+  showExcluded?: boolean
+  /** Remedies to highlight in the result (family highlight); display only, does not change scores. */
+  highlight?: number[] | null
+  /** Human label for `remedyFilter` (e.g. "Solanaceae"), shown in the analysis toolbar. */
+  filterLabel?: string | null
+  /** Human label for `highlight`. */
+  highlightLabel?: string | null
 }

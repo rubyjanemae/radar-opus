@@ -1,18 +1,53 @@
 import type { RubricRef } from '../data/types'
 
-export type TabKind = 'repertory' | 'analysis' | 'materia-medica' | 'remedy' | 'patients' | 'patient' | 'search' | 'families'
+export type TabKind = 'repertory' | 'analysis' | 'materia-medica' | 'remedy' | 'patients' | 'patient' | 'search' | 'families' | 'repertories'
 
 export interface TabBase { id: string; kind: TabKind; pinned?: boolean }
-export interface RepertoryTab extends TabBase { kind: 'repertory'; repertory: string; rubric: number; back: number[]; forward: number[] }
-export interface AnalysisTab extends TabBase { kind: 'analysis'; consultationId: string }
+export interface RepertoryTab extends TabBase {
+  kind: 'repertory'; repertory: string; rubric: number; back: number[]; forward: number[]
+  /** Space cycle: 'count' hides remedies in the book view (remedy style comes from settings). */
+  display?: 'count' | 'remedies'
+}
+/** Table of contents of the installed repertories. */
+export interface RepertoriesTab extends TabBase { kind: 'repertories'; selected?: string }
+export type AnalysisViewMode = 'grid' | 'bars' | 'cards'
+export interface AnalysisTab extends TabBase {
+  kind: 'analysis'; consultationId: string
+  /** Result display (default grid). */
+  view?: AnalysisViewMode
+  /** Remedy shown in the drill-down panel. */
+  remedy?: number | null
+}
 export interface MateriaMedicaTab extends TabBase { kind: 'materia-medica'; remedyId: number | null; query: string }
 export interface RemedyTab extends TabBase { kind: 'remedy'; remedyId: number }
 export interface PatientsTab extends TabBase { kind: 'patients' }
-export interface PatientTab extends TabBase { kind: 'patient'; patientId: string }
-export interface SearchTab extends TabBase { kind: 'search'; query: string; repertories: string[] }
+export interface PatientTab extends TabBase {
+  kind: 'patient'; patientId: string
+  /** Consultation shown in the editor (default: the latest). */
+  consultationId?: string | null
+  /** Sub-view: consultations timeline + editor, or the patient's details. */
+  section?: 'consultations' | 'details'
+}
+export interface SearchTab extends TabBase {
+  kind: 'search'; query: string
+  /** Repertories searched; for scope 'all' this is ignored (every installed repertory). */
+  repertories: string[]
+  /** 'text' = F4 word search (default), 'remedy' = F5 remedy search. */
+  mode?: 'text' | 'remedy'
+  scope?: 'repertory' | 'all' | 'chapter'
+  /** Chapter root rubric id in repertories[0] when scope is 'chapter'. */
+  chapter?: number
+  /** Hide results whose parent rubric also matches. */
+  collapse?: boolean
+  // remedy search
+  remedyId?: number | null
+  minGrade?: number
+  maxSize?: number
+  maxCo?: number
+}
 export interface FamiliesTab extends TabBase { kind: 'families'; group: string | null }
 
-export type Tab = RepertoryTab | AnalysisTab | MateriaMedicaTab | RemedyTab | PatientsTab | PatientTab | SearchTab | FamiliesTab
+export type Tab = RepertoryTab | RepertoriesTab | AnalysisTab | MateriaMedicaTab | RemedyTab | PatientsTab | PatientTab | SearchTab | FamiliesTab
 
 export interface Bookmark {
   id: string

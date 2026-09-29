@@ -66,6 +66,16 @@ export function Toolbar() {
             title={`${cb.name} (${cb.symptoms.length})${i < 9 ? ` — ${formatKeys(`Alt+${i + 1}`)}` : ''}`}
             aria-pressed={cb.id === activeClipboardId}
             onClick={() => actions.setActiveClipboard(cb.id)}
+            onDragOver={e => { if (e.dataTransfer.types.includes('application/x-rubric-ref')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('drop') } }}
+            onDragLeave={e => e.currentTarget.classList.remove('drop')}
+            onDrop={e => {
+              e.currentTarget.classList.remove('drop')
+              const refs = e.dataTransfer.getData('application/x-rubric-ref').split(/[\s,]+/).filter(r => /^[\w.-]+:\d+$/.test(r))
+              if (!refs.length) return
+              e.preventDefault()
+              const n = actions.addRubrics(refs, { clipboardId: cb.id })
+              actions.toast(n ? `Added ${n} rubric${n === 1 ? '' : 's'} to ${cb.name}` : `Already in ${cb.name}`, n ? 'success' : 'info')
+            }}
           >
             {i + 1}<sup>{cb.symptoms.length || ''}</sup>
           </button>
