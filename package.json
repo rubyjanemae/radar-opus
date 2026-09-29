@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc -b",
+    "build:data": "node scripts/build-data.mjs"
   },
   "dependencies": {
     "fflate": "^0.8.3",
@@ -31,5 +35,6 @@
     "typescript": "~6.0.2",
     "vite": "^8.3.0",
     "vitest": "^5.0.2"
-  }
+  },
+  "license": "GPL-3.0-or-later"
 }

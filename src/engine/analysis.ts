@@ -16,6 +16,8 @@ export interface ResolvedSymptom {
   /** Remedies in the (combined) rubric. */
   size: number
   missing: boolean
+  /** Symptoms merged into this column through a shared group letter (length 1 when ungrouped). */
+  members: Symptom[]
 }
 
 export interface AnalysisRow {
@@ -83,7 +85,36 @@ export function resolveSymptom(src: RubricSource, symptom: Symptom, clipboardId:
     }
   }
   const label = symptom.label || symptom.rubrics.map(r => src.label(r)).join(symptom.combine === 'intersection' ? ' ∩ ' : ' ∪ ')
-  return { symptom, clipboardId, label, grades, size: grades.size, missing: present.length < symptom.rubrics.length }
+  return { symptom, clipboardId, label, grades, size: grades.size, missing: present.length < symptom.rubrics.length, members: [symptom] }
+}
+
+/** Merge symptoms sharing a group letter into one column: union of remedies at max grade, max weight. */
+export function applyGroups(list: ResolvedSymptom[]): ResolvedSymptom[] {
+  const out: ResolvedSymptom[] = []
+  const byGroup = new Map<string, ResolvedSymptom>()
+  for (const s of list) {
+    const key = s.symptom.group ? `${s.clipboardId}:${s.symptom.group}` : null
+    if (!key) { out.push(s); continue }
+    const g = byGroup.get(key)
+    if (!g) {
+      const copy: ResolvedSymptom = { ...s, grades: new Map(s.grades), label: `[${s.symptom.group}] ${s.label}` }
+      byGroup.set(key, copy)
+      out.push(copy)
+      continue
+    }
+    for (const [rem, grade] of s.grades) g.grades.set(rem, Math.max(g.grades.get(rem) ?? 0, grade) as Grade)
+    g.size = g.grades.size
+    g.members = [...g.members, s.symptom]
+    g.label = `${g.label} + ${s.label}`
+    g.missing = g.missing || s.missing
+    g.symptom = {
+      ...g.symptom,
+      weight: Math.max(g.symptom.weight, s.symptom.weight) as Symptom['weight'],
+      eliminatory: g.symptom.eliminatory || s.symptom.eliminatory,
+      exclusive: g.symptom.exclusive && s.symptom.exclusive,
+    }
+  }
+  return out
 }
 
 function points(strategy: StrategyId, grade: number, s: ResolvedSymptom): number {
@@ -123,8 +154,10 @@ function compare(strategy: StrategyId, a: AnalysisRow, b: AnalysisRow): number {
 
 export function analyze(src: RubricSource, clipboards: Clipboard[], options: AnalysisOptions): AnalysisResult {
   const chosen = clipboards.filter(cb => options.clipboardIds.includes(cb.id))
-  const symptoms = chosen.flatMap(cb => cb.symptoms.map(s => resolveSymptom(src, s, cb.id)))
-  const active = symptoms.map((s, i) => ({ s, i })).filter(({ s }) => s.symptom.weight > 0)
+  const symptoms = applyGroups(chosen.flatMap(cb => cb.symptoms.map(s => resolveSymptom(src, s, cb.id))))
+  const excludedBySymptom = new Set<number>()
+  for (const s of symptoms) if (s.symptom.exclusive && s.symptom.weight > 0) for (const rem of s.grades.keys()) excludedBySymptom.add(rem)
+  const active = symptoms.map((s, i) => ({ s, i })).filter(({ s }) => s.symptom.weight > 0 && !s.symptom.exclusive)
   const eliminatory = active.filter(({ s }) => s.symptom.eliminatory)
   const allow = options.remedyFilter ? new Set(options.remedyFilter) : null
   const excluded = new Set(options.excludedRemedies)
@@ -132,7 +165,7 @@ export function analyze(src: RubricSource, clipboards: Clipboard[], options: Ana
   const rows = new Map<number, AnalysisRow>()
   for (const { s, i } of active) {
     for (const [rem, g] of s.grades) {
-      if (excluded.has(rem) || (allow && !allow.has(rem))) continue
+      if (excluded.has(rem) || excludedBySymptom.has(rem) || (allow && !allow.has(rem))) continue
       let row = rows.get(rem)
       if (!row) {
         row = { remedyId: rem, rank: 0, score: 0, coverage: 0, degrees: 0, grades: new Array(symptoms.length).fill(0), contributions: new Array(symptoms.length).fill(0) }

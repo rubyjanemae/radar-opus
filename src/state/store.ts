@@ -6,8 +6,8 @@ import type { Consultation, Patient, Prescription } from './patients'
 import { DEFAULT_LAYOUT, DEFAULT_SETTINGS } from './workspace'
 import type { Bookmark, Layout, NewTab, Settings, Tab } from './workspace'
 
-export const CLIPBOARD_COLORS = ['#2f6fdb', '#d9534f', '#2e9e5b', '#e0a100', '#8e44ad', '#16a2b8', '#e8680c', '#6c757d', '#c2185b', '#5d4037']
-export const MAX_CLIPBOARDS = 10
+export const CLIPBOARD_COLORS = ['#2f6fdb', '#d9534f', '#2e9e5b', '#e0a100', '#8e44ad', '#16a2b8', '#e8680c', '#6c757d', '#c2185b', '#5d4037', '#00897b', '#7cb342']
+export const MAX_CLIPBOARDS = 12
 
 export const DEFAULT_ANALYSIS: AnalysisOptions = {
   strategy: 'sum-symptoms-degrees',
@@ -333,7 +333,7 @@ export const actions = {
     mutateCase(set, st => updateClipboard(st, cbId, cb => {
       const have = new Set(cb.symptoms.flatMap(x => x.rubrics.length === 1 ? x.rubrics : []))
       const fresh: Symptom[] = refs.filter(r => !have.has(r)).map(r => ({
-        id: uid('s'), rubrics: [r], combine: 'union', weight: opts.weight ?? 1, eliminatory: false, causal: false, addedAt: Date.now(),
+        id: uid('s'), rubrics: [r], combine: 'union', weight: opts.weight ?? 1, eliminatory: false, exclusive: false, group: null, causal: false, addedAt: Date.now(),
       }))
       added = fresh.length
       return fresh.length ? { ...cb, symptoms: [...cb.symptoms, ...fresh] } : cb

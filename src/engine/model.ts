@@ -11,8 +11,12 @@ export interface Symptom {
   /** How combined rubrics merge: union keeps every remedy (max grade), intersection keeps only shared remedies (min grade). */
   combine: 'union' | 'intersection'
   weight: Weight
-  /** Remedy must appear in this symptom to stay in the result. */
+  /** Eliminative: only remedies present in this symptom stay in the result. */
   eliminatory: boolean
+  /** Excluding ("exclusive"): every remedy present in this symptom is removed from the result. */
+  exclusive: boolean
+  /** Group letter a–z: symptoms sharing a letter are calculated as one symptom (max grade). */
+  group: string | null
   /** Counts as a causation / never-well-since symptom (shown with a marker, optional extra weighting). */
   causal: boolean
   label?: string
