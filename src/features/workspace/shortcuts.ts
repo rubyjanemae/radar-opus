@@ -1,12 +1,14 @@
 import type { Command } from '../../commands/registry'
-import { formatKeys } from '../../commands/registry'
+import { formatKeys, normaliseChord, usableKeys } from '../../commands/registry'
 
 export interface ShortcutRow {
   id: string
   title: string
   category: string
-  /** Shortcuts in registry form ("Mod+Shift+K"); empty for commands without one. */
+  /** Shortcuts in registry form ("Mod+Shift+K"); empty for commands without one. Never a browser-reserved chord. */
   keys: string[]
+  /** Where the keys work when they are limited to one view ("in the clipboard list"). */
+  scope?: string
 }
 export interface ShortcutGroup { category: string; rows: ShortcutRow[] }
 
@@ -56,13 +58,65 @@ export const GENERAL_KEYS: ReferenceSection = {
   rows: [
     { keys: ['F10', 'Alt'], title: 'Focus the menu bar' },
     { keys: ['Shift+F10', 'Menu'], title: 'Open the context menu of the focused item' },
-    { keys: ['0–4'], title: 'Set the intensity of the selected clipboard symptoms' },
     { keys: ['Esc'], title: 'Close the dialog, menu or overlay' },
     { keys: ['Tab', 'Shift+Tab'], title: 'Move between controls' },
   ],
 }
 
-export const REFERENCE_SECTIONS = [TAKE_LANGUAGE, REPERTORY_KEYS, GENERAL_KEYS]
+export const CLIPBOARD_KEYS: ReferenceSection = {
+  id: 'clipboard',
+  title: 'In the clipboard list',
+  rows: [
+    { keys: ['0–4'], title: 'Set the intensity of the selected symptoms', detail: '0 keeps a symptom out of the score.' },
+    { keys: ['↑', '↓'], title: 'Move between symptoms; Shift extends the selection' },
+    { keys: ['Del'], title: 'Remove the selected symptoms' },
+  ],
+}
+
+export const REFERENCE_SECTIONS = [TAKE_LANGUAGE, REPERTORY_KEYS, CLIPBOARD_KEYS, GENERAL_KEYS]
+
+/** Human names for the view scopes commands are bound to (CSS selectors in the registry). */
+export const SCOPE_LABELS: Record<string, string> = {
+  '.cbp-list': 'in the clipboard list',
+  '.cbp': 'in the clipboard panel',
+  '.rv': 'in the repertory',
+  '.srch-results': 'in search results',
+  '.fam-view': 'in families & kingdoms',
+}
+
+export function scopeLabel(c: Pick<Command, 'scope' | 'scopeLabel'>): string | undefined {
+  if (c.scopeLabel) return c.scopeLabel
+  if (!c.scope) return undefined
+  return SCOPE_LABELS[c.scope] ?? 'in its view'
+}
+
+/**
+ * Browser shortcuts Radar Opus takes over while it has focus, with what the browser would have done.
+ * Listed in the shortcuts reference so nobody is surprised that F5 does not reload.
+ */
+export const BROWSER_DEFAULTS: Record<string, string> = {
+  F1: 'browser help', F3: 'find next on page', F5: 'reload the page', F6: 'focus the address bar', F7: 'caret browsing',
+  'Mod+D': 'bookmark this page', 'Mod+Shift+D': 'bookmark all tabs', 'Mod+J': 'downloads', 'Mod+Shift+C': 'inspect element',
+  'Mod+F': 'find on page', 'Mod+P': 'print', 'Mod+K': 'search the web', 'Mod+B': 'bookmarks sidebar', 'Mod+Shift+B': 'bookmarks bar',
+  'Mod+E': 'search the web', 'Mod+S': 'save the page', 'Mod+H': 'history', 'Mod+Shift+M': 'switch profile',
+  'Mod+,': 'browser settings', 'Mod+=': 'zoom in', 'Mod++': 'zoom in', 'Mod+-': 'zoom out', 'Mod+0': 'reset zoom',
+  'Alt+ArrowLeft': 'back', 'Alt+ArrowRight': 'forward', 'Mod+[': 'back', 'Mod+]': 'forward', 'Mod+Shift+F': 'full screen',
+}
+
+/** Reference rows for the browser shortcuts that registered commands override. */
+export function overriddenBrowserKeys(cmds: Command[]): ReferenceSection {
+  const rows = new Map<string, ReferenceRow>()
+  for (const c of cmds) {
+    for (const k of usableKeys(c.keys)) {
+      const meaning = BROWSER_DEFAULTS[normaliseChord(k)]
+      if (!meaning) continue
+      const prev = rows.get(k)
+      if (prev) { if (!prev.title.includes(c.title.replace(/…$/, ''))) prev.title += `; ${c.title.replace(/…$/, '')}` }
+      else rows.set(k, { keys: [formatKeys(k)], title: c.title.replace(/…$/, ''), detail: `Instead of the browser's ${meaning}${c.scope ? ` (${scopeLabel(c)})` : ''}.` })
+    }
+  }
+  return { id: 'browser', title: 'Browser keys used by Radar Opus', rows: [...rows.values()] }
+}
 
 function categoryRank(c: string) {
   const i = CATEGORY_ORDER.indexOf(c)
@@ -114,15 +168,17 @@ export function shortcutGroups(cmds: Command[], query = '', opts: { includeUnbou
   const byCat = new Map<string, ShortcutRow[]>()
   const seen = new Set<string>()
   for (const c of cmds) {
-    const keys = c.keys ?? []
+    // chords the browser keeps for itself never reach the page: leave them out
+    const keys = usableKeys(c.keys)
     if (!keys.length && !opts.includeUnbound) continue
     if (!matchesQuery({ ...c, keys }, query)) continue
     // one row per title+keys (e.g. strategy variants with identical labels stay distinct by id when unbound)
-    const sig = `${c.category}|${c.title}|${keys.join(',')}`
+    const scope = scopeLabel(c)
+    const sig = `${c.category}|${c.title}|${keys.join(',')}|${scope ?? ''}`
     if (keys.length && seen.has(sig)) continue
     seen.add(sig)
     const list = byCat.get(c.category) ?? []
-    list.push({ id: c.id, title: c.title, category: c.category, keys })
+    list.push({ id: c.id, title: c.title, category: c.category, keys, ...(scope && keys.length ? { scope } : {}) })
     byCat.set(c.category, list)
   }
   return [...byCat.entries()]

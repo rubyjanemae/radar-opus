@@ -195,9 +195,9 @@ function ChipStrip({ consultation, active, openMenu, openMenuAt }: { consultatio
       const p = JSON.parse(sym) as SymptomDragPayload
       if (p.clipboardId === cb.id) return
       const copy = copyModifier(e)
-      actions.transferSymptoms(p.clipboardId, cb.id, p.ids, copy)
+      const { transferred } = actions.transferSymptoms(p.clipboardId, cb.id, p.ids, copy)
       if (!copy) actions.setSelectedSymptoms([])
-      actions.toast(`${p.ids.length} symptom${p.ids.length === 1 ? '' : 's'} ${copy ? 'copied' : 'moved'} to ${cb.name}`, 'success')
+      if (transferred) actions.toast(`${transferred} symptom${transferred === 1 ? '' : 's'} ${copy ? 'copied' : 'moved'} to ${cb.name}`, 'success')
       return
     }
     const refsIn = parseRubricDrop(e.dataTransfer.getData(RUBRIC_MIME))

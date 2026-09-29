@@ -123,14 +123,14 @@ export function deletePatient(patientId: string) {
   const s = st()
   const wasActive = s.activeConsultationId ? s.consultations[s.activeConsultationId]?.patientId === patientId : false
   const activeId = s.activeConsultationId
-  actions.deletePatient(patientId)
-  for (const t of st().tabs) {
-    if ((t.kind === 'patient' && t.patientId === patientId) || (t.kind === 'analysis' && snap.consultations.some(c => c.id === t.consultationId))) actions.closeTab(t.id)
-  }
+  actions.deletePatient(patientId) // also closes the patient's tabs (undo reopens them)
+  const entry = st().past[st().past.length - 1]
   actions.toast(`Deleted ${patientName(snap.patient)}`, 'info', {
     label: 'Undo',
     run: () => {
       if (st().patients[patientId]) return
+      // Nothing happened since: the store undo also restores the closed tabs and the case focus.
+      if (st().past[st().past.length - 1] === entry) { actions.undo(); return }
       actions.insertCaseData([snap.patient], snap.consultations)
       if (wasActive && activeId) actions.setActiveConsultation(activeId)
     },
@@ -215,15 +215,16 @@ export function deleteConsultation(consultationId: string) {
   const c = s.consultations[consultationId]
   if (!c) return
   const wasActive = s.activeConsultationId === consultationId
-  actions.deleteConsultation(consultationId)
+  actions.deleteConsultation(consultationId) // also closes its analysis tab (undo reopens it)
+  const entry = st().past[st().past.length - 1]
   for (const t of st().tabs) {
-    if (t.kind === 'analysis' && t.consultationId === consultationId) actions.closeTab(t.id)
     if (t.kind === 'patient' && t.consultationId === consultationId) actions.updateTab<PatientTab>(t.id, { consultationId: null })
   }
   actions.toast(`Deleted consultation of ${c.date}`, 'info', {
     label: 'Undo',
     run: () => {
       if (st().consultations[consultationId] || !st().patients[c.patientId]) return
+      if (st().past[st().past.length - 1] === entry) { actions.undo(); return }
       actions.insertCaseData([], [c])
       if (wasActive) actions.setActiveConsultation(consultationId)
     },

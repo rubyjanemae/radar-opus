@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { Catalog } from '../data/catalog'
 import type { RepertoryInfo } from '../data/types'
-import { allCommands, getCommand } from '../commands/registry'
+import { allCommands, BROWSER_RESERVED, displayKey, eventToKeys, getCommand, isReserved, normaliseChord } from '../commands/registry'
 import { registerCoreCommands } from '../commands/core'
-import type { MenuItem } from '../ui/Menu'
+import type { MenuEntry, MenuItem } from '../ui/Menu'
+import { resolveMenuItem } from '../ui/Menu'
 import { buildMenus } from './menus'
 
 const info = (abbrev: string, title: string): RepertoryInfo => ({
@@ -67,5 +68,62 @@ describe('menus', () => {
       }
     }
     expect(clashes).toEqual([])
+  })
+
+  it('never shows a browser-reserved chord as a shortcut (menus, tooltips, palette)', () => {
+    const shown: string[] = []
+    for (const c of allCommands()) {
+      const k = displayKey(c.keys)
+      if (k && isReserved(k)) shown.push(`${c.id}: ${k}`)
+    }
+    expect(shown).toEqual([])
+    const walk = (items: MenuItem[]): string[] => items.flatMap(it => {
+      if ('type' in it && (it.type === 'separator' || it.type === 'label')) return []
+      const r = resolveMenuItem(it as MenuEntry)
+      return [...(r.keys && isReserved(r.keys) ? [`${r.label}: ${r.keys}`] : []), ...(r.submenu ? walk(r.submenu) : [])]
+    })
+    expect(menus.flatMap(m => walk(m.items))).toEqual([])
+  })
+
+  it('lists browser-safe tab keys first', () => {
+    expect(displayKey(getCommand('tab.close')!.keys)).toBe('Alt+W')
+    expect(displayKey(getCommand('tab.next')!.keys)).toBe('Alt+PageDown')
+    expect(displayKey(getCommand('tab.prev')!.keys)).toBe('Alt+PageUp')
+    // Ctrl+Tab never reaches a page, and eventToKeys reports Ctrl as Mod off the Mac
+    for (const id of ['tab.next', 'tab.prev']) expect(getCommand(id)!.keys!.some(k => k.startsWith('Ctrl+'))).toBe(false)
+  })
+
+  it('treats a reserved chord as reserved in every spelling', () => {
+    for (const k of ['Mod+W', 'Mod+1', 'Mod+PageDown', 'Mod+Shift+P']) expect(BROWSER_RESERVED.has(k)).toBe(true)
+    expect(displayKey(['Mod+1', 'Alt+1'])).toBe('Alt+1')
+    expect(displayKey(['Mod+W'])).toBeUndefined()
+  })
+})
+
+describe('shortcut normalisation', () => {
+  const ev = (key: string, mods: Partial<KeyboardEvent> = {}) => ({ key, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods }) as KeyboardEvent
+  it('matches shifted punctuation by its character', () => {
+    expect(eventToKeys(ev('+', { ctrlKey: true, shiftKey: true }))).toBe('Mod++')
+    expect(eventToKeys(ev('?', { shiftKey: true }))).toBe('?')
+    expect(eventToKeys(ev('K', { ctrlKey: true, shiftKey: true }))).toBe('Mod+Shift+K')
+    expect(eventToKeys(ev('F6', { ctrlKey: true, shiftKey: true }))).toBe('Mod+Shift+F6')
+  })
+  it('normalises registered chords the same way', () => {
+    expect(normaliseChord('Shift+?')).toBe('?')
+    expect(normaliseChord('Mod+Shift++')).toBe('Mod++')
+    expect(normaliseChord('Mod+Shift+=')).toBe('Mod+=')
+    expect(normaliseChord('Mod+Shift+K')).toBe('Mod+Shift+K')
+    expect(normaliseChord('+')).toBe('+')
+    // search.open was registered with both "Shift+?" and "?": one key after normalisation
+    expect(getCommand('search.open')!.keys!.filter(k => k === '?')).toHaveLength(1)
+    expect(getCommand('search.open')!.keys).not.toContain('Shift+?')
+  })
+})
+
+describe('clipboard chip on-colour text', () => {
+  it('uses dark text on light fills and white on dark ones', async () => {
+    const { onColor } = await import('./color')
+    for (const light of ['#e0a100', '#2e9e5b', '#16a2b8', '#e8680c', '#7cb342']) expect(onColor(light), light).toBe('#1c2129')
+    for (const dark of ['#2f6fdb', '#8e44ad', '#c2185b', '#5d4037', '#6c757d']) expect(onColor(dark), dark).toBe('#fff')
   })
 })

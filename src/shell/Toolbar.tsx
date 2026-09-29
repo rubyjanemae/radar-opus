@@ -1,11 +1,17 @@
-import { useEffect, useState } from 'react'
+import { memo } from 'react'
 import { ArrowLeft, ArrowRight, ArrowUp, BarChart3, BookText, ClipboardPlus, Network, PanelLeft, PanelRight, PanelBottom, Users, Undo2, Redo2, Bookmark, MoreHorizontal } from 'lucide-react'
-import { formatKeys, getCommand, isEnabled, onCommandsChanged, runCommand } from '../commands/registry'
+import { displayKey, formatKeys, getCommand, runCommand } from '../commands/registry'
+import { useCommandState } from '../commands/useCommandState'
+import type { CommandState } from '../commands/useCommandState'
 import { useCatalog } from '../data/CatalogContext'
 import { actions, useApp, selectActiveTab, selectActiveConsultation } from '../state/store'
 import { QuickFind } from '../features/search/QuickFind'
 import { useContextMenu } from '../ui/Menu'
 import type { MenuItem } from '../ui/Menu'
+import { onColor } from './color'
+
+/** Width below which the repertory picker, clipboard chips and Analyse also fold into "More tools" (shell.css). */
+export const COMPACT_TOOLBAR_QUERY = '(max-width: 760px)'
 
 /** Lower-priority tools that fold into the "More tools" menu in narrow windows (see workspace.css). */
 const OVERFLOW_ITEMS: MenuItem[] = [
@@ -19,67 +25,87 @@ const OVERFLOW_ITEMS: MenuItem[] = [
   { command: 'families.open' },
 ]
 
-function ToolButton({ command, icon: Icon, label, pressed }: { command: string; icon: typeof ArrowLeft; label?: string; pressed?: boolean }) {
+/** Every command the toolbar shows: their enabled/checked flags drive its re-renders. */
+const TOOL_COMMANDS = [
+  'nav.back', 'nav.forward', 'nav.parent', 'rubric.add', 'rubric.bookmark', 'analysis.open', 'edit.undo', 'edit.redo',
+  'patients.open', 'mm.open', 'families.open', 'view.toggleTree', 'view.toggleDock', 'view.toggleClipboard',
+] as const
+
+function ToolButton({ command, icon: Icon, label, state, pressed }: { command: string; icon: typeof ArrowLeft; label?: string; state: CommandState | undefined; pressed?: boolean }) {
   const cmd = getCommand(command)
-  const title = cmd ? `${cmd.title}${cmd.keys?.[0] ? ` (${formatKeys(cmd.keys[0])})` : ''}` : command
+  const key = displayKey(cmd?.keys)
+  const title = cmd ? `${cmd.title}${key ? ` (${formatKeys(key)})` : ''}` : command
   return (
     <button
       className={`tool-btn${label ? ' with-label' : ''}`}
       aria-label={cmd?.title ?? command}
       aria-pressed={pressed}
       title={title}
-      disabled={!cmd || !isEnabled(cmd)}
+      disabled={!cmd || !state?.enabled}
       onClick={() => runCommand(command)}
     >
-      <Icon size={15} />
+      <Icon size={15} aria-hidden />
       {label && <span>{label}</span>}
     </button>
   )
 }
 
-export function Toolbar() {
+export const Toolbar = memo(function Toolbar() {
   const catalog = useCatalog()
-  const [, force] = useState(0)
-  useEffect(() => onCommandsChanged(() => force(x => x + 1)), [])
-  // re-render on state that command enablement depends on
-  const tab = useApp(selectActiveTab)
-  const consultation = useApp(selectActiveConsultation)
+  const cs = useCommandState(TOOL_COMMANDS)
+  const repertory = useApp(s => { const t = selectActiveTab(s); return t?.kind === 'repertory' ? t.repertory : null })
+  const clipboards = useApp(s => selectActiveConsultation(s)?.clipboards ?? null)
   const activeClipboardId = useApp(s => s.activeClipboardId)
-  const layout = useApp(s => s.layout)
-  useApp(s => s.past.length + s.future.length)
   const more = useContextMenu()
+  const currentClip = activeClipboardId ?? clipboards?.[0]?.id
+
+  /** "More tools": the folded low-priority tools, plus the picker, chips and Analyse in a compact toolbar. */
+  const overflowItems = (): MenuItem[] => {
+    if (!window.matchMedia?.(COMPACT_TOOLBAR_QUERY).matches) return OVERFLOW_ITEMS
+    return [
+      { command: 'analysis.open' },
+      { label: 'Open repertory', submenu: catalog.repertoryInfos.map(r => ({ command: `repertory.open.${r.abbrev}`, checked: r.abbrev === repertory })) },
+      ...(clipboards?.length ? [{
+        label: 'Active clipboard',
+        submenu: clipboards.map((cb, i): MenuItem => ({ label: `${i + 1}. ${cb.name} (${cb.symptoms.length})`, checked: cb.id === currentClip, keys: i < 9 ? `Alt+${i + 1}` : undefined, run: () => actions.setActiveClipboard(cb.id) })),
+      }] : []),
+      { type: 'separator' },
+      ...OVERFLOW_ITEMS,
+    ]
+  }
 
   return (
     <div className="toolbar" role="toolbar" aria-label="Main toolbar">
       <div className="tool-group">
-        <ToolButton command="nav.back" icon={ArrowLeft} />
-        <ToolButton command="nav.forward" icon={ArrowRight} />
-        <ToolButton command="nav.parent" icon={ArrowUp} />
+        <ToolButton command="nav.back" icon={ArrowLeft} state={cs['nav.back']} />
+        <ToolButton command="nav.forward" icon={ArrowRight} state={cs['nav.forward']} />
+        <ToolButton command="nav.parent" icon={ArrowUp} state={cs['nav.parent']} />
       </div>
-      <div className="tool-group">
+      <div className="tool-group tool-rep">
         <select
           className="tool-select"
           aria-label="Repertory"
-          value={tab?.kind === 'repertory' ? tab.repertory : ''}
+          value={repertory ?? ''}
           onChange={e => runCommand(`repertory.open.${e.target.value}`)}
         >
-          {tab?.kind !== 'repertory' && <option value="">Repertory…</option>}
+          {repertory == null && <option value="">Repertory…</option>}
           {catalog.repertoryInfos.map(r => <option key={r.abbrev} value={r.abbrev}>{r.title}</option>)}
         </select>
       </div>
       <QuickFind />
       <div className="tool-group">
-        <ToolButton command="rubric.add" icon={ClipboardPlus} label="Take" />
-        <span className="tool-low"><ToolButton command="rubric.bookmark" icon={Bookmark} /></span>
+        <ToolButton command="rubric.add" icon={ClipboardPlus} label="Take" state={cs['rubric.add']} />
+        <span className="tool-low"><ToolButton command="rubric.bookmark" icon={Bookmark} state={cs['rubric.bookmark']} /></span>
       </div>
       <div className="tool-group clip-switch" role="group" aria-label="Active clipboard">
-        {consultation?.clipboards.map((cb, i) => (
+        {clipboards?.map((cb, i) => (
           <button
             key={cb.id}
-            className={`clip-chip${cb.id === (activeClipboardId ?? consultation.clipboards[0].id) ? ' active' : ''}`}
-            style={{ ['--chip' as string]: cb.color }}
+            className={`clip-chip${cb.id === currentClip ? ' active' : ''}`}
+            style={{ ['--chip' as string]: cb.color, ['--chip-fg' as string]: onColor(cb.color) }}
             title={`${cb.name} (${cb.symptoms.length})${i < 9 ? ` — ${formatKeys(`Alt+${i + 1}`)}` : ''}`}
-            aria-pressed={cb.id === activeClipboardId}
+            aria-label={`${cb.name}, ${cb.symptoms.length} symptom${cb.symptoms.length === 1 ? '' : 's'}`}
+            aria-pressed={cb.id === currentClip}
             onClick={() => actions.setActiveClipboard(cb.id)}
             onDragOver={e => { if (e.dataTransfer.types.includes('application/x-rubric-ref')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('drop') } }}
             onDragLeave={e => e.currentTarget.classList.remove('drop')}
@@ -92,35 +118,34 @@ export function Toolbar() {
               actions.toast(n ? `Added ${n} rubric${n === 1 ? '' : 's'} to ${cb.name}` : `Already in ${cb.name}`, n ? 'success' : 'info')
             }}
           >
-            {i + 1}<sup>{cb.symptoms.length || ''}</sup>
+            {i + 1}<sup aria-hidden="true">{cb.symptoms.length || ''}</sup>
           </button>
         ))}
       </div>
-      <div className="tool-group">
-        <ToolButton command="analysis.open" icon={BarChart3} label="Analyse" />
+      <div className="tool-group tool-analyse">
+        <ToolButton command="analysis.open" icon={BarChart3} label="Analyse" state={cs['analysis.open']} />
       </div>
       <div className="tool-spacer" />
       <div className="tool-group tool-low">
-        <ToolButton command="edit.undo" icon={Undo2} />
-        <ToolButton command="edit.redo" icon={Redo2} />
+        <ToolButton command="edit.undo" icon={Undo2} state={cs['edit.undo']} />
+        <ToolButton command="edit.redo" icon={Redo2} state={cs['edit.redo']} />
       </div>
       <div className="tool-group tool-low">
-        <ToolButton command="patients.open" icon={Users} />
-        <ToolButton command="mm.open" icon={BookText} />
-        <ToolButton command="families.open" icon={Network} />
+        <ToolButton command="patients.open" icon={Users} state={cs['patients.open']} />
+        <ToolButton command="mm.open" icon={BookText} state={cs['mm.open']} />
+        <ToolButton command="families.open" icon={Network} state={cs['families.open']} />
       </div>
       <div className="tool-group tool-more">
-        <button className="tool-btn" aria-label="More tools" title="More tools" aria-haspopup="menu" onClick={e => more.openAt(e.currentTarget, OVERFLOW_ITEMS)}>
-          <MoreHorizontal size={15} />
+        <button className="tool-btn" aria-label="More tools" title="More tools" aria-haspopup="menu" onClick={e => more.openAt(e.currentTarget, overflowItems())}>
+          <MoreHorizontal size={15} aria-hidden />
         </button>
       </div>
       <div className="tool-group tool-panes">
-        <ToolButton command="view.toggleTree" icon={PanelLeft} pressed={layout.showTree} />
-        <ToolButton command="view.toggleDock" icon={PanelBottom} pressed={layout.showAnalysisDock} />
-        <ToolButton command="view.toggleClipboard" icon={PanelRight} pressed={layout.showClipboard} />
+        <ToolButton command="view.toggleTree" icon={PanelLeft} state={cs['view.toggleTree']} pressed={!!cs['view.toggleTree']?.checked} />
+        <ToolButton command="view.toggleDock" icon={PanelBottom} state={cs['view.toggleDock']} pressed={!!cs['view.toggleDock']?.checked} />
+        <ToolButton command="view.toggleClipboard" icon={PanelRight} state={cs['view.toggleClipboard']} pressed={!!cs['view.toggleClipboard']?.checked} />
       </div>
-      <span hidden>{consultation?.id}</span>
       {more.element}
     </div>
   )
-}
+})

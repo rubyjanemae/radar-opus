@@ -1,9 +1,11 @@
 import type { Catalog } from '../data/catalog'
-import { actions, useApp, selectActiveTab } from '../state/store'
+import { actions, useApp } from '../state/store'
 import { exportWorkspace, importWorkspace } from '../state/persist'
 import { registerCommands } from './registry'
 import { downloadBlob, pickFile } from '../ui/files'
+import { askConfirm } from '../ui/ConfirmDialog'
 import { registerFeatureCommands } from '../features/register'
+import { openRepertory } from '../features/repertory/ops'
 
 const st = () => useApp.getState()
 
@@ -25,7 +27,14 @@ export function registerCoreCommands(catalog: Catalog) {
       run: async () => {
         const f = await pickFile('.json,application/json')
         if (!f) return
-        try { await importWorkspace(await f.text()); actions.toast('Workspace restored', 'success') } catch (e) { actions.toast(e instanceof Error ? e.message : 'Import failed', 'error') }
+        try {
+          await importWorkspace(await f.text(), sum => askConfirm({
+            title: 'Restore workspace backup',
+            message: `Replace the current workspace with "${f.name}" (${sum.patients} patient${sum.patients === 1 ? '' : 's'}, ${sum.consultations} consultation${sum.consultations === 1 ? '' : 's'})?`,
+            detail: 'Your current patients, tabs and settings are replaced. They are backed up first, and the restore can be undone from the notification.',
+            confirmLabel: 'Replace workspace',
+          }))
+        } catch (e) { actions.toast(e instanceof Error ? e.message : 'Import failed', 'error') }
       },
     },
 
@@ -46,20 +55,16 @@ export function registerCoreCommands(catalog: Catalog) {
     { id: 'view.remedyNames', title: 'Full remedy names', category: 'View', checked: () => st().settings.remedyStyle === 'name', run: () => actions.setSettings({ remedyStyle: st().settings.remedyStyle === 'name' ? 'abbrev' : 'name' }) },
     { id: 'view.remedyCounts', title: 'Remedy counts in tree', category: 'View', checked: () => st().settings.showRemedyCounts, run: () => actions.setSettings({ showRemedyCounts: !st().settings.showRemedyCounts }) },
 
-    // Tabs
-    { id: 'tab.close', title: 'Close tab', category: 'View', keys: ['Mod+W', 'Alt+W'], enabled: () => !!st().activeTabId, run: () => { const id = st().activeTabId; if (id) actions.closeTab(id) } },
-    { id: 'tab.next', title: 'Next tab', category: 'View', keys: ['Ctrl+Tab', 'Mod+PageDown', 'Alt+PageDown'], enabled: () => st().tabs.length > 1, run: () => actions.cycleTab(1) },
-    { id: 'tab.prev', title: 'Previous tab', category: 'View', keys: ['Ctrl+Shift+Tab', 'Mod+PageUp', 'Alt+PageUp'], enabled: () => st().tabs.length > 1, run: () => actions.cycleTab(-1) },
+    // Tabs. Browser-safe keys first: the browser keeps Ctrl+W, Ctrl+Tab and Ctrl+PageUp/PageDown for its own tabs
+    // (menus show the first key a page can receive; the Mod variants still work where the browser lets them through).
+    { id: 'tab.close', title: 'Close tab', category: 'View', keys: ['Alt+W', 'Mod+W'], enabled: () => !!st().activeTabId, run: () => { const id = st().activeTabId; if (id) actions.closeTab(id) } },
+    { id: 'tab.next', title: 'Next tab', category: 'View', keys: ['Alt+PageDown', 'Mod+PageDown'], enabled: () => st().tabs.length > 1, run: () => actions.cycleTab(1) },
+    { id: 'tab.prev', title: 'Previous tab', category: 'View', keys: ['Alt+PageUp', 'Mod+PageUp'], enabled: () => st().tabs.length > 1, run: () => actions.cycleTab(-1) },
 
-    // Repertories
+    // Repertories: each opens in its own tab (loading, errors and retry are handled by the repertory feature)
     ...catalog.repertoryInfos.map(r => ({
       id: `repertory.open.${r.abbrev}`, title: r.title, category: 'Repertory', keywords: `open repertory ${r.fullTitle} ${r.author}`,
-      run: async () => {
-        await catalog.loadRepertory(r.abbrev)
-        const tab = selectActiveTab(st())
-        if (tab?.kind === 'repertory') actions.updateTab(tab.id, { repertory: r.abbrev, rubric: 0, back: [], forward: [] })
-        else actions.openTab({ kind: 'repertory', repertory: r.abbrev, rubric: 0, back: [], forward: [] }, { reuse: false })
-      },
+      run: () => openRepertory(r.abbrev),
     })),
 
     // App

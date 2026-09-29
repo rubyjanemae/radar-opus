@@ -137,6 +137,8 @@
 .ws-sc-static .ws-keys { justify-content: flex-start; }
 .ws-sc-ref-take .ws-sc-static .kbd { font-family: var(--font-mono); color: var(--accent); }
 .ws-sc-static .ws-sc-title { overflow: visible; white-space: normal; }
+.ws-sc-scope { color: var(--text-3); font-size: var(--fs-xs); }
+.ws-sc-row:focus-visible .ws-sc-scope, .ws-sc-row.ws-sc-target .ws-sc-scope { color: var(--text-3-on-selected); }
 .ws-sc-detail { display: block; color: var(--text-3); font-size: var(--fs-xs); }
 @media (max-width: 760px) { .ws-sc-ref ul { grid-template-columns: 1fr; } }
 .ws-sc-empty { height: auto; padding: 48px 16px; }
@@ -162,12 +164,12 @@
 .ws-about-hint { margin: 0; font-size: var(--fs-sm); color: var(--text-2); }
 
 /* ───────── welcome tour ───────── */
-.ws-tour { position: fixed; inset: 0; z-index: 1200; }
+.ws-tour { position: fixed; inset: 0; z-index: var(--z-tour); }
 .ws-tour-block { position: absolute; inset: 0; }
-.ws-tour-scrim { position: absolute; inset: 0; background: rgba(10, 14, 22, .5); animation: fade .15s ease-out; }
+.ws-tour-scrim { position: absolute; inset: 0; background: var(--scrim-strong); animation: fade .15s ease-out; }
 .ws-tour-spot {
   position: absolute; border-radius: 8px; pointer-events: none;
-  box-shadow: 0 0 0 2px var(--accent), 0 0 0 9999px rgba(10, 14, 22, .5);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 9999px var(--scrim-strong);
   transition: left .22s ease, top .22s ease, width .22s ease, height .22s ease;
 }
 .ws-tour-card {
@@ -190,7 +192,8 @@
 .ws-pane-flash { animation: ws-flash .7s ease-out; }
 @keyframes ws-flash { 0%, 40% { box-shadow: inset 0 0 0 2px var(--focus); } 100% { box-shadow: inset 0 0 0 2px transparent; } }
 .pane:focus, .tab-content:focus, .analysis-dock:focus { outline: none; }
-.pane:focus-visible, .tab-content:focus-visible, .analysis-dock:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+/* a focused pane gets a quiet inset ring (its active item already shows where the keyboard is) */
+.pane:focus-visible, .tab-content:focus-visible, .analysis-dock:focus-visible { outline: none; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--focus) 40%, transparent); }
 
 /* ───────── pane header consistency ───────── */
 .pane-head { user-select: none; }
@@ -200,13 +203,13 @@
 @media (max-width: 1099.98px) {
   .shell-main { position: relative; }
   .shell-main > .pane-left, .shell-main > .pane-right {
-    position: absolute; top: 0; bottom: 0; z-index: 60; max-width: min(88vw, 420px);
+    position: absolute; top: 0; bottom: 0; z-index: var(--z-pane); max-width: min(88vw, 420px);
     box-shadow: var(--shadow-2); animation: ws-slide-in .14s ease-out;
   }
   .shell-main > .pane-left { left: 0; border-right: 1px solid var(--border); }
   .shell-main > .pane-right { right: 0; border-left: 1px solid var(--border); --ws-from: 12px; }
-  .shell-main > .splitter-vertical { display: none; }
-  .ws-scrim { position: absolute; inset: 0; z-index: 59; background: rgba(10, 14, 22, .28); animation: fade .12s ease-out; cursor: default; }
+  .shell-main > .pane-left > .splitter-vertical, .shell-main > .pane-right > .splitter-vertical { display: none; }
+  .ws-scrim { position: absolute; inset: 0; z-index: calc(var(--z-pane) - 1); background: var(--scrim); animation: fade .12s ease-out; cursor: default; }
   .tool-select { max-width: 150px; }
   /* toolbar: lower-priority tools fold into "More tools" so the pane toggles always stay visible */
   .toolbar { min-width: 0; }

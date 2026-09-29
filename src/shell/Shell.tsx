@@ -1,84 +1,122 @@
-import { useEffect } from 'react'
-import { useApp, actions, selectActiveTab } from '../state/store'
+import { memo, useEffect, useSyncExternalStore } from 'react'
+import { useApp, actions } from '../state/store'
 import { Splitter } from '../ui/Splitter'
 import { Toasts } from '../ui/Toasts'
+import { ErrorBoundary } from '../ui/ErrorBoundary'
 import { MenuBar } from './MenuBar'
 import { Toolbar } from './Toolbar'
-import { TabStrip } from './TabStrip'
+import { TabStrip, TAB_PANEL_ID, tabDomId } from './TabStrip'
 import { StatusBar } from './StatusBar'
 import { TabHost } from './TabHost'
-import { Navigator } from '../features/repertory/Navigator'
-import { ClipboardPanel } from '../features/clipboard/ClipboardPanel'
-import { AnalysisDock } from '../features/analysis/AnalysisDock'
+import { tabTitle } from './tabTitle'
+import { Navigator as NavigatorView } from '../features/repertory/Navigator'
+import { ClipboardPanel as ClipboardPanelView } from '../features/clipboard/ClipboardPanel'
+import { AnalysisDock as AnalysisDockView } from '../features/analysis/AnalysisDock'
 import { CommandPalette } from '../features/command/CommandPalette'
 import { DEFAULT_LAYOUT } from '../state/workspace'
 import { DialogHost } from './DialogHost'
-import { WorkspaceChrome } from '../features/workspace/WorkspaceChrome'
+import { WorkspaceChrome as WorkspaceChromeView } from '../features/workspace/WorkspaceChrome'
+import { fitSidePanes, MIN_CLIPBOARD_WIDTH, MIN_TREE_WIDTH } from '../features/workspace/responsive'
+import { useCatalog } from '../data/CatalogContext'
+
+// The panes take no props: memo keeps shell re-renders (layout drags, window resizes) from re-rendering
+// them; each re-renders only on the store slices it subscribes to itself.
+const Navigator = memo(NavigatorView)
+const ClipboardPanel = memo(ClipboardPanelView)
+const AnalysisDock = memo(AnalysisDockView)
+const WorkspaceChrome = memo(WorkspaceChromeView)
+
+const subscribeResize = (fn: () => void) => { window.addEventListener('resize', fn); return () => window.removeEventListener('resize', fn) }
+const viewportWidth = () => window.innerWidth
+const viewportHeight = () => window.innerHeight
+
+/** Visually hidden page heading naming the app and the open document (for screen-reader navigation). */
+const DocumentHeading = memo(function DocumentHeading() {
+  const catalog = useCatalog()
+  const title = useApp(s => {
+    const t = s.tabs.find(x => x.id === s.activeTabId)
+    return t ? tabTitle(t, catalog, s).title : null
+  })
+  useEffect(() => { document.title = title ? `${title} · Radar Opus` : 'Radar Opus' }, [title])
+  return <h1 className="sr-only">Radar Opus{title ? `: ${title}` : ''}</h1>
+})
 
 export function Shell() {
   const layout = useApp(s => s.layout)
-  const settings = useApp(s => s.settings)
-  const activeTab = useApp(selectActiveTab)
+  const theme = useApp(s => s.settings.theme)
+  const density = useApp(s => s.settings.density)
+  const fontScale = useApp(s => s.settings.fontScale)
+  const activeTabId = useApp(s => s.activeTabId)
   const paletteOpen = useApp(s => s.commandPaletteOpen)
+  const vw = useSyncExternalStore(subscribeResize, viewportWidth, () => 1440)
+  const vh = useSyncExternalStore(subscribeResize, viewportHeight, () => 900)
 
   useEffect(() => {
     const root = document.documentElement
-    if (settings.theme === 'system') delete root.dataset.theme
-    else root.dataset.theme = settings.theme
-    root.dataset.density = settings.density
-    root.style.fontSize = `${Math.round(13 * settings.fontScale)}px`
-    root.style.setProperty('--fs', `${Math.round(13 * settings.fontScale)}px`)
-  }, [settings.theme, settings.density, settings.fontScale])
+    if (theme === 'system') delete root.dataset.theme
+    else root.dataset.theme = theme
+    root.dataset.density = density
+    root.style.fontSize = `${Math.round(13 * fontScale)}px`
+    root.style.setProperty('--fs', `${Math.round(13 * fontScale)}px`)
+  }, [theme, density, fontScale])
 
-  const maxSide = Math.max(360, Math.floor(window.innerWidth * 0.45))
+  const maxSide = Math.max(360, Math.floor(vw * 0.45))
+  // below the saved widths the side panes shrink so the document keeps its minimum width
+  const fit = fitSidePanes(vw, layout)
 
   return (
     <div className="shell">
-      <MenuBar />
-      <Toolbar />
+      <header className="shell-header">
+        <DocumentHeading />
+        <ErrorBoundary label="The menu bar" compact><MenuBar /></ErrorBoundary>
+        <ErrorBoundary label="The toolbar" compact><Toolbar /></ErrorBoundary>
+      </header>
       <div className="shell-main">
         {layout.showTree && (
-          <>
-            <aside className="pane pane-left" style={{ width: layout.treeWidth }} aria-label="Repertory navigator">
-              <Navigator />
-            </aside>
+          <aside className="pane pane-left" style={{ width: fit.tree }} aria-label="Repertory navigator">
+            <ErrorBoundary label="The navigator"><Navigator /></ErrorBoundary>
             <Splitter
-              orientation="vertical" label="Resize navigator" value={layout.treeWidth} min={180} max={maxSide}
+              orientation="vertical" label="Resize navigator" value={fit.tree} min={MIN_TREE_WIDTH} max={maxSide}
               onChange={v => actions.setLayout({ treeWidth: v })} onReset={() => actions.setLayout({ treeWidth: DEFAULT_LAYOUT.treeWidth })}
             />
-          </>
+          </aside>
         )}
         <main className="pane pane-center" aria-label="Documents">
           <TabStrip />
           <div className="pane-center-body">
-            <div className="tab-content">{activeTab ? <TabHost tab={activeTab} key={activeTab.id} /> : <EmptyWorkspace />}</div>
+            <div
+              className="tab-content"
+              id={TAB_PANEL_ID}
+              role={activeTabId ? 'tabpanel' : undefined}
+              aria-labelledby={activeTabId ? tabDomId(activeTabId) : undefined}
+            >
+              {activeTabId ? <TabHost tabId={activeTabId} key={activeTabId} /> : <EmptyWorkspace />}
+            </div>
             {layout.showAnalysisDock && (
               <>
                 <Splitter
-                  orientation="horizontal" label="Resize analysis dock" value={layout.analysisHeight} min={120} max={Math.floor(window.innerHeight * 0.7)}
+                  orientation="horizontal" label="Resize analysis dock" value={layout.analysisHeight} min={120} max={Math.floor(vh * 0.7)}
                   direction={-1} onChange={v => actions.setLayout({ analysisHeight: v })} onReset={() => actions.setLayout({ analysisHeight: DEFAULT_LAYOUT.analysisHeight })}
                 />
                 <section className="analysis-dock" style={{ height: layout.analysisHeight }} aria-label="Analysis preview">
-                  <AnalysisDock />
+                  <ErrorBoundary label="The analysis preview"><AnalysisDock /></ErrorBoundary>
                 </section>
               </>
             )}
           </div>
         </main>
         {layout.showClipboard && (
-          <>
+          <aside className="pane pane-right" style={{ width: fit.clipboard }} aria-label="Clipboards">
             <Splitter
-              orientation="vertical" label="Resize clipboard panel" value={layout.clipboardWidth} min={240} max={maxSide} direction={-1}
+              orientation="vertical" label="Resize clipboard panel" value={fit.clipboard} min={MIN_CLIPBOARD_WIDTH} max={maxSide} direction={-1}
               onChange={v => actions.setLayout({ clipboardWidth: v })} onReset={() => actions.setLayout({ clipboardWidth: DEFAULT_LAYOUT.clipboardWidth })}
             />
-            <aside className="pane pane-right" style={{ width: layout.clipboardWidth }} aria-label="Clipboards">
-              <ClipboardPanel />
-            </aside>
-          </>
+            <ErrorBoundary label="The clipboards"><ClipboardPanel /></ErrorBoundary>
+          </aside>
         )}
       </div>
-      <StatusBar />
-      {paletteOpen && <CommandPalette onClose={() => actions.setCommandPalette(false)} />}
+      <ErrorBoundary label="The status bar" compact><StatusBar /></ErrorBoundary>
+      {paletteOpen && <ErrorBoundary label="The command palette" fallback={() => null} onError={e => { actions.setCommandPalette(false); actions.toast(`The command palette hit an error: ${e.message}`, 'error') }}><CommandPalette onClose={() => actions.setCommandPalette(false)} /></ErrorBoundary>}
       <DialogHost />
       <WorkspaceChrome />
       <Toasts />
@@ -89,11 +127,11 @@ export function Shell() {
 function EmptyWorkspace() {
   return (
     <div className="empty-workspace">
-      <div className="empty-mark">R</div>
+      <div className="empty-mark" aria-hidden="true">R</div>
       <h2>No document open</h2>
       <p>Open a repertory, a patient or the materia medica to begin.</p>
       <div className="empty-actions">
-        <button className="btn btn-primary" onClick={() => actions.openTab({ kind: 'repertory', repertory: useApp.getState().settings.defaultRepertory, rubric: 0, back: [], forward: [] }, { reuse: false })}>Open repertory</button>
+        <button className="btn btn-primary" data-autofocus onClick={() => actions.openTab({ kind: 'repertory', repertory: useApp.getState().settings.defaultRepertory, rubric: 0, back: [], forward: [] }, { reuse: false })}>Open repertory</button>
         <button className="btn" onClick={() => actions.openTab({ kind: 'patients' })}>Patients</button>
         <button className="btn" onClick={() => actions.setCommandPalette(true)}>Command palette</button>
       </div>

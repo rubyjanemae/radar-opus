@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AppWindow, Check, ChevronRight, Command as CommandIcon, History, Pill, Search, TextSearch, User, X } from 'lucide-react'
-import { allCommands, formatKeys, onCommandsChanged } from '../../commands/registry'
+import { allCommands, displayKey, formatKeys, onCommandsChanged } from '../../commands/registry'
 import { useCatalog } from '../../data/CatalogContext'
 import { actions, useApp } from '../../state/store'
 import { tabTitle } from '../../shell/tabTitle'
@@ -228,7 +228,7 @@ function ItemBody({ item, text, hl }: { item: PaletteItem; text: string; hl: ((n
           {item.why && <span className="pal-why" title="Matched a keyword">{item.why}</span>}
           <span className="pal-cat">{c.category}</span>
           {item.disabled && <span className="pal-note">unavailable</span>}
-          {c.keys?.[0] && <kbd className="kbd pal-keys">{formatKeys(c.keys[0])}</kbd>}
+          {displayKey(c.keys) && <kbd className="kbd pal-keys">{formatKeys(displayKey(c.keys)!)}</kbd>}
         </>
       )
     }

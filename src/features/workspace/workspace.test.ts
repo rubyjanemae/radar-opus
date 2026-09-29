@@ -7,14 +7,14 @@ import { defaultsKeeping, sameSettings } from './SettingsDialog'
 import { DEFAULT_SETTINGS } from '../../state/workspace'
 import pkg from '../../../package.json'
 import { PANES, nextIndex, paneOf } from './panes'
-import { WIDE_LAYOUT_KEY, closeOverlays, enterNarrow, exclusivePatch, leaveNarrow, openedPane } from './responsive'
-import { REPERTORY_KEYS, TAKE_LANGUAGE, chordMatches, filterSection, matchesQuery, shortcutGroups } from './shortcuts'
+import { MIN_CENTER_WIDTH, WIDE_LAYOUT_KEY, closeOverlays, enterNarrow, exclusivePatch, fitSidePanes, leaveNarrow, openedPane } from './responsive'
+import { REPERTORY_KEYS, TAKE_LANGUAGE, chordMatches, filterSection, matchesQuery, overriddenBrowserKeys, shortcutGroups } from './shortcuts'
 import { placeCard } from './tour'
 
 const cmd = (id: string, title: string, category: string, keys?: string[], extra: Partial<Command> = {}): Command => ({ id, title, category, keys, run: () => {}, ...extra })
 
 const CMDS: Command[] = [
-  cmd('tools.x', 'Materia medica', 'Tools', ['Mod+2']),
+  cmd('tools.x', 'Materia medica', 'Tools', ['Mod+2', 'Alt+2']),
   cmd('file.a', 'Settings…', 'File', ['Mod+,']),
   cmd('edit.undo', 'Undo', 'Edit', ['Mod+Z']),
   cmd('view.tree', 'Navigator pane', 'View', ['Mod+B'], { keywords: 'sidebar' }),
@@ -204,5 +204,44 @@ describe('version', () => {
     // vitest has no __APP_VERSION__ define, so the fallback is used there; the define itself is read from package.json
     expect(pkg.version).toMatch(/^\d+\.\d+\.\d+/)
     expect(typeof APP_VERSION).toBe('string')
+  })
+})
+
+describe('shortcut reference hygiene', () => {
+  it('leaves out chords the browser keeps for itself', () => {
+    const rows = shortcutGroups([cmd('t.close', 'Close tab', 'View', ['Alt+W', 'Mod+W']), cmd('t.only', 'Only reserved', 'View', ['Mod+T'])]).flatMap(g => g.rows)
+    expect(rows.map(r => [r.id, r.keys])).toEqual([['t.close', ['Alt+W']]])
+    expect(shortcutGroups(CMDS).flatMap(g => g.rows).find(r => r.id === 'tools.x')!.keys).toEqual(['Alt+2'])
+  })
+  it('labels scoped keys with where they work', () => {
+    const rows = shortcutGroups([cmd('w.2', 'Intensity 2', 'Case', ['2'], { scope: '.cbp-list' }), cmd('x.y', 'Other', 'Case', ['F9'], { scope: '.nowhere', scopeLabel: 'in the x view' })]).flatMap(g => g.rows)
+    expect(rows.find(r => r.id === 'w.2')!.scope).toBe('in the clipboard list')
+    expect(rows.find(r => r.id === 'x.y')!.scope).toBe('in the x view')
+  })
+  it('documents browser keys that commands take over', () => {
+    const sec = overriddenBrowserKeys([cmd('a', 'Remedy search…', 'Search', ['F5']), cmd('b', 'Bookmark rubric', 'Repertory', ['Mod+D']), cmd('c', 'Undo', 'Edit', ['Mod+Z'])])
+    expect(sec.rows.map(r => r.title)).toEqual(['Remedy search', 'Bookmark rubric'])
+    expect(sec.rows[0].detail).toContain('reload')
+  })
+})
+
+describe('fitSidePanes', () => {
+  const layout = { showTree: true, showClipboard: true, treeWidth: DEFAULT_LAYOUT.treeWidth, clipboardWidth: DEFAULT_LAYOUT.clipboardWidth }
+  it('keeps saved widths when they fit', () => {
+    expect(fitSidePanes(1600, layout)).toEqual({ tree: layout.treeWidth, clipboard: layout.clipboardWidth })
+  })
+  it('shrinks both panes so the document keeps its minimum width', () => {
+    for (const w of [1100, 1152, 1200, 1280]) {
+      const f = fitSidePanes(w, layout)
+      expect(w - f.tree - f.clipboard - 2).toBeGreaterThanOrEqual(MIN_CENTER_WIDTH)
+      expect(f.tree).toBeGreaterThanOrEqual(180)
+      expect(f.clipboard).toBeGreaterThanOrEqual(240)
+    }
+    const f = fitSidePanes(1152, layout)
+    expect(f.tree).toBeLessThanOrEqual(230)
+    expect(f.clipboard).toBeLessThanOrEqual(290)
+  })
+  it('gives the room of a hidden pane to the other', () => {
+    expect(fitSidePanes(1152, { ...layout, showTree: false })).toEqual({ tree: 0, clipboard: layout.clipboardWidth })
   })
 })

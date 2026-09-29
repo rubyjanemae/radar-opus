@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
+import { focusDocument } from '../features/workspace/panes'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -15,13 +16,22 @@ interface Props {
 /** Modal dialog with focus trap, Esc to close and focus restore. */
 export function Dialog({ title, onClose, children, footer, width = 480, initialFocus }: Props) {
   const ref = useRef<HTMLDivElement>(null)
+  // captured during the first render, before any child effect can move focus into the dialog
+  const [opener] = useState(() => (typeof document !== 'undefined' ? document.activeElement as HTMLElement | null : null))
+  const titleId = useId()
   useEffect(() => {
-    const prev = document.activeElement as HTMLElement | null
     const el = ref.current
     const target = (initialFocus && el?.querySelector<HTMLElement>(initialFocus)) || el?.querySelector<HTMLElement>('input, textarea, select, button:not(.dialog-x)')
-    target?.focus()
-    return () => prev?.focus?.()
+    if (!el?.contains(document.activeElement)) (target ?? el)?.focus()
   }, [initialFocus])
+  useEffect(() => () => {
+    // give focus back to what had it before the dialog opened; if that is gone, to the document
+    const a = document.activeElement
+    const lost = !a || a === document.body || !a.isConnected || !!ref.current?.contains(a)
+    if (!lost) return
+    if (opener && opener !== document.body && opener.isConnected) opener.focus({ preventScroll: true })
+    else focusDocument()
+  }, [opener])
 
   return createPortal(
     <div className="dialog-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
@@ -30,7 +40,8 @@ export function Dialog({ title, onClose, children, footer, width = 480, initialF
         className="dialog"
         role="dialog"
         aria-modal="true"
-        aria-label={title}
+        aria-labelledby={titleId}
+        tabIndex={-1}
         style={{ width }}
         onKeyDown={e => {
           if (e.key === 'Escape') { e.stopPropagation(); onClose() }
@@ -44,7 +55,7 @@ export function Dialog({ title, onClose, children, footer, width = 480, initialF
         }}
       >
         <header className="dialog-head">
-          <h2>{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           <button className="dialog-x icon-btn" aria-label="Close" onClick={onClose}>×</button>
         </header>
         <div className="dialog-body">{children}</div>

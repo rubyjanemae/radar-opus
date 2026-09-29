@@ -161,9 +161,9 @@ export function transferSelected(toId: string, copy: boolean) {
   const cb = activeClipboard()
   const ids = targetIds()
   if (!cb || !ids.length || toId === cb.id) return
-  actions.transferSymptoms(cb.id, toId, ids, copy)
+  const { transferred } = actions.transferSymptoms(cb.id, toId, ids, copy)
   const target = selectActiveConsultation(st())?.clipboards.find(c => c.id === toId)
-  actions.toast(`${ids.length} symptom${ids.length === 1 ? '' : 's'} ${copy ? 'copied' : 'moved'} to ${target?.name ?? 'clipboard'}`, 'success')
+  if (transferred) actions.toast(`${transferred} symptom${transferred === 1 ? '' : 's'} ${copy ? 'copied' : 'moved'} to ${target?.name ?? 'clipboard'}`, 'success')
   if (!copy) actions.setSelectedSymptoms([])
 }
 

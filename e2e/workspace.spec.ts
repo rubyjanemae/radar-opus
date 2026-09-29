@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { openApp } from './helpers'
+import { openApp, waitForSaved } from './helpers'
 
 async function menu(page: Page, top: string, item: string) {
   await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: top, exact: true }).click()
@@ -57,7 +57,7 @@ test('settings: tabs, live changes and keyboard toggle', async ({ page }) => {
   await page.keyboard.press('Escape')
 
   // settings persist across reloads
-  await page.waitForTimeout(700)
+  await waitForSaved(page)
   await page.reload()
   await page.waitForSelector('.shell')
   await expect(html(page)).toHaveAttribute('data-theme', 'light')
@@ -168,7 +168,9 @@ test('welcome tour: shows once on first run, keyboard driven', async ({ page }) 
 
   await page.reload()
   await page.waitForSelector('.shell')
-  await page.waitForTimeout(1200)
+  // the first-run tour starts 700 ms after the shell mounts; give it that long before checking it stayed away
+  const mounted = await page.evaluate(() => performance.now())
+  await page.waitForFunction(t => performance.now() - t > 1000, mounted)
   await expect(page.locator('.ws-tour')).toHaveCount(0)
 
   // can be replayed from Help and dismissed with Escape; panes it opened are restored
@@ -268,7 +270,7 @@ test('data: storage estimate and reset demo data', async ({ page }) => {
   await confirm.getByRole('button', { name: 'Cancel' }).click()
   await expect(confirm).toBeHidden()
   await dlg.getByRole('button', { name: 'Reset demo data…' }).click()
-  await page.waitForTimeout(600) // let autosave store the dark theme first
+  await waitForSaved(page) // autosave has stored the dark theme, so the reset really erases it
   await Promise.all([page.waitForEvent('load'), dlg.getByRole('button', { name: 'Erase and reload' }).click()])
   await page.waitForSelector('.shell')
   await expect(html(page)).not.toHaveAttribute('data-theme', 'dark')

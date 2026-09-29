@@ -4,7 +4,7 @@ import { Search, X } from 'lucide-react'
 import { Dialog } from '../../ui/Dialog'
 import { allCommands, formatKeys, getCommand, isEnabled, onCommandsChanged, runCommand } from '../../commands/registry'
 import { actions } from '../../state/store'
-import { REFERENCE_SECTIONS, filterSection, shortcutGroups } from './shortcuts'
+import { REFERENCE_SECTIONS, filterSection, overriddenBrowserKeys, shortcutGroups } from './shortcuts'
 import type { ReferenceSection } from './shortcuts'
 import './workspace.css'
 
@@ -28,7 +28,8 @@ export function ShortcutsDialog({ onClose, query: initialQuery }: { onClose: () 
   useEffect(() => onCommandsChanged(() => setVersion(v => v + 1)), [])
 
   const groups = useMemo(() => shortcutGroups(allCommands(), q, { includeUnbound: all }), [q, all, version])
-  const refs = useMemo(() => REFERENCE_SECTIONS.map(s => filterSection(s, q)).filter(s => s.rows.length), [q])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const refs = useMemo(() => [...REFERENCE_SECTIONS, overriddenBrowserKeys(allCommands())].map(s => filterSection(s, q)).filter(s => s.rows.length), [q, version])
   const total = groups.reduce((n, g) => n + g.rows.length, 0)
   const run = (id: string) => {
     const c = getCommand(id)
@@ -135,7 +136,7 @@ export function ShortcutsDialog({ onClose, query: initialQuery }: { onClose: () 
                             disabled={!enabled}
                             title={enabled ? 'Run now (Enter)' : 'Not available here'}
                           >
-                            <span className="ws-sc-title">{r.title.replace(/…$/, '')}</span>
+                            <span className="ws-sc-title">{r.title.replace(/…$/, '')}{r.scope && <span className="ws-sc-scope"> {r.scope}</span>}</span>
                             {r.keys.length ? <Keys keys={r.keys} /> : <span className="ws-muted">—</span>}
                           </button>
                         </li>

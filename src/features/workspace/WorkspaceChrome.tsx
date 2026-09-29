@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { useApp, actions } from '../../state/store'
-import { focusTarget, trackFocus } from './panes'
+import { focusDocument, focusTarget, trackFocus } from './panes'
 import { NARROW_QUERY, closeOverlays, enterNarrow, exclusivePatch, leaveNarrow, openedPane } from './responsive'
 import type { SideState } from './responsive'
 import { shouldAutoStart, startTour, useTour } from './tour'
@@ -15,12 +15,6 @@ const getNarrow = () => !!mq?.matches
 
 const PANE_SEL = { tree: '.shell-main > .pane-left', clipboard: '.shell-main > .pane-right' } as const
 const PANE_ID = { tree: 'navigator', clipboard: 'clipboard' } as const
-
-/** Focus the active document (after an overlay closed and took the focused element with it). */
-function focusDocument() {
-  const doc = document.querySelector<HTMLElement>('.pane-center .tab-content')
-  if (doc) focusTarget(doc, 'document').focus({ preventScroll: true })
-}
 
 /**
  * App-level behaviour owned by the workspace feature: first-run tour, responsive side panes,

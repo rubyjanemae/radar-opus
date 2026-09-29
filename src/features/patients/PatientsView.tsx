@@ -1,7 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, Download, FileUp, Search, UserPlus, Users, X } from 'lucide-react'
 import { useCatalog } from '../../data/CatalogContext'
-import { formatKeys, getCommand } from '../../commands/registry'
+import { displayKey, formatKeys, getCommand } from '../../commands/registry'
 import { useApp } from '../../state/store'
 import { rubricLabel } from '../clipboard/labels'
 import { useContextMenu } from '../../ui/Menu'
@@ -112,7 +112,7 @@ export function PatientsView() {
   const clickHeader = (key: SortKey, defaultDir: 1 | -1) => setSort(s => (s.key === key ? { key, dir: (s.dir * -1) as 1 | -1 } : { key, dir: defaultDir }))
   const total = all.length
   const filtered = query.trim() !== '' || tags.length > 0
-  const keyHint = (id: string) => { const k = getCommand(id)?.keys?.[0]; return k ? ` (${formatKeys(k)})` : '' }
+  const keyHint = (id: string) => { const k = displayKey(getCommand(id)?.keys); return k ? ` (${formatKeys(k)})` : '' }
 
   return (
     <div className="pt-list" data-testid="patients-view">

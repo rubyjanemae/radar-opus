@@ -19,12 +19,21 @@
   --border-strong: #b9bec8;
   --text: #1c2129;
   --text-2: #4b5260;
-  --text-3: #7a8190;
+  /* tertiary text: >= 4.6:1 on --bg, --chrome, --bg-hover and --bg-active */
+  --text-3: #5c6370;
+  /* count/meta text on a --bg-selected row (--text-3 is too light there) */
+  --text-3-on-selected: #4b5260;
   --accent: #2459c9;
   --accent-2: #1d4aa9;
   --accent-soft: #e5edfb;
   /* text and icons on an accent background (same in both themes) */
   --on-accent: #fff;
+  --accent-fill: #2459c9;
+  --accent-fill-2: #1d4aa9;
+  /* keyboard-active item in menus and listboxes: white text at >= 4.5:1 in both themes */
+  --active-bg: var(--accent-fill);
+  --active-fg: var(--on-accent);
+  --active-fg-2: rgba(255, 255, 255, .86);
   --focus: #3a78f2;
   --danger: #c8372d;
   --success: #23864f;
@@ -35,9 +44,33 @@
   --g3: #c2261b;
   --g4: #8a1911;
 
+  /* backdrop behind modal dialogs, overlays and the tour */
+  --scrim: rgba(15, 20, 30, .32);
+  --scrim-strong: rgba(10, 14, 22, .5);
+  /* inverse surface (toasts): dark in both themes */
+  --inverse-bg: #1f2530;
+  --inverse-fg: #f1f3f6;
+  --inverse-fg-2: #aab1bd;
+  --inverse-accent: #8fb6ff;
+  --inverse-success: #3ecf82;
+  --inverse-danger: #ff6b5e;
+
   --shadow-1: 0 1px 2px rgba(16, 24, 40, .08);
   --shadow-2: 0 6px 24px rgba(16, 24, 40, .16), 0 1px 3px rgba(16, 24, 40, .1);
   --radius: 5px;
+
+  /* control sizes shared by the menubar and toolbars */
+  --ctl-h-sm: 24px;
+  --ctl-h: 28px;
+
+  /* stacking order */
+  --z-pane: 60;
+  --z-dropdown: 800;
+  --z-overlay: 850;
+  --z-dialog: 900;
+  --z-menu: 1000;
+  --z-toast: 1100;
+  --z-tour: 1200;
 
   color-scheme: light;
 }
@@ -56,7 +89,8 @@
     --border-strong: #3d434e;
     --text: #e3e6eb;
     --text-2: #aab1bd;
-    --text-3: #7c8492;
+    --text-3: #949cab;
+    --text-3-on-selected: #aab1bd;
     --accent: #6d9cf5;
     --accent-2: #8fb2f7;
     --accent-soft: #1f2f4d;
@@ -72,6 +106,9 @@
     --g3: #f47a6e;
     --g4: #ff9d8f;
     --shadow-2: 0 8px 28px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4);
+    --scrim: rgba(0, 0, 0, .5);
+    --scrim-strong: rgba(0, 0, 0, .62);
+    --inverse-bg: #2b313c;
     color-scheme: dark;
   }
 }
@@ -89,7 +126,8 @@
   --border-strong: #3d434e;
   --text: #e3e6eb;
   --text-2: #aab1bd;
-  --text-3: #7c8492;
+  --text-3: #949cab;
+  --text-3-on-selected: #aab1bd;
   --accent: #6d9cf5;
   --accent-2: #8fb2f7;
   --accent-soft: #1f2f4d;
@@ -104,6 +142,9 @@
   --g3: #f47a6e;
   --g4: #ff9d8f;
   --shadow-2: 0 8px 28px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4);
+  --scrim: rgba(0, 0, 0, .5);
+  --scrim-strong: rgba(0, 0, 0, .62);
+  --inverse-bg: #2b313c;
   color-scheme: dark;
 }
 
@@ -122,6 +163,12 @@ body {
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: default; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+/* focusable scroll panes (lists, trees, grids, document bodies): their active item shows where the
+   keyboard is, so the pane itself gets a quiet inset ring instead of a heavy rectangle */
+.scroll-pane:focus-visible, [data-pane]:focus-visible,
+[role="tree"]:focus-visible, [role="listbox"]:focus-visible, [role="grid"]:focus-visible, [role="tabpanel"]:focus-visible {
+  outline: none; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--focus) 40%, transparent);
+}
 ::selection { background: var(--bg-selected); }
 
 /* scrollbars */
@@ -134,6 +181,10 @@ button { cursor: default; }
 .g4 { color: var(--g4); font-weight: 800; text-transform: uppercase; letter-spacing: .02em; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* secondary numbers and meta text; stays readable on a selected row */
+.meta { color: var(--text-3); }
+/* on a selected row (--bg-selected) tertiary text is too light: every --text-3 inside it resolves darker */
+[aria-selected="true"], .is-selected { --text-3: var(--text-3-on-selected); }
 .kbd {
   font: 500 10.5px/1 var(--font-ui); color: var(--text-3);
   border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px; padding: 2px 4px; background: var(--bg-elev);

@@ -1,0 +1,227 @@
+import { expect, test } from '@playwright/test'
+import type { Page } from '@playwright/test'
+import { openApp, waitForSaved } from './helpers'
+
+const SHOTS = process.env.SHOTS_DIR
+
+/** Write raw values into the app's IndexedDB store (as an older or corrupted install would have left them). */
+async function writeRaw(page: Page, entries: Record<string, unknown>, clear = true) {
+  await page.evaluate(async ({ entries, clear }) => {
+    const db = await new Promise<IDBDatabase>((res, rej) => {
+      const r = indexedDB.open('radar-opus')
+      r.onupgradeneeded = () => r.result.createObjectStore('workspace')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    await new Promise<void>((res, rej) => {
+      const tx = db.transaction('workspace', 'readwrite')
+      const s = tx.objectStore('workspace')
+      if (clear) s.clear()
+      for (const [k, v] of Object.entries(entries)) s.put(v, k)
+      tx.oncomplete = () => res()
+      tx.onerror = () => rej(tx.error)
+    })
+    db.close()
+  }, { entries, clear })
+}
+
+async function readKeys(page: Page): Promise<string[]> {
+  return page.evaluate(() => new Promise<string[]>(res => {
+    const r = indexedDB.open('radar-opus')
+    r.onsuccess = () => {
+      const req = r.result.transaction('workspace').objectStore('workspace').getAllKeys()
+      req.onsuccess = () => { res(req.result.map(String)); r.result.close() }
+    }
+  }))
+}
+
+const patient = { id: 'p1', firstName: 'Ada', lastName: 'Lovelace', birthDate: null, sex: 'female', email: '', phone: '', address: '', occupation: '', notes: '', tags: [], createdAt: 1, updatedAt: 1 }
+const consultation = (extra: Record<string, unknown> = {}) => ({
+  id: 'c1', patientId: 'p1', date: '2026-01-01', title: 'First consultation', kind: 'first', complaint: 'Headache', notes: '', assessment: '',
+  clipboards: [{ id: 'cb1', name: 'Clipboard 1', color: '#2f6fdb', symptoms: [] }],
+  analysis: { strategy: 'sum-symptoms-degrees', clipboardIds: ['cb1'], remedyFilter: null, excludedRemedies: [], minCoverage: 0, limit: 30 },
+  prescriptions: [], createdAt: 1, updatedAt: 1, ...extra,
+})
+const legacyState = (extra: Record<string, unknown> = {}) => ({
+  patients: { p1: patient }, consultations: { c1: consultation() },
+  tabs: [{ id: 't1', kind: 'patient', patientId: 'p1' }], activeTabId: 't1', layout: {}, settings: {}, bookmarks: [], rubricNotes: {}, remedyNotes: {},
+  recentSearches: [], activeConsultationId: 'c1', activeClipboardId: 'cb1', ...extra,
+})
+
+test.describe('restoring saved data', () => {
+  const cases: [string, Record<string, unknown>][] = [
+    ['tabs: null', { tabs: null }],
+    ['tabs: {}', { tabs: {} }],
+    ['tab kind weird', { tabs: [{ id: 'w', kind: 'weird' }, { id: 't1', kind: 'patient', patientId: 'p1' }] }],
+    ['consultation without clipboards', { consultations: { c1: (() => { const c = consultation(); delete (c as Record<string, unknown>).clipboards; return c })() } }],
+  ]
+  for (const [name, extra] of cases) {
+    test(`boots with ${name} and migrates state-v1 to split keys`, async ({ page }) => {
+      await openApp(page)
+      await writeRaw(page, { 'state-v1': legacyState(extra) })
+      await page.reload()
+      await page.waitForSelector('.shell')
+      await expect(page.getByLabel('Status')).toContainText('rubrics')
+      // the patient survived; open the patients list to see it
+      await page.keyboard.press('Control+3')
+      await expect(page.locator('.pt-list')).toContainText('Lovelace')
+      await waitForSaved(page)
+      const keys = await readKeys(page)
+      expect(keys).not.toContain('state-v1')
+      expect(keys).toEqual(expect.arrayContaining(['workspace', 'p:p1', 'c:c1']))
+    })
+  }
+
+  test('unusable data shows the rescue card with reset and raw export', async ({ page }) => {
+    await openApp(page)
+    await writeRaw(page, { workspace: 'garbage', 'p:p1': patient })
+    await page.reload()
+    const card = page.getByRole('alert')
+    await expect(card).toContainText('Your saved workspace could not be restored')
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/restore-error.png` })
+    const [download] = await Promise.all([page.waitForEvent('download'), card.getByRole('button', { name: 'Export raw data' }).click()])
+    expect(download.suggestedFilename()).toMatch(/^radar-opus-raw-.*\.json$/)
+    page.once('dialog', d => void d.accept())
+    await Promise.all([page.waitForEvent('load'), card.getByRole('button', { name: 'Reset workspace' }).click()])
+    await page.waitForSelector('.shell')
+    await expect(page.getByRole('tablist', { name: 'Open documents' })).toBeVisible()
+  })
+})
+
+test('navigation saves the workspace key only, case edits their record only', async ({ page }) => {
+  await openApp(page)
+  await waitForSaved(page)
+  const writes: string[][] = []
+  await page.exposeFunction('__recordWrite', (keys: string[]) => { writes.push(keys) })
+  await page.evaluate(() => {
+    const put = IDBObjectStore.prototype.put
+    IDBObjectStore.prototype.put = function (this: IDBObjectStore, v: unknown, k?: IDBValidKey) {
+      ;(window as unknown as { __recordWrite: (k: string[]) => void }).__recordWrite([String(k)])
+      return put.call(this, v, k)
+    }
+  })
+  await page.locator('.rv-scroll').focus()
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowDown')
+  await waitForSaved(page)
+  expect(writes.flat().every(k => k === 'workspace')).toBe(true)
+  writes.length = 0
+  await page.keyboard.press('Insert') // take the rubric into the active case
+  await waitForSaved(page)
+  const keys = writes.flat()
+  expect(keys.filter(k => k.startsWith('c:'))).toHaveLength(1)
+  expect(keys.some(k => k.startsWith('p:'))).toBe(false)
+})
+
+test('undo names what it undid and restores the active case', async ({ page }) => {
+  await openApp(page)
+  const status = page.getByLabel('Status')
+  await page.locator('.rv-scroll').focus()
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Insert')
+  await expect(page.locator('.toast').filter({ hasText: /Taken/ })).toBeVisible()
+  await page.keyboard.press('Control+z')
+  await expect(page.locator('.toast').filter({ hasText: /^Undone: Take/ })).toBeVisible()
+  await page.keyboard.press('Control+Shift+z')
+  await expect(page.locator('.toast').filter({ hasText: /^Redone: Take/ })).toBeVisible()
+  await expect(status).toBeVisible()
+})
+
+test('toast actions are reachable with Alt+N and stay while focused', async ({ page }) => {
+  await page.clock.install()
+  await openApp(page)
+  await page.locator('.rv-scroll').focus()
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Insert')
+  const toast = page.locator('.toast').filter({ hasText: /Taken/ })
+  await expect(toast).toBeVisible()
+  await page.keyboard.press('Alt+n')
+  await expect(toast.getByRole('button', { name: 'Undo' })).toBeFocused()
+  await page.clock.fastForward(20_000)
+  await expect(toast).toBeVisible()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/toast-focus.png` })
+  await page.keyboard.press('Escape')
+  await page.clock.fastForward(20_000)
+  await expect(toast).toBeHidden()
+})
+
+test('workspace restore asks first, rejects invalid files and can be undone', async ({ page }) => {
+  await openApp(page)
+  const menu = async () => {
+    await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'File', exact: true }).click()
+    await page.getByRole('menu').getByRole('menuitem', { name: 'Restore workspace backup…' }).click()
+  }
+  // invalid file: error toast, nothing changes
+  let chooser = page.waitForEvent('filechooser')
+  await menu()
+  await (await chooser).setFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ format: 'radar-opus-workspace', state: { patients: 'nope' } })) })
+  await expect(page.locator('.toast-error')).toContainText('cannot be restored')
+
+  const file = { format: 'radar-opus-workspace', version: 1, state: legacyState({ settings: { theme: 'dark' } }) }
+  chooser = page.waitForEvent('filechooser')
+  await menu()
+  await (await chooser).setFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) })
+  const dlg = page.getByRole('dialog', { name: 'Restore workspace backup' })
+  await expect(dlg).toContainText('1 patient, 1 consultation')
+  await expect(dlg.getByRole('button', { name: 'Cancel' })).toBeFocused()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/import-confirm.png` })
+  await dlg.getByRole('button', { name: 'Replace workspace' }).click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  const toast = page.locator('.toast').filter({ hasText: 'Workspace restored' })
+  await expect(toast).toBeVisible()
+  await toast.getByRole('button', { name: 'Undo' }).click()
+  await expect(page.locator('html')).not.toHaveAttribute('data-theme', 'dark')
+  await expect(page.locator('.toast').filter({ hasText: 'Previous workspace put back' })).toBeVisible()
+})
+
+test('a second tab opens read-only and can take over without losing records', async ({ page, context }) => {
+  await openApp(page)
+  await waitForSaved(page)
+  const second = await context.newPage()
+  await second.goto('/')
+  await second.waitForSelector('.shell')
+  const banner = second.getByRole('status').filter({ hasText: 'Read-only' }).first()
+  await expect(second.locator('.app-instance-banner')).toBeVisible()
+  await expect(second.locator('.save-ind')).toHaveAttribute('data-state', 'readonly')
+  if (SHOTS) await second.screenshot({ path: `${SHOTS}/readonly-banner.png` })
+  await expect(banner).toBeVisible()
+
+  // the writer tab creates a patient; the read-only tab follows its saves
+  await page.bringToFront()
+  await page.keyboard.press('Control+Alt+N')
+  const dialog = page.getByRole('dialog', { name: 'New patient' })
+  await dialog.getByLabel('Last name').fill('Zebrafinch')
+  await dialog.getByRole('button', { name: 'Create patient' }).click()
+  await expect(dialog).toBeHidden()
+  await waitForSaved(page)
+
+  await second.bringToFront()
+  await second.keyboard.press('Control+3')
+  await expect(second.locator('.pt-list')).toContainText('Zebrafinch')
+
+  // an edit made while read-only is kept in memory ...
+  await second.keyboard.press('Control+Alt+N')
+  const dialog2 = second.getByRole('dialog', { name: 'New patient' })
+  await dialog2.getByLabel('Last name').fill('Kestrel')
+  await dialog2.getByRole('button', { name: 'Create patient' }).click()
+  await expect(dialog2).toBeHidden()
+  await expect(second.locator('.save-ind')).toHaveAttribute('data-state', 'readonly')
+
+  // ... and merged when this tab takes over: the first tab saves and becomes read-only
+  await second.locator('.app-instance-banner').getByRole('button', { name: 'Edit in this tab' }).click()
+  await expect(second.locator('.app-instance-banner')).toHaveCount(0)
+  await expect(page.locator('.app-instance-banner')).toBeVisible()
+  await waitForSaved(second)
+  await second.keyboard.press('Control+3')
+  await expect(second.locator('.pt-list')).toContainText('Zebrafinch')
+  await expect(second.locator('.pt-list')).toContainText('Kestrel')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/readonly-after-handover.png` })
+
+  // both records are on disk: a fresh load of the (now writing) second tab shows them
+  await page.close()
+  await second.reload()
+  await second.waitForSelector('.shell')
+  await second.keyboard.press('Control+3')
+  await expect(second.locator('.pt-list')).toContainText('Zebrafinch')
+  await expect(second.locator('.pt-list')).toContainText('Kestrel')
+})

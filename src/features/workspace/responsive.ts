@@ -8,8 +8,6 @@ export const WIDE_LAYOUT_KEY = 'radar-opus.wideLayout'
 export type SidePane = 'tree' | 'clipboard'
 export interface SideState { showTree: boolean; showClipboard: boolean }
 
-export function isNarrow() { return document.documentElement.dataset.narrow === 'true' }
-
 /** Hide the side panes (remembering them) when the window becomes narrow. */
 export function enterNarrow() {
   document.documentElement.dataset.narrow = 'true'
@@ -59,4 +57,33 @@ export function openedPane(prev: SideState, next: SideState): SidePane | null {
   if (next.showTree && !prev.showTree) return 'tree'
   if (next.showClipboard && !prev.showClipboard) return 'clipboard'
   return null
+}
+
+/** The document pane keeps at least this width while the side panes sit beside it. */
+export const MIN_CENTER_WIDTH = 640
+export const MIN_TREE_WIDTH = 180
+export const MIN_CLIPBOARD_WIDTH = 240
+
+/**
+ * Displayed widths of the side panes for a window width. The saved widths are used as they are when
+ * they fit; otherwise both shrink (in proportion to how far each is above its minimum) until the
+ * document keeps MIN_CENTER_WIDTH. The saved layout is not changed, so widening the window restores it.
+ */
+export function fitSidePanes(
+  viewport: number,
+  l: { showTree: boolean; showClipboard: boolean; treeWidth: number; clipboardWidth: number },
+  splitter = 1,
+): { tree: number; clipboard: number } {
+  const tree = l.showTree ? Math.max(MIN_TREE_WIDTH, l.treeWidth) : 0
+  const clip = l.showClipboard ? Math.max(MIN_CLIPBOARD_WIDTH, l.clipboardWidth) : 0
+  const room = viewport - MIN_CENTER_WIDTH - (l.showTree ? splitter : 0) - (l.showClipboard ? splitter : 0)
+  const excess = tree + clip - room
+  if (excess <= 0) return { tree, clipboard: clip }
+  const slackTree = l.showTree ? tree - MIN_TREE_WIDTH : 0
+  const slackClip = l.showClipboard ? clip - MIN_CLIPBOARD_WIDTH : 0
+  const slack = slackTree + slackClip
+  if (slack <= 0) return { tree, clipboard: clip }
+  const cut = Math.min(excess, slack)
+  const cutTree = Math.round(cut * (slackTree / slack))
+  return { tree: tree - cutTree, clipboard: clip - (cut - cutTree) }
 }

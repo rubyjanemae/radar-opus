@@ -179,17 +179,14 @@ test('display changes keep the current rubric where it was', async ({ page }) =>
   const before = await inView(page)
   expect(before.fully).toBe(true)
   await page.locator('.rv-seg button', { hasText: 'Abbrev' }).click()
-  await page.waitForTimeout(500)
-  expect(await inView(page)).toEqual(before)
+  await expect.poll(() => inView(page)).toEqual(before)
   await page.locator('.rv-scroll').focus()
   for (const _ of [1, 2, 3]) {
     await page.keyboard.press('Space')
-    await page.waitForTimeout(400)
-    expect((await inView(page)).fully).toBe(true)
+    await expect.poll(async () => (await inView(page)).fully).toBe(true)
   }
   await page.selectOption('.rv-grade', '3')
-  await page.waitForTimeout(400)
-  expect((await inView(page)).fully).toBe(true)
+  await expect.poll(async () => (await inView(page)).fully).toBe(true)
 })
 
 test('take bar keeps the command and target readable; /s never duplicates', async ({ page }) => {
@@ -227,11 +224,12 @@ test('narrow pane: whole breadcrumb, readable repertories list', async ({ page }
 
 test('recent list fills from reading and acting; navigator marks the menu row', async ({ page }) => {
   await openBook(page)
+  const recent = page.getByRole('region', { name: 'Recent rubrics' }).locator('.rnav-link')
   await page.keyboard.press('ArrowDown')
-  await page.waitForTimeout(1300)
+  // dwelling on a rubric records it (after about a second)
+  await expect(recent).toHaveCount(1)
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('Control+d')
-  const recent = page.getByRole('region', { name: 'Recent rubrics' }).locator('.rnav-link')
   await expect(recent).toHaveCount(2)
   await expect(recent.first()).toHaveAttribute('aria-current', 'location')
   await recent.nth(1).click()

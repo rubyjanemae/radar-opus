@@ -1,72 +1,400 @@
-import { createStore, get as idbGet, set as idbSet } from 'idb-keyval'
-import { useApp } from './store'
+import { createStore, promisifyRequest } from 'idb-keyval'
+import type { UseStore } from 'idb-keyval'
+import { actions, useApp } from './store'
 import type { AppState } from './store'
+import type { Consultation, Patient } from './patients'
+import { PERSISTED_FIELDS, RestoreError, SCHEMA_VERSION, WORKSPACE_FIELDS, sanitizeLayout, sanitizePersisted, sanitizeSettings, sanitizeWorkspace } from './sanitize'
+import type { PersistedState, SanitizeResult, WorkspaceState } from './sanitize'
 
-const DB = createStore('radar-opus', 'workspace')
-const KEY = 'state-v1'
-const PERSISTED = ['patients', 'consultations', 'tabs', 'activeTabId', 'layout', 'settings', 'bookmarks', 'rubricNotes', 'remedyNotes', 'recentSearches', 'activeConsultationId', 'activeClipboardId'] as const
-export type PersistedState = Pick<AppState, (typeof PERSISTED)[number]>
+export { RestoreError, SCHEMA_VERSION, sanitizePersisted }
+export type { PersistedState, SanitizeResult }
 
-export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+/*
+ * Storage layout (IndexedDB "radar-opus", object store "workspace"):
+ *   workspace       small blob: schema version, tabs, layout, settings, bookmarks, notes, active ids
+ *   p:<patientId>   one patient
+ *   c:<consultId>   one consultation (clipboards, analysis, prescriptions)
+ *   state-v1        legacy single blob (migrated to the keys above on first start)
+ * Autosave writes the workspace key only when its fields change and a record only when its
+ * object reference changed since the last flush, so navigating never re-saves case data.
+ */
+export const WS_KEY = 'workspace'
+export const LEGACY_KEY = 'state-v1'
+export const BACKUP_KEY = 'backup:before-import'
+const P = 'p:'
+const C = 'c:'
+
+// ───────────────────────── backend ─────────────────────────
+
+/** Key-value storage used by persistence (IndexedDB in the app; an in-memory map in tests). */
+export interface PersistBackend {
+  get(key: string): Promise<unknown>
+  /** All [key, value] pairs whose key starts with `prefix`. */
+  getPrefix(prefix: string): Promise<[string, unknown][]>
+  /** One atomic write: puts and deletes in a single transaction. */
+  write(puts: [string, unknown][], dels: string[]): Promise<void>
+  entries(): Promise<[string, unknown][]>
+  clear(): Promise<void>
+}
+
+function idbBackend(): PersistBackend {
+  let db: UseStore | null = null
+  const store = (): UseStore => (db ??= createStore('radar-opus', 'workspace'))
+  const range = (prefix: string) => IDBKeyRange.bound(prefix, prefix + '￿')
+  return {
+    get: key => store()('readonly', s => promisifyRequest(s.get(key))),
+    getPrefix: prefix => store()('readonly', async s => {
+      const [keys, values] = await Promise.all([promisifyRequest(s.getAllKeys(range(prefix))), promisifyRequest(s.getAll(range(prefix)))])
+      return keys.map((k, i): [string, unknown] => [String(k), values[i]])
+    }),
+    write: (puts, dels) => store()('readwrite', s => {
+      for (const [k, v] of puts) s.put(v, k)
+      for (const k of dels) s.delete(k)
+      return promisifyRequest(s.transaction)
+    }),
+    entries: () => store()('readonly', async s => {
+      const [keys, values] = await Promise.all([promisifyRequest(s.getAllKeys()), promisifyRequest(s.getAll())])
+      return keys.map((k, i): [string, unknown] => [String(k), values[i]])
+    }),
+    clear: () => store()('readwrite', s => { s.clear(); return promisifyRequest(s.transaction) }),
+  }
+}
+
+let backend: PersistBackend | null = typeof indexedDB === 'undefined' ? null : idbBackend()
+/** Replace the storage backend (tests); null runs without persistence. */
+export function setPersistBackend(b: PersistBackend | null) { backend = b; flushed = emptyFlushed() }
+
+// ───────────────────────── save status ─────────────────────────
+
+/** pending: changes waiting for the debounce; readonly: another tab owns the workspace. */
+export type SaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error' | 'readonly'
 let status: SaveStatus = 'idle'
 const listeners = new Set<(s: SaveStatus) => void>()
 export const saveStatus = {
   get: () => status,
   subscribe(fn: (s: SaveStatus) => void) { listeners.add(fn); return () => { listeners.delete(fn) } },
 }
-function setStatus(s: SaveStatus) { status = s; listeners.forEach(fn => fn(s)) }
+function setStatus(s: SaveStatus) { if (s !== status) { status = s; listeners.forEach(fn => fn(s)) } }
+
+// ───────────────────────── snapshots ─────────────────────────
 
 export function pickPersisted(s: AppState): PersistedState {
-  return Object.fromEntries(PERSISTED.map(k => [k, s[k]])) as PersistedState
+  return Object.fromEntries(PERSISTED_FIELDS.map(k => [k, s[k]])) as PersistedState
+}
+export function pickWorkspace(s: AppState | PersistedState): WorkspaceState {
+  return Object.fromEntries(WORKSPACE_FIELDS.map(k => [k, s[k]])) as WorkspaceState
 }
 
-/** Load saved workspace; returns false when there is nothing saved (first run). */
-export async function hydrate(): Promise<boolean> {
-  let saved: Partial<PersistedState> | undefined
-  try { saved = await idbGet<Partial<PersistedState>>(KEY, DB) } catch { saved = undefined }
-  if (saved) {
-    const cur = useApp.getState()
-    useApp.setState({ ...saved, layout: { ...cur.layout, ...saved.layout }, settings: { ...cur.settings, ...saved.settings }, hydrated: true })
-    return true
+/** What this tab believes is on disk: record key → the object last written or read (by reference). */
+interface Flushed { workspace: WorkspaceState | null; records: Map<string, unknown>; patients: unknown; consultations: unknown }
+const emptyFlushed = (): Flushed => ({ workspace: null, records: new Map(), patients: null, consultations: null })
+let flushed: Flushed = emptyFlushed()
+
+function markFlushed(state: PersistedState, diskKeys?: Iterable<string>) {
+  const records = new Map<string, unknown>()
+  for (const k of diskKeys ?? []) records.set(k, DIRTY)
+  for (const p of Object.values(state.patients)) records.set(P + p.id, p)
+  for (const c of Object.values(state.consultations)) records.set(C + c.id, c)
+  flushed = { workspace: pickWorkspace(state), records, patients: state.patients, consultations: state.consultations }
+}
+/** Placeholder for a disk record whose content must be rewritten (or deleted) on the next flush. */
+const DIRTY = Symbol('dirty')
+
+interface Diff { puts: [string, unknown][]; dels: string[]; workspace: WorkspaceState | null }
+
+function diffState(s: PersistedState): Diff {
+  const puts: [string, unknown][] = []
+  const dels: string[] = []
+  const ws = pickWorkspace(s)
+  const wsChanged = !flushed.workspace || WORKSPACE_FIELDS.some(k => ws[k] !== flushed.workspace![k])
+  if (wsChanged) puts.push([WS_KEY, { version: SCHEMA_VERSION, ...ws }])
+  const diffRecords = (prefix: string, next: Record<string, { id: string }>, prevObj: unknown) => {
+    if (next === prevObj) return
+    for (const [id, v] of Object.entries(next)) if (flushed.records.get(prefix + id) !== v) puts.push([prefix + id, v])
+    for (const k of flushed.records.keys()) if (k.startsWith(prefix) && !(k.slice(prefix.length) in next)) dels.push(k)
   }
-  useApp.setState({ hydrated: true })
-  return false
+  diffRecords(P, s.patients, flushed.patients)
+  diffRecords(C, s.consultations, flushed.consultations)
+  return { puts, dels, workspace: wsChanged ? ws : null }
 }
 
-let timer: ReturnType<typeof setTimeout> | null = null
+function applyFlushed(d: Diff, s: PersistedState) {
+  for (const [k, v] of d.puts) if (k !== WS_KEY) flushed.records.set(k, v)
+  for (const k of d.dels) flushed.records.delete(k)
+  if (d.workspace) flushed.workspace = d.workspace
+  flushed.patients = s.patients
+  flushed.consultations = s.consultations
+}
+
+/** Unsaved differences between memory and disk (a read-only tab warns before closing with these). */
+export function hasUnsavedChanges(): boolean {
+  if (!backend) return false
+  const d = diffState(pickPersisted(useApp.getState()))
+  return d.dels.length > 0 || d.puts.some(([k]) => k !== WS_KEY)
+}
+
+// ───────────────────────── load ─────────────────────────
+
+interface Loaded extends SanitizeResult { diskKeys: string[] }
+
+/** Read and validate what is stored. Returns null on a first run; throws RestoreError when unusable. */
+async function loadFromDisk(onWorkspace?: (ws: Record<string, unknown>) => void): Promise<Loaded | null> {
+  if (!backend) return null
+  let ws: unknown
+  try { ws = await backend.get(WS_KEY) } catch (e) { throw new RestoreError(`The saved workspace could not be read: ${e instanceof Error ? e.message : String(e)}`) }
+  if (ws === undefined) {
+    const legacy = await backend.get(LEGACY_KEY)
+    if (legacy === undefined) return null
+    const res = sanitizePersisted(legacy)
+    // Migrate the single blob to the split layout in one transaction, then it is gone.
+    const puts: [string, unknown][] = [[WS_KEY, { version: SCHEMA_VERSION, ...pickWorkspace(res.state) }]]
+    for (const p of Object.values(res.state.patients)) puts.push([P + p.id, p])
+    for (const c of Object.values(res.state.consultations)) puts.push([C + c.id, c])
+    await backend.write(puts, [LEGACY_KEY])
+    return { ...res, repairs: res.repairs, diskKeys: puts.map(([k]) => k).filter(k => k !== WS_KEY) }
+  }
+  if (!ws || typeof ws !== 'object' || Array.isArray(ws)) throw new RestoreError('The saved workspace is not a valid object')
+  onWorkspace?.(ws as Record<string, unknown>)
+  const [pe, ce] = await Promise.all([backend.getPrefix(P), backend.getPrefix(C)])
+  const res = sanitizePersisted({
+    ...(ws as Record<string, unknown>),
+    patients: Object.fromEntries(pe.map(([k, v]) => [k.slice(P.length), v])),
+    consultations: Object.fromEntries(ce.map(([k, v]) => [k.slice(C.length), v])),
+  })
+  return { ...res, diskKeys: [...pe, ...ce].map(([k]) => k) }
+}
+
+function applyState(state: PersistedState) {
+  useApp.setState({ ...state, selectedSymptomIds: [], past: [], future: [], hydrated: true })
+}
+
+/**
+ * Load the saved workspace: the small workspace key first (layout and settings apply at once),
+ * then the patient and consultation records. Returns false on a first run (nothing saved).
+ * Throws RestoreError when the saved data cannot be used; the app then offers reset / raw export.
+ */
+export async function hydrate(onStep?: (step: string) => void): Promise<boolean> {
+  const loaded = await loadFromDisk(ws => {
+    useApp.setState({ layout: sanitizeLayout(ws.layout), settings: sanitizeSettings(ws.settings) })
+    onStep?.('Loading cases…')
+  })
+  if (!loaded) {
+    flushed = emptyFlushed()
+    useApp.setState({ hydrated: true })
+    return false
+  }
+  applyState(loaded.state)
+  // Repaired data is rewritten on the first flush; clean records are known to match the disk.
+  if (loaded.repairs.length) {
+    flushed = { ...emptyFlushed(), records: new Map(loaded.diskKeys.map(k => [k, DIRTY])) }
+    console.warn('Radar Opus repaired the saved workspace:', loaded.repairs)
+    actions.toast(`Some saved data could not be read and was repaired (${loaded.repairs.length} item${loaded.repairs.length === 1 ? '' : 's'})`, 'info', undefined, 8000)
+  } else markFlushed(loaded.state, loaded.diskKeys)
+  return true
+}
+
+/**
+ * Take over the stored workspace after another tab released it. Records come from disk unless this
+ * tab holds a newer edit (updatedAt) or a record it created; records deleted elsewhere stay deleted
+ * unless edited here. This tab keeps its own tabs and focus.
+ */
+export async function adoptDiskState(): Promise<void> {
+  const loaded = await loadFromDisk()
+  const s = useApp.getState()
+  const diskState = loaded?.state
+  const known = flushed.records
+  // `seen` is the disk content as this tab will know it; unchanged records keep this tab's objects.
+  const merge = <T extends Patient | Consultation>(mem: Record<string, T>, disk: Record<string, T>, prefix: string) => {
+    const out: Record<string, T> = {}
+    const seen: Record<string, T> = {}
+    for (const d of Object.values(disk)) {
+      const m = mem[d.id]
+      const same = m && known.get(prefix + m.id) === m && m.updatedAt === d.updatedAt
+      out[d.id] = seen[d.id] = same ? m : d
+    }
+    for (const m of Object.values(mem)) {
+      const d = disk[m.id]
+      const editedHere = known.get(prefix + m.id) !== m
+      if (d ? editedHere && m.updatedAt > d.updatedAt : editedHere) out[m.id] = m
+    }
+    return { out, seen }
+  }
+  const pm = merge(s.patients, diskState?.patients ?? {}, P)
+  const cm = merge(s.consultations, diskState?.consultations ?? {}, C)
+  const patients = pm.out
+  const consultations = cm.out
+  const ws = diskState ?? pickPersisted(s)
+  const workspace = sanitizeWorkspace({
+    tabs: s.tabs, activeTabId: s.activeTabId, activeConsultationId: s.activeConsultationId, activeClipboardId: s.activeClipboardId, layout: s.layout,
+    settings: ws.settings, bookmarks: ws.bookmarks, rubricNotes: ws.rubricNotes, remedyNotes: ws.remedyNotes, recentSearches: ws.recentSearches,
+  }, patients, consultations)
+  // Keep this tab's tab objects where they are still valid, so its views do not remount.
+  const tabs = workspace.tabs.map(t => s.tabs.find(x => x.id === t.id) ?? t)
+  const state = { ...workspace, tabs, patients, consultations }
+  if (loaded) markFlushed({ ...loaded.state, patients: pm.seen, consultations: cm.seen }, loaded.diskKeys)
+  else flushed = emptyFlushed()
+  useApp.setState({ ...state, hydrated: true })
+}
+
+// ───────────────────────── autosave ─────────────────────────
+
 let suspended = false
+let writable = true
+let autosave: { dispose: () => void; flushNow: () => Promise<void>; schedule: () => void } | null = null
+const savedListeners = new Set<() => void>()
+/** Called after every successful write (the instance module tells read-only tabs to refresh). */
+export function onSaved(fn: () => void) { savedListeners.add(fn); return () => { savedListeners.delete(fn) } }
+
 /** Stop writing the workspace (used before wiping storage and reloading). */
-export function suspendAutosave() { suspended = true; if (timer) { clearTimeout(timer); timer = null } }
-/** Autosave: debounce writes of persisted slices whenever they change. */
-export function startAutosave() {
-  let last = pickPersisted(useApp.getState())
-  const flush = async () => {
-    timer = null
-    if (suspended) return
-    setStatus('saving')
-    try { await idbSet(KEY, pickPersisted(useApp.getState()), DB); setStatus('saved') } catch { setStatus('error') }
+export function suspendAutosave() { suspended = true; autosave?.dispose() }
+
+/** Allow or stop writes (another tab owns the workspace while false). */
+export function setWritable(on: boolean) {
+  writable = on
+  if (!on) setStatus('readonly')
+  else { setStatus('saved'); autosave?.schedule() }
+}
+
+/** Write pending changes now (tab handover, pagehide). */
+export function flushNow(): Promise<void> { return autosave?.flushNow() ?? Promise.resolve() }
+
+const idle = (fn: () => void): (() => void) => {
+  const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (h: number) => void }
+  if (w.requestIdleCallback) { const h = w.requestIdleCallback(fn, { timeout: 1000 }); return () => w.cancelIdleCallback?.(h) }
+  const h = setTimeout(fn, 0)
+  return () => clearTimeout(h)
+}
+
+/**
+ * Autosave: after a change, wait 400 ms, then diff in an idle callback and write only what changed.
+ * Flushes immediately on pagehide / when the page is hidden. Returns a disposer.
+ */
+export function startAutosave(): () => void {
+  if (autosave) return autosave.dispose
+  let debounce: ReturnType<typeof setTimeout> | null = null
+  let cancelIdle: (() => void) | null = null
+  let writing: Promise<void> | null = null
+  let again = false
+  const cancel = () => {
+    if (debounce) { clearTimeout(debounce); debounce = null }
+    if (cancelIdle) { cancelIdle(); cancelIdle = null }
   }
+
+  const flush = (): Promise<void> => {
+    cancel()
+    if (suspended || !writable || !backend) return Promise.resolve()
+    if (writing) { again = true; return writing }
+    const snap = pickPersisted(useApp.getState())
+    const d = diffState(snap)
+    if (!d.puts.length && !d.dels.length) { setStatus('saved'); return Promise.resolve() }
+    setStatus('saving')
+    writing = backend.write(d.puts, d.dels).then(
+      () => { applyFlushed(d, snap); setStatus('saved'); savedListeners.forEach(fn => fn()) },
+      e => { console.error('Autosave failed', e); setStatus('error') },
+    ).finally(() => {
+      writing = null
+      if (again) { again = false; void flush() }
+    })
+    return writing
+  }
+
+  const schedule = () => {
+    if (suspended) return
+    if (!backend) { setStatus('error'); return }
+    if (!writable) { setStatus('readonly'); return }
+    setStatus('pending')
+    if (debounce) clearTimeout(debounce)
+    if (cancelIdle) { cancelIdle(); cancelIdle = null }
+    debounce = setTimeout(() => { debounce = null; cancelIdle = idle(() => { cancelIdle = null; void flush() }) }, 400)
+  }
+
+  let seen = pickPersisted(useApp.getState())
   const unsub = useApp.subscribe(s => {
     if (!s.hydrated) return
-    const next = pickPersisted(s)
-    if (PERSISTED.every(k => next[k] === last[k])) return
-    last = next
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(flush, 400)
+    if (PERSISTED_FIELDS.every(k => s[k] === seen[k])) return
+    seen = pickPersisted(s)
+    schedule()
   })
-  const onHide = () => { if (timer) { clearTimeout(timer); void flush() } }
+  const onHide = () => { if (debounce || cancelIdle || status === 'pending') void flush() }
+  const onVisibility = () => { if (document.visibilityState === 'hidden') onHide() }
   window.addEventListener('pagehide', onHide)
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') onHide() })
-  return unsub
+  document.addEventListener('visibilitychange', onVisibility)
+
+  const dispose = () => {
+    cancel()
+    unsub()
+    window.removeEventListener('pagehide', onHide)
+    document.removeEventListener('visibilitychange', onVisibility)
+    autosave = null
+  }
+  autosave = { dispose, flushNow: flush, schedule }
+  // First run (seeded demo) or repaired data: nothing or stale data on disk yet.
+  const d = diffState(pickPersisted(useApp.getState()))
+  if (d.puts.length || d.dels.length || !backend) schedule()
+  else if (writable) setStatus('saved')
+  else setStatus('readonly')
+  return dispose
 }
 
+// ───────────────────────── export / import / reset ─────────────────────────
+
 export async function exportWorkspace(): Promise<Blob> {
-  const data = { format: 'radar-opus-workspace', version: 1, exportedAt: new Date().toISOString(), state: pickPersisted(useApp.getState()) }
+  const state = { version: SCHEMA_VERSION, ...pickPersisted(useApp.getState()) }
+  const data = { format: 'radar-opus-workspace', version: SCHEMA_VERSION, exportedAt: new Date().toISOString(), state }
   return new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
 }
 
-export async function importWorkspace(text: string) {
-  const data = JSON.parse(text)
-  if (data?.format !== 'radar-opus-workspace' || !data.state) throw new Error('Not a Radar Opus workspace file')
-  useApp.setState({ ...data.state, past: [], future: [] })
+/** Everything stored for this app, unvalidated (rescue export when the workspace cannot be restored). */
+export async function exportRawData(): Promise<Blob> {
+  const entries = backend ? await backend.entries() : []
+  const data = { format: 'radar-opus-raw', exportedAt: new Date().toISOString(), entries: Object.fromEntries(entries) }
+  return new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+}
+
+/** Parse and validate a workspace backup file. Throws with a readable message when it is not usable. */
+export function parseWorkspaceFile(text: string): SanitizeResult {
+  let data: unknown
+  try { data = JSON.parse(text) } catch { throw new Error('Not a Radar Opus workspace file (the file is not valid JSON)') }
+  const d = data as { format?: unknown; version?: unknown; state?: unknown } | null
+  if (!d || d.format !== 'radar-opus-workspace' || !d.state || typeof d.state !== 'object' || Array.isArray(d.state)) throw new Error('Not a Radar Opus workspace file')
+  const state = d.state as Record<string, unknown>
+  try {
+    // Files written before the split layout carry no schema version in the state (file format 1 = schema 1).
+    return sanitizePersisted({ version: typeof state.version === 'number' ? state.version : typeof d.version === 'number' ? d.version : 1, ...state })
+  } catch (e) {
+    throw new Error(`The workspace file cannot be restored: ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+export interface ImportSummary { patients: number; consultations: number; repairs: string[] }
+
+/**
+ * Restore a workspace backup: validate first (invalid files change nothing), ask to confirm the
+ * replacement, save the current workspace as a backup, then apply. The success toast offers Undo.
+ * Returns false when the user cancelled.
+ */
+export async function importWorkspace(text: string, confirm: (summary: ImportSummary) => Promise<boolean>): Promise<boolean> {
+  const { state, repairs } = parseWorkspaceFile(text)
+  const summary = { patients: Object.keys(state.patients).length, consultations: Object.keys(state.consultations).length, repairs }
+  if (!(await confirm(summary))) return false
+  const before = pickPersisted(useApp.getState())
+  if (backend) {
+    try { await backend.write([[BACKUP_KEY, { savedAt: new Date().toISOString(), state: { version: SCHEMA_VERSION, ...before } }]], []) } catch (e) {
+      throw new Error(`The current workspace could not be backed up, so nothing was changed (${e instanceof Error ? e.message : String(e)})`)
+    }
+  }
+  applyState(state)
+  actions.toast(
+    `Workspace restored: ${summary.patients} patient${summary.patients === 1 ? '' : 's'}, ${summary.consultations} consultation${summary.consultations === 1 ? '' : 's'}${repairs.length ? ` (${repairs.length} item${repairs.length === 1 ? '' : 's'} repaired)` : ''}`,
+    'success',
+    { label: 'Undo', run: () => { applyState(before); actions.toast('Previous workspace put back', 'info') } },
+    10000,
+  )
+  return true
+}
+
+/** Delete the stored workspace (all records). The caller reloads. */
+export async function clearStoredWorkspace(): Promise<void> {
+  suspendAutosave()
+  await backend?.clear()
 }

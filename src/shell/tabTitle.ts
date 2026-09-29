@@ -30,7 +30,7 @@ export function tabTitle(tab: Tab, catalog: Catalog, s: Pick<AppState, 'patients
     }
     case 'search':
       if (tab.mode === 'remedy') return tab.remedyId != null ? { title: catalog.remedy(tab.remedyId).abbrev, subtitle: 'Remedy search' } : { title: 'Remedy search' }
-      return { title: tab.query ? `“${tab.query}”` : 'Search', subtitle: 'Search' }
+      return tab.query ? { title: `“${tab.query}”`, subtitle: 'Search' } : { title: 'Search' }
     case 'families':
       return { title: 'Families & kingdoms' }
   }

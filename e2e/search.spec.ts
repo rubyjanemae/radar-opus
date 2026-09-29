@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test'
 import { openApp } from './helpers'
 
 const crumbs = (page: Page) => page.locator('.rv-crumbs')
-const searchTabs = (page: Page) => page.getByRole('tab').filter({ has: page.locator('.tab-sub', { hasText: /Search/ }) })
+const searchTabs = (page: Page) => page.locator('.tabstrip [role=tab][data-kind=search]')
 
 async function ready(page: Page) {
   await openApp(page)

@@ -297,6 +297,8 @@ test('relationships that trailed other sections are parsed (Ars, Lyc→Calc, Cal
 })
 
 test('materia medica: A–Z index and type-ahead', async ({ page }) => {
+  // controllable clock: the type-ahead prefix expires after 800 ms of page time
+  await page.clock.install()
   await openMM(page)
   const list = page.getByRole('listbox', { name: 'Boericke remedies' })
   const topRow = async () => (await rowsInView(page, '.mm-list', '.mm-row'))[0]
@@ -308,11 +310,11 @@ test('materia medica: A–Z index and type-ahead', async ({ page }) => {
   // type-ahead in the list
   await page.keyboard.type('sep', { delay: 30 })
   await expect(reader(page).locator('.mm-head h1')).toHaveText('SEPIA OFFICINALIS')
-  // j/k still move; Shift+K types a K
-  await page.waitForTimeout(900)
+  // j/k still move once the prefix expired; Shift+K types a K
+  await page.clock.fastForward(900)
   await page.keyboard.press('j')
   await expect(reader(page).locator('.mm-head h1')).not.toHaveText('SEPIA OFFICINALIS')
-  await page.waitForTimeout(900)
+  await page.clock.fastForward(900)
   await page.keyboard.press('Shift+K')
   await expect(reader(page).locator('.mm-head h1')).toHaveText(/^K/)
   // the index is one tab stop after the list; arrows move, Enter jumps

@@ -46,6 +46,21 @@ export interface CaseData {
 
 export interface Toast { id: string; text: string; tone: 'info' | 'success' | 'error'; action?: { label: string; run: () => void } }
 
+/** A tab closed by an undoable step, with its position, so undo can reopen it. */
+export interface ClosedTab { tab: Tab; index: number }
+
+/**
+ * One undo step: the case data before the step, the case focus at that moment and a
+ * human label ("Take rubric"). Tabs the step closed are reopened on undo and closed again on redo.
+ */
+export interface HistoryEntry extends CaseData {
+  label: string
+  activeConsultationId: string | null
+  activeClipboardId: string | null
+  activeTabId?: string | null
+  closedTabs?: ClosedTab[]
+}
+
 export interface AppState extends CaseData {
   hydrated: boolean
   // workspace
@@ -68,22 +83,113 @@ export interface AppState extends CaseData {
   dialog: { kind: string; props?: Record<string, unknown> } | null
   toasts: Toast[]
   // undo
-  past: CaseData[]
-  future: CaseData[]
+  past: HistoryEntry[]
+  future: HistoryEntry[]
 }
 
 type Set = (fn: (s: AppState) => Partial<AppState>) => void
 
 const UNDO_LIMIT = 200
 
-/** Apply a case-data mutation and record the previous snapshot for undo. */
-function mutateCase(set: Set, fn: (s: AppState) => Partial<CaseData> | null) {
-  set(s => {
+/** What a case mutation may change besides case data: focus and tabs it closes (recorded for undo). */
+type CasePatch = Partial<CaseData> & Partial<Pick<AppState, 'activeConsultationId' | 'activeClipboardId' | 'selectedSymptomIds' | 'tabs' | 'activeTabId'>> & { closedTabs?: ClosedTab[] }
+
+function historyEntry(s: AppState, label: string): HistoryEntry {
+  return { label, patients: s.patients, consultations: s.consultations, activeConsultationId: s.activeConsultationId, activeClipboardId: s.activeClipboardId, activeTabId: s.activeTabId }
+}
+
+// Transactions: while depth > 0 every case mutation collapses into one history entry.
+let txDepth = 0
+let txBase: HistoryEntry | null = null
+let txPushed = false
+let txLabel: string | undefined
+
+/** Hooks run for every tab removed by closeTab / closeOtherTabs / case deletions (features prune per-tab maps). */
+const tabClosedHooks = new Set<(tab: Tab) => void>()
+/** Register a hook called with each closed tab; returns an unregister function. */
+export function onTabClosed(fn: (tab: Tab) => void): () => void { tabClosedHooks.add(fn); return () => { tabClosedHooks.delete(fn) } }
+function notifyTabsClosed(tabs: Tab[]) {
+  for (const t of tabs) for (const fn of tabClosedHooks) { try { fn(t) } catch (e) { console.error(e) } }
+}
+
+/**
+ * Apply a case-data mutation and record the previous snapshot (case data + focus) for undo.
+ * `fn` returns null when nothing changes: no history entry, no updatedAt bump. Returns whether it applied.
+ */
+function mutateCase(label: string, fn: (s: AppState) => CasePatch | null): boolean {
+  let closed: ClosedTab[] = []
+  let applied = false
+  useApp.setState(s => {
     const patch = fn(s)
     if (!patch) return {}
-    const prev: CaseData = { patients: s.patients, consultations: s.consultations }
-    return { ...patch, past: [...s.past.slice(-UNDO_LIMIT + 1), prev], future: [] }
+    applied = true
+    const { closedTabs, ...rest } = patch
+    closed = closedTabs ?? []
+    if (txDepth > 0) {
+      if (!txPushed) {
+        txPushed = true
+        const entry: HistoryEntry = { ...(txBase ?? historyEntry(s, label)), label: txLabel ?? label, ...(closed.length ? { closedTabs: closed } : {}) }
+        return { ...rest, past: [...s.past.slice(-UNDO_LIMIT + 1), entry], future: [] }
+      }
+      if (!closed.length) return { ...rest, future: [] }
+      const last = s.past[s.past.length - 1]
+      const merged: HistoryEntry = { ...last, closedTabs: [...(last.closedTabs ?? []), ...closed] }
+      return { ...rest, past: [...s.past.slice(0, -1), merged], future: [] }
+    }
+    const entry: HistoryEntry = { ...historyEntry(s, label), ...(closed.length ? { closedTabs: closed } : {}) }
+    return { ...rest, past: [...s.past.slice(-UNDO_LIMIT + 1), entry], future: [] }
   })
+  if (closed.length) notifyTabsClosed(closed.map(c => c.tab))
+  return applied
+}
+
+/** Structural equality for patch values (plain objects and arrays, compared deeply). */
+export function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => sameValue(x, b[i]))
+  if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
+    const ka = Object.keys(a).filter(k => (a as Record<string, unknown>)[k] !== undefined)
+    const kb = Object.keys(b).filter(k => (b as Record<string, unknown>)[k] !== undefined)
+    return ka.length === kb.length && ka.every(k => sameValue((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]))
+  }
+  return false
+}
+
+/** `{ ...obj, ...patch }`, or `obj` itself when the patch changes nothing. */
+function applyPatch<T extends object>(obj: T, patch: Partial<T>): T {
+  for (const k of Object.keys(patch) as (keyof T)[]) if (!sameValue(obj[k], patch[k])) return { ...obj, ...patch }
+  return obj
+}
+
+/** Latest consultation of a patient (date, then creation), used when the active one goes away. */
+function latestConsultationOf(consultations: Record<string, Consultation>, patientId: string, except?: string): Consultation | null {
+  let best: Consultation | null = null
+  for (const c of Object.values(consultations)) {
+    if (c.patientId !== patientId || c.id === except) continue
+    if (!best || c.date > best.date || (c.date === best.date && c.createdAt > best.createdAt)) best = c
+  }
+  return best
+}
+
+/** Remove tabs matching `pred` (pinned too: they point at deleted records), recording them for undo. */
+function closeTabsWhere(s: AppState, pred: (t: Tab) => boolean): Pick<CasePatch, 'tabs' | 'activeTabId' | 'closedTabs'> {
+  const closedTabs: ClosedTab[] = []
+  s.tabs.forEach((tab, index) => { if (pred(tab)) closedTabs.push({ tab, index }) })
+  if (!closedTabs.length) return {}
+  const tabs = s.tabs.filter(t => !pred(t))
+  let activeTabId = s.activeTabId
+  if (activeTabId && !tabs.some(t => t.id === activeTabId)) {
+    const i = s.tabs.findIndex(t => t.id === activeTabId)
+    activeTabId = tabs[Math.min(i, tabs.length - 1)]?.id ?? null
+  }
+  return { tabs, activeTabId, closedTabs }
+}
+
+/** Focus after restoring case data: keep the recorded ids when they still exist. */
+function restoreFocus(consultations: Record<string, Consultation>, consultationId: string | null, clipboardId: string | null) {
+  const c = consultationId ? consultations[consultationId] : undefined
+  if (!c) return { activeConsultationId: null, activeClipboardId: null }
+  return { activeConsultationId: c.id, activeClipboardId: c.clipboards.some(cb => cb.id === clipboardId) ? clipboardId : c.clipboards[0]?.id ?? null }
 }
 
 function updateConsultation(s: AppState, id: string | null, fn: (c: Consultation) => Consultation | null): Partial<CaseData> | null {
@@ -95,9 +201,19 @@ function updateConsultation(s: AppState, id: string | null, fn: (c: Consultation
   return { consultations: { ...s.consultations, [id]: { ...next, updatedAt: Date.now() } } }
 }
 
+/** Update one clipboard; returns null (no history, no updatedAt bump) when `fn` returns the clipboard unchanged. */
 function updateClipboard(s: AppState, clipboardId: string, fn: (cb: Clipboard) => Clipboard): Partial<CaseData> | null {
   const cid = findConsultationOfClipboard(s, clipboardId)
-  return updateConsultation(s, cid, c => ({ ...c, clipboards: c.clipboards.map(cb => cb.id === clipboardId ? fn(cb) : cb) }))
+  return updateConsultation(s, cid, c => {
+    let changed = false
+    const clipboards = c.clipboards.map(cb => {
+      if (cb.id !== clipboardId) return cb
+      const next = fn(cb)
+      if (next !== cb) changed = true
+      return next
+    })
+    return changed ? { ...c, clipboards } : c
+  })
 }
 
 export function findConsultationOfClipboard(s: Pick<AppState, 'consultations'>, clipboardId: string): string | null {
@@ -139,32 +255,107 @@ export const selectActiveClipboard = (s: AppState) => {
 }
 export const selectActiveTab = (s: AppState) => s.tabs.find(t => t.id === s.activeTabId) ?? null
 
+// ───────────────────────── toasts ─────────────────────────
+
+const TOAST_MS = { plain: 3000, action: 6000 }
+/** Auto-dismiss timers; paused while the toast region is hovered or holds focus. */
+const toastTimers = new Map<string, { handle: ReturnType<typeof setTimeout> | null; remaining: number; startedAt: number }>()
+let toastsPaused = false
+
+function armToast(id: string) {
+  const t = toastTimers.get(id)
+  if (!t || toastsPaused) return
+  t.startedAt = Date.now()
+  t.handle = setTimeout(() => actions.dismissToast(id), t.remaining)
+}
+
+/** Symptoms describe the same rubric set (order-independent). */
+function rubricKey(sym: Symptom): string { return [...sym.rubrics].sort().join('|') }
+
 // ───────────────────────── actions ─────────────────────────
 
 export const actions = {
+  /**
+   * Run `fn` as one undo step: every case mutation inside collapses into a single history entry
+   * (labelled `label`, or the first mutation's label). Nested transactions join the outer one.
+   */
+  transaction<T>(fn: () => T, label?: string): T {
+    if (txDepth === 0) { txBase = historyEntry(get(), label ?? ''); txPushed = false; txLabel = label }
+    txDepth++
+    try {
+      return fn()
+    } finally {
+      txDepth--
+      if (txDepth === 0) { txBase = null; txPushed = false; txLabel = undefined }
+    }
+  },
+
   // undo / redo
   undo() {
-    set(s => {
-      const prev = s.past[s.past.length - 1]
-      if (!prev) return {}
-      return { ...prev, past: s.past.slice(0, -1), future: [{ patients: s.patients, consultations: s.consultations }, ...s.future] }
-    })
+    const s = get()
+    const entry = s.past[s.past.length - 1]
+    if (!entry) return
+    const redo: HistoryEntry = { ...historyEntry(s, entry.label), ...(entry.closedTabs ? { closedTabs: entry.closedTabs } : {}) }
+    let tabs = s.tabs
+    let activeTabId = s.activeTabId
+    if (entry.closedTabs?.length) {
+      tabs = [...tabs]
+      for (const { tab, index } of [...entry.closedTabs].sort((a, b) => a.index - b.index)) {
+        if (!tabs.some(t => t.id === tab.id)) tabs.splice(Math.min(index, tabs.length), 0, tab)
+      }
+      if (entry.activeTabId && tabs.some(t => t.id === entry.activeTabId)) activeTabId = entry.activeTabId
+    }
+    const focus = restoreFocus(entry.consultations, entry.activeConsultationId, entry.activeClipboardId)
+    set(() => ({
+      patients: entry.patients, consultations: entry.consultations, ...focus, tabs, activeTabId,
+      selectedSymptomIds: focus.activeClipboardId === s.activeClipboardId ? s.selectedSymptomIds : [],
+      past: s.past.slice(0, -1), future: [redo, ...s.future],
+    }))
+    actions.toast(`Undone: ${entry.label || 'last change'}`, 'info', undefined, 2000)
   },
   redo() {
-    set(s => {
-      const next = s.future[0]
-      if (!next) return {}
-      return { ...next, future: s.future.slice(1), past: [...s.past, { patients: s.patients, consultations: s.consultations }] }
-    })
+    const s = get()
+    const entry = s.future[0]
+    if (!entry) return
+    const undo: HistoryEntry = { ...historyEntry(s, entry.label), ...(entry.closedTabs ? { closedTabs: entry.closedTabs } : {}) }
+    const closing = new Set((entry.closedTabs ?? []).map(c => c.tab.id))
+    const closeTabs = closing.size ? closeTabsWhere(s, t => closing.has(t.id)) : {}
+    const focus = restoreFocus(entry.consultations, entry.activeConsultationId, entry.activeClipboardId)
+    set(() => ({
+      patients: entry.patients, consultations: entry.consultations, ...focus,
+      ...(closeTabs.tabs ? { tabs: closeTabs.tabs, activeTabId: closeTabs.activeTabId } : {}),
+      selectedSymptomIds: focus.activeClipboardId === s.activeClipboardId ? s.selectedSymptomIds : [],
+      future: s.future.slice(1), past: [...s.past, undo],
+    }))
+    if (closeTabs.closedTabs) notifyTabsClosed(closeTabs.closedTabs.map(c => c.tab))
+    actions.toast(`Redone: ${entry.label || 'change'}`, 'info', undefined, 2000)
   },
 
   // toasts
-  toast(text: string, tone: Toast['tone'] = 'info', action?: Toast['action']) {
+  toast(text: string, tone: Toast['tone'] = 'info', action?: Toast['action'], durationMs?: number) {
     const t: Toast = { id: uid('t'), text, tone, action }
+    const dropped = get().toasts.slice(0, -3)
     set(s => ({ toasts: [...s.toasts.slice(-3), t] }))
-    setTimeout(() => actions.dismissToast(t.id), action ? 6000 : 3000)
+    for (const d of dropped) { const tm = toastTimers.get(d.id); if (tm?.handle) clearTimeout(tm.handle); toastTimers.delete(d.id) }
+    toastTimers.set(t.id, { handle: null, remaining: durationMs ?? (action ? TOAST_MS.action : TOAST_MS.plain), startedAt: 0 })
+    armToast(t.id)
   },
-  dismissToast(id: string) { set(s => ({ toasts: s.toasts.filter(t => t.id !== id) })) },
+  dismissToast(id: string) {
+    const tm = toastTimers.get(id)
+    if (tm?.handle) clearTimeout(tm.handle)
+    toastTimers.delete(id)
+    set(s => s.toasts.some(t => t.id === id) ? { toasts: s.toasts.filter(t => t.id !== id) } : {})
+  },
+  /** Hold auto-dismiss while the pointer or focus is on the toasts (resume continues the remaining time). */
+  pauseToasts(paused: boolean) {
+    if (paused === toastsPaused) return
+    toastsPaused = paused
+    for (const [id, tm] of toastTimers) {
+      if (paused) {
+        if (tm.handle) { clearTimeout(tm.handle); tm.handle = null; tm.remaining = Math.max(800, tm.remaining - (Date.now() - tm.startedAt)) }
+      } else armToast(id)
+    }
+  },
 
   // tabs
   openTab(tab: NewTab, opts: { reuse?: boolean } = { reuse: true }) {
@@ -181,15 +372,22 @@ export const actions = {
     })
   },
   closeTab(id: string) {
+    let closed: Tab | null = null
     set(s => {
       const i = s.tabs.findIndex(t => t.id === id)
       if (i < 0 || s.tabs[i].pinned) return {}
+      closed = s.tabs[i]
       const tabs = s.tabs.filter(t => t.id !== id)
       const activeTabId = s.activeTabId === id ? (tabs[Math.min(i, tabs.length - 1)]?.id ?? null) : s.activeTabId
       return { tabs, activeTabId }
     })
+    if (closed) notifyTabsClosed([closed])
   },
-  closeOtherTabs(id: string) { set(s => ({ tabs: s.tabs.filter(t => t.id === id || t.pinned), activeTabId: id })) },
+  closeOtherTabs(id: string) {
+    const closed = get().tabs.filter(t => t.id !== id && !t.pinned)
+    set(s => ({ tabs: s.tabs.filter(t => t.id === id || t.pinned), activeTabId: id }))
+    notifyTabsClosed(closed)
+  },
   activateTab(id: string) { set(() => ({ activeTabId: id })) },
   cycleTab(delta: number) {
     set(s => {
@@ -280,26 +478,37 @@ export const actions = {
       id: uid('p'), firstName: '', lastName: '', birthDate: null, sex: null, email: '', phone: '', address: '',
       occupation: '', notes: '', tags: [], createdAt: now, updatedAt: now, ...p,
     }
-    mutateCase(set, s => ({ patients: { ...s.patients, [patient.id]: patient } }))
+    mutateCase('New patient', s => ({ patients: { ...s.patients, [patient.id]: patient } }))
     return patient.id
   },
   updatePatient(id: string, patch: Partial<Patient>) {
-    mutateCase(set, s => s.patients[id] ? { patients: { ...s.patients, [id]: { ...s.patients[id], ...patch, updatedAt: Date.now() } } } : null)
+    mutateCase('Edit patient', s => {
+      const cur = s.patients[id]
+      if (!cur) return null
+      const next = applyPatch(cur, patch)
+      return next === cur ? null : { patients: { ...s.patients, [id]: { ...next, updatedAt: Date.now() } } }
+    })
   },
+  /** Delete a patient with all consultations; closes their tabs (reopened by undo) and clears the case focus if it was theirs. */
   deletePatient(id: string) {
-    mutateCase(set, s => {
+    mutateCase('Delete patient', s => {
       if (!s.patients[id]) return null
       const patients = { ...s.patients }
       delete patients[id]
-      const consultations = Object.fromEntries(Object.entries(s.consultations).filter(([, c]) => c.patientId !== id))
-      return { patients, consultations }
+      const gone = new Set(Object.values(s.consultations).filter(c => c.patientId === id).map(c => c.id))
+      const consultations = Object.fromEntries(Object.entries(s.consultations).filter(([cid]) => !gone.has(cid)))
+      const tabPatch = closeTabsWhere(s, t => (t.kind === 'patient' && t.patientId === id) || (t.kind === 'analysis' && gone.has(t.consultationId)))
+      const focusGone = !!s.activeConsultationId && gone.has(s.activeConsultationId)
+      return {
+        patients, consultations, ...tabPatch,
+        ...(focusGone ? { activeConsultationId: null, activeClipboardId: null, selectedSymptomIds: [] } : {}),
+      }
     })
-    set(s => s.activeConsultationId && !s.consultations[s.activeConsultationId] ? { activeConsultationId: null, activeClipboardId: null } : {})
   },
   /** Insert (or replace) whole patients and consultations in one undo step (import, duplicate, restore). */
-  insertCaseData(patients: Patient[], consultations: Consultation[]) {
+  insertCaseData(patients: Patient[], consultations: Consultation[], label = 'Add case data') {
     if (!patients.length && !consultations.length) return
-    mutateCase(set, s => ({
+    mutateCase(label, s => ({
       patients: { ...s.patients, ...Object.fromEntries(patients.map(p => [p.id, p])) },
       consultations: { ...s.consultations, ...Object.fromEntries(consultations.map(c => [c.id, c])) },
     }))
@@ -308,21 +517,27 @@ export const actions = {
   // consultations
   createConsultation(patientId: string, patch: Partial<Consultation> = {}): string {
     const c = { ...newConsultation(patientId), ...patch }
-    mutateCase(set, s => ({ consultations: { ...s.consultations, [c.id]: c } }))
-    actions.setActiveConsultation(c.id)
+    mutateCase(c.kind === 'follow-up' ? 'New follow-up' : 'New consultation', s => ({
+      consultations: { ...s.consultations, [c.id]: c },
+      activeConsultationId: c.id, activeClipboardId: c.clipboards[0]?.id ?? null, selectedSymptomIds: [],
+    }))
     return c.id
   },
   updateConsultation(id: string, patch: Partial<Consultation>) {
-    mutateCase(set, s => updateConsultation(s, id, c => ({ ...c, ...patch })))
+    mutateCase('Edit consultation', s => updateConsultation(s, id, c => applyPatch(c, patch)))
   },
+  /** Delete a consultation; if it was the active case, the patient's latest remaining consultation becomes active. */
   deleteConsultation(id: string) {
-    mutateCase(set, s => {
-      if (!s.consultations[id]) return null
+    mutateCase('Delete consultation', s => {
+      const c = s.consultations[id]
+      if (!c) return null
       const consultations = { ...s.consultations }
       delete consultations[id]
-      return { consultations }
+      const tabPatch = closeTabsWhere(s, t => t.kind === 'analysis' && t.consultationId === id)
+      if (s.activeConsultationId !== id) return { consultations, ...tabPatch }
+      const next = latestConsultationOf(consultations, c.patientId)
+      return { consultations, ...tabPatch, activeConsultationId: next?.id ?? null, activeClipboardId: next?.clipboards[0]?.id ?? null, selectedSymptomIds: [] }
     })
-    set(s => s.activeConsultationId === id ? { activeConsultationId: null, activeClipboardId: null } : {})
   },
   setActiveConsultation(id: string | null) {
     set(s => ({ activeConsultationId: id, activeClipboardId: id ? s.consultations[id]?.clipboards[0]?.id ?? null : null, selectedSymptomIds: [] }))
@@ -335,22 +550,29 @@ export const actions = {
     const c = selectActiveConsultation(s)
     if (!c || c.clipboards.length >= MAX_CLIPBOARDS) return null
     const cb = newClipboard(c.clipboards.length)
-    mutateCase(set, st => updateConsultation(st, c.id, x => ({ ...x, clipboards: [...x.clipboards, cb], analysis: { ...x.analysis, clipboardIds: [...x.analysis.clipboardIds, cb.id] } })))
-    set(() => ({ activeClipboardId: cb.id }))
-    return cb.id
+    const ok = mutateCase('Add clipboard', st => {
+      const patch = updateConsultation(st, c.id, x => ({ ...x, clipboards: [...x.clipboards, cb], analysis: { ...x.analysis, clipboardIds: [...x.analysis.clipboardIds, cb.id] } }))
+      return patch && { ...patch, activeClipboardId: cb.id, selectedSymptomIds: [] }
+    })
+    return ok ? cb.id : null
   },
-  renameClipboard(id: string, name: string) { mutateCase(set, s => updateClipboard(s, id, cb => ({ ...cb, name }))) },
-  recolorClipboard(id: string, color: string) { mutateCase(set, s => updateClipboard(s, id, cb => cb.color === color ? cb : ({ ...cb, color }))) },
-  clearClipboard(id: string) { mutateCase(set, s => updateClipboard(s, id, cb => ({ ...cb, symptoms: [] }))) },
+  renameClipboard(id: string, name: string) { mutateCase('Rename clipboard', s => updateClipboard(s, id, cb => cb.name === name ? cb : ({ ...cb, name }))) },
+  recolorClipboard(id: string, color: string) { mutateCase('Change clipboard colour', s => updateClipboard(s, id, cb => cb.color === color ? cb : ({ ...cb, color }))) },
+  clearClipboard(id: string) { mutateCase('Clear clipboard', s => updateClipboard(s, id, cb => cb.symptoms.length ? ({ ...cb, symptoms: [] }) : cb)) },
   deleteClipboard(id: string) {
-    mutateCase(set, s => updateConsultation(s, findConsultationOfClipboard(s, id), c => c.clipboards.length <= 1 ? null : ({
-      ...c, clipboards: c.clipboards.filter(cb => cb.id !== id), analysis: { ...c.analysis, clipboardIds: c.analysis.clipboardIds.filter(x => x !== id) },
-    })))
-    set(s => s.activeClipboardId === id ? { activeClipboardId: selectActiveConsultation(s)?.clipboards[0]?.id ?? null } : {})
+    mutateCase('Delete clipboard', s => {
+      const patch = updateConsultation(s, findConsultationOfClipboard(s, id), c => c.clipboards.length <= 1 ? null : ({
+        ...c, clipboards: c.clipboards.filter(cb => cb.id !== id), analysis: { ...c.analysis, clipboardIds: c.analysis.clipboardIds.filter(x => x !== id) },
+      }))
+      if (!patch) return null
+      if (s.activeClipboardId !== id) return patch
+      const active = s.activeConsultationId ? patch.consultations?.[s.activeConsultationId] : undefined
+      return { ...patch, activeClipboardId: active?.clipboards[0]?.id ?? null, selectedSymptomIds: [] }
+    })
   },
   /** Empty several clipboards in one undoable step. */
   clearClipboards(ids: string[]) {
-    mutateCase(set, s => {
+    mutateCase(ids.length === 1 ? 'Clear clipboard' : 'Clear clipboards', s => {
       let consultations = s.consultations
       for (const id of ids) {
         const p = updateClipboard({ ...s, consultations }, id, cb => cb.symptoms.length ? { ...cb, symptoms: [] } : cb)
@@ -363,7 +585,7 @@ export const actions = {
   restoreClipboard(consultationId: string, clipboard: Clipboard, index: number, inAnalysis: boolean): boolean {
     const c = get().consultations[consultationId]
     if (!c || c.clipboards.length >= MAX_CLIPBOARDS || c.clipboards.some(cb => cb.id === clipboard.id)) return false
-    mutateCase(set, s => updateConsultation(s, consultationId, x => {
+    mutateCase('Restore clipboard', s => updateConsultation(s, consultationId, x => {
       const clipboards = [...x.clipboards]
       clipboards.splice(Math.min(index, clipboards.length), 0, clipboard)
       const ids = inAnalysis ? [...x.analysis.clipboardIds, clipboard.id] : x.analysis.clipboardIds
@@ -379,9 +601,9 @@ export const actions = {
     const cbId = opts.clipboardId ?? selectActiveClipboard(s)?.id
     if (!cbId) return 0
     let added = 0
-    mutateCase(set, st => updateClipboard(st, cbId, cb => {
+    mutateCase(refs.length === 1 ? 'Take rubric' : `Take ${refs.length} rubrics`, st => updateClipboard(st, cbId, cb => {
       const have = new Set(cb.symptoms.flatMap(x => x.rubrics.length === 1 ? x.rubrics : []))
-      const fresh: Symptom[] = refs.filter(r => !have.has(r)).map(r => ({
+      const fresh: Symptom[] = [...new Set(refs)].filter(r => !have.has(r)).map(r => ({
         id: uid('s'), rubrics: [r], combine: 'union', weight: opts.weight ?? 1, eliminatory: false, exclusive: false, group: null, causal: false, addedAt: Date.now(),
       }))
       added = fresh.length
@@ -392,58 +614,84 @@ export const actions = {
   /** Add one fully specified symptom (take with options, combined sub-rubrics) in one undo step. Returns its id. */
   addSymptom(clipboardId: string, fields: Partial<Omit<Symptom, 'id' | 'addedAt'>> & { rubrics: RubricRef[] }): string | null {
     const sym: Symptom = { combine: 'union', weight: 1, eliminatory: false, exclusive: false, group: null, causal: false, ...fields, id: uid('s'), addedAt: Date.now() }
-    let ok = false
-    mutateCase(set, st => updateClipboard(st, clipboardId, cb => { ok = true; return { ...cb, symptoms: [...cb.symptoms, sym] } }))
+    const ok = mutateCase('Take symptom', st => updateClipboard(st, clipboardId, cb => ({ ...cb, symptoms: [...cb.symptoms, sym] })))
     return ok ? sym.id : null
   },
   updateSymptom(clipboardId: string, symptomId: string, patch: Partial<Symptom>) {
-    mutateCase(set, s => updateClipboard(s, clipboardId, cb => ({ ...cb, symptoms: cb.symptoms.map(x => x.id === symptomId ? { ...x, ...patch } : x) })))
+    actions.updateSymptoms(clipboardId, [symptomId], patch)
   },
   removeSymptoms(clipboardId: string, symptomIds: string[]) {
     const ids = new Set(symptomIds)
-    mutateCase(set, s => updateClipboard(s, clipboardId, cb => ({ ...cb, symptoms: cb.symptoms.filter(x => !ids.has(x.id)) })))
+    mutateCase(ids.size === 1 ? 'Remove symptom' : `Remove ${ids.size} symptoms`, s => updateClipboard(s, clipboardId, cb => {
+      const symptoms = cb.symptoms.filter(x => !ids.has(x.id))
+      return symptoms.length === cb.symptoms.length ? cb : { ...cb, symptoms }
+    }))
     set(s => ({ selectedSymptomIds: s.selectedSymptomIds.filter(x => !ids.has(x)) }))
   },
   moveSymptom(clipboardId: string, symptomId: string, toIndex: number) {
-    mutateCase(set, s => updateClipboard(s, clipboardId, cb => {
+    mutateCase('Move symptom', s => updateClipboard(s, clipboardId, cb => {
       const list = [...cb.symptoms]
       const i = list.findIndex(x => x.id === symptomId)
       if (i < 0) return cb
       const [x] = list.splice(i, 1)
-      list.splice(Math.max(0, Math.min(toIndex, list.length)), 0, x)
+      const to = Math.max(0, Math.min(toIndex, list.length))
+      if (to === i) return cb
+      list.splice(to, 0, x)
       return { ...cb, symptoms: list }
     }))
   },
-  /** Move or copy symptoms to another clipboard of the same consultation. */
-  transferSymptoms(fromId: string, toId: string, symptomIds: string[], copy: boolean) {
+  /**
+   * Move or copy symptoms to another clipboard of the same consultation. Symptoms whose rubric set is
+   * already in the target are not duplicated: skipped when copying, merged (removed from the source) when moving.
+   */
+  transferSymptoms(fromId: string, toId: string, symptomIds: string[], copy: boolean): { transferred: number; skipped: number } {
     const ids = new Set(symptomIds)
-    mutateCase(set, s => {
+    let transferred = 0, skipped = 0, targetName = ''
+    mutateCase(copy ? 'Copy symptoms' : 'Move symptoms', s => {
       const cid = findConsultationOfClipboard(s, fromId)
       return updateConsultation(s, cid, c => {
         const from = c.clipboards.find(cb => cb.id === fromId)
-        if (!from || fromId === toId) return null
-        const moving = from.symptoms.filter(x => ids.has(x.id)).map(x => copy ? { ...x, id: uid('s') } : x)
+        const to = c.clipboards.find(cb => cb.id === toId)
+        if (!from || !to || fromId === toId) return null
+        targetName = to.name
+        const have = new Set(to.symptoms.map(rubricKey))
+        const moving = from.symptoms.filter(x => ids.has(x.id))
+        const fresh: Symptom[] = []
+        for (const x of moving) {
+          const k = rubricKey(x)
+          if (have.has(k)) continue
+          have.add(k)
+          fresh.push(copy ? { ...x, id: uid('s') } : x)
+        }
+        transferred = fresh.length
+        skipped = moving.length - fresh.length
+        if (!moving.length || (copy && !fresh.length)) return null
         return {
           ...c,
           clipboards: c.clipboards.map(cb => {
-            if (cb.id === toId) return { ...cb, symptoms: [...cb.symptoms, ...moving] }
+            if (cb.id === toId) return fresh.length ? { ...cb, symptoms: [...cb.symptoms, ...fresh] } : cb
             if (cb.id === fromId && !copy) return { ...cb, symptoms: cb.symptoms.filter(x => !ids.has(x.id)) }
             return cb
           }),
         }
       })
     })
+    if (skipped) actions.toast(`${skipped} symptom${skipped === 1 ? ' was' : 's were'} already in ${targetName || 'the target clipboard'}: ${copy ? 'skipped' : 'merged'}`, 'info')
+    return { transferred, skipped }
   },
-  /** Combine several symptoms into one (rubrics merged). */
+  /** Combine several symptoms into one (rubrics merged). The combined symptom starts without label or exclusion. */
   combineSymptoms(clipboardId: string, symptomIds: string[], mode: 'union' | 'intersection') {
     if (symptomIds.length < 2) return
     const ids = new Set(symptomIds)
-    mutateCase(set, s => updateClipboard(s, clipboardId, cb => {
+    mutateCase('Combine symptoms', s => updateClipboard(s, clipboardId, cb => {
       const parts = cb.symptoms.filter(x => ids.has(x.id))
+      if (parts.length < 2) return cb
       const first = cb.symptoms.findIndex(x => ids.has(x.id))
+      const groups = new Set(parts.map(p => p.group))
       const merged: Symptom = {
-        ...parts[0], id: uid('s'), rubrics: [...new Set(parts.flatMap(p => p.rubrics))], combine: mode,
-        weight: Math.max(...parts.map(p => p.weight)) as Weight, eliminatory: parts.some(p => p.eliminatory), causal: parts.some(p => p.causal),
+        id: uid('s'), rubrics: [...new Set(parts.flatMap(p => p.rubrics))], combine: mode,
+        weight: Math.max(...parts.map(p => p.weight)) as Weight, eliminatory: parts.some(p => p.eliminatory), exclusive: false,
+        group: groups.size === 1 ? parts[0].group : null, causal: parts.some(p => p.causal), addedAt: parts[0].addedAt,
       }
       const rest = cb.symptoms.filter(x => !ids.has(x.id))
       rest.splice(first, 0, merged)
@@ -451,29 +699,40 @@ export const actions = {
     }))
     set(() => ({ selectedSymptomIds: [] }))
   },
+  /** Split a combined symptom into one symptom per rubric (the combined label does not describe the parts). */
   splitSymptom(clipboardId: string, symptomId: string) {
-    mutateCase(set, s => updateClipboard(s, clipboardId, cb => {
+    mutateCase('Split symptom', s => updateClipboard(s, clipboardId, cb => {
       const i = cb.symptoms.findIndex(x => x.id === symptomId)
       const sym = cb.symptoms[i]
       if (!sym || sym.rubrics.length < 2) return cb
-      const parts = sym.rubrics.map(r => ({ ...sym, id: uid('s'), rubrics: [r], combine: 'union' as const }))
+      const parts = sym.rubrics.map(r => {
+        const { label: _label, ...rest } = sym
+        return { ...rest, id: uid('s'), rubrics: [r], combine: 'union' as const }
+      })
       const list = [...cb.symptoms]
       list.splice(i, 1, ...parts)
       return { ...cb, symptoms: list }
     }))
   },
   setSelectedSymptoms(ids: string[]) { set(() => ({ selectedSymptomIds: ids })) },
-  /** Patch several symptoms in one undo step; patch may be a function of the symptom. */
+  /** Patch several symptoms in one undo step; patch may be a function of the symptom. No-op patches record nothing. */
   updateSymptoms(clipboardId: string, symptomIds: string[], patch: Partial<Symptom> | ((s: Symptom) => Partial<Symptom>)) {
     const ids = new Set(symptomIds)
     if (!ids.size) return
-    mutateCase(set, s => updateClipboard(s, clipboardId, cb => ({
-      ...cb, symptoms: cb.symptoms.map(x => ids.has(x.id) ? { ...x, ...(typeof patch === 'function' ? patch(x) : patch) } : x),
-    })))
+    mutateCase(ids.size === 1 ? 'Edit symptom' : `Edit ${ids.size} symptoms`, s => updateClipboard(s, clipboardId, cb => {
+      let changed = false
+      const symptoms = cb.symptoms.map(x => {
+        if (!ids.has(x.id)) return x
+        const next = applyPatch(x, typeof patch === 'function' ? patch(x) : patch)
+        if (next !== x) changed = true
+        return next
+      })
+      return changed ? { ...cb, symptoms } : cb
+    }))
   },
   /** Reorder a clipboard to the given id order (ids not listed keep their relative order at the end). */
   reorderSymptoms(clipboardId: string, orderedIds: string[]) {
-    mutateCase(set, s => updateClipboard(s, clipboardId, cb => {
+    mutateCase('Reorder symptoms', s => updateClipboard(s, clipboardId, cb => {
       const byId = new Map(cb.symptoms.map(x => [x.id, x]))
       const seen = new Set<string>()
       const list: Symptom[] = []
@@ -484,24 +743,28 @@ export const actions = {
   },
   /** Re-insert symptoms at positions (used to undo a removal without touching later edits). */
   insertSymptoms(clipboardId: string, items: { symptom: Symptom; index: number }[]) {
-    mutateCase(set, s => updateClipboard(s, clipboardId, cb => {
+    if (!items.length) return
+    mutateCase(items.length === 1 ? 'Restore symptom' : 'Restore symptoms', s => updateClipboard(s, clipboardId, cb => {
       const list = cb.symptoms.filter(x => !items.some(it => it.symptom.id === x.id))
       for (const it of [...items].sort((a, b) => a.index - b.index)) list.splice(Math.min(it.index, list.length), 0, it.symptom)
-      return { ...cb, symptoms: list }
+      return list.length === cb.symptoms.length && list.every((x, i) => x === cb.symptoms[i]) ? cb : { ...cb, symptoms: list }
     }))
   },
 
   // analysis options
   setAnalysis(consultationId: string, patch: Partial<AnalysisOptions>) {
-    mutateCase(set, s => updateConsultation(s, consultationId, c => ({ ...c, analysis: { ...c.analysis, ...patch } })))
+    mutateCase('Change analysis options', s => updateConsultation(s, consultationId, c => {
+      const analysis = applyPatch(c.analysis, patch)
+      return analysis === c.analysis ? c : { ...c, analysis }
+    }))
   },
 
   // prescriptions
   addPrescription(consultationId: string, p: Omit<Prescription, 'id'>) {
-    mutateCase(set, s => updateConsultation(s, consultationId, c => ({ ...c, prescriptions: [...c.prescriptions, { ...p, id: uid('rx') }] })))
+    mutateCase('Add prescription', s => updateConsultation(s, consultationId, c => ({ ...c, prescriptions: [...c.prescriptions, { ...p, id: uid('rx') }] })))
   },
   removePrescription(consultationId: string, id: string) {
-    mutateCase(set, s => updateConsultation(s, consultationId, c => ({ ...c, prescriptions: c.prescriptions.filter(p => p.id !== id) })))
+    mutateCase('Remove prescription', s => updateConsultation(s, consultationId, c => c.prescriptions.some(p => p.id === id) ? ({ ...c, prescriptions: c.prescriptions.filter(p => p.id !== id) }) : c))
   },
 }
 

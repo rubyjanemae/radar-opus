@@ -85,7 +85,7 @@ describe('clipboard ops', () => {
     actions.setSelectedSymptoms([ids()[0]])
     ops.transferSelected(second, true)
     expect(cb().symptoms).toHaveLength(4)
-    actions.setSelectedSymptoms([ids()[0]])
+    actions.setSelectedSymptoms([ids()[1]])
     ops.transferSelected(second, false)
     expect(cb().symptoms).toHaveLength(3)
     const target = useApp.getState().consultations[useApp.getState().activeConsultationId!].clipboards.find(c => c.id === second)!

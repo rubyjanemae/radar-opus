@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { formatKeys, getCommand, isEnabled } from '../commands/registry'
+import { displayKey, execute, formatKeys, getCommand, isEnabled, isReserved } from '../commands/registry'
 
 export type MenuItem =
   | { type: 'separator' }
@@ -19,17 +19,24 @@ export type MenuItem =
       submenu?: MenuItem[]
     }
 
+export type MenuEntry = Extract<MenuItem, { type?: 'item' }>
+const isEntry = (it: MenuItem): it is MenuEntry => !('type' in it) || it.type === undefined || it.type === 'item'
+
+/** Why a menu closed: callers restore focus for keyboard closes and after an item ran. */
+export type MenuCloseReason = 'escape' | 'tab' | 'select' | 'outside' | 'blur'
+
 interface Resolved { label: string; keys?: string; disabled: boolean; checked?: boolean; danger?: boolean; run?: () => void; submenu?: MenuItem[] }
 
-function resolve(item: Extract<MenuItem, { type?: 'item' }>): Resolved {
+/** Label, shortcut and state of a menu entry; the shortcut shown is never one the browser keeps for itself. */
+export function resolveMenuItem(item: MenuEntry): Resolved {
   const cmd = item.command ? getCommand(item.command) : undefined
   return {
     label: item.label ?? cmd?.title ?? item.command ?? '',
-    keys: item.keys ?? cmd?.keys?.[0],
+    keys: item.keys !== undefined ? (isReserved(item.keys) ? undefined : item.keys) : displayKey(cmd?.keys),
     disabled: item.disabled ?? (cmd ? !isEnabled(cmd) : !item.run && !item.submenu),
     checked: item.checked ?? cmd?.checked?.(),
     danger: item.danger,
-    run: item.run ?? (cmd ? () => void cmd.run() : undefined),
+    run: item.run ?? (cmd ? () => void execute(cmd) : undefined),
     submenu: item.submenu,
   }
 }
@@ -38,7 +45,7 @@ interface MenuListProps {
   items: MenuItem[]
   x: number
   y: number
-  onClose: () => void
+  onClose: (reason?: MenuCloseReason) => void
   /** Called with -1/+1 when Left/Right is pressed at the top level (menubar navigation). */
   onNavigate?: (dir: -1 | 1) => void
   autoFocus?: boolean
@@ -46,18 +53,23 @@ interface MenuListProps {
   /** Opened as a submenu: Left closes it. */
   nested?: boolean
   /** Submenus: close the whole menu tree after an item runs (defaults to onClose). */
-  onDone?: () => void
+  onDone?: (reason?: MenuCloseReason) => void
+  /** Element to render the menu into (default <body>); e.g. the menubar's landmark for its dropdowns. */
+  container?: Element | null
   /** Submenus: left edge of the parent menu, used to flip the submenu to the left side when it does not fit on the right. */
   flipX?: number
 }
 
 /** Floating keyboard-navigable menu list; used for menubar dropdowns and context menus. */
-export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, label, nested, onDone, flipX }: MenuListProps) {
+export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, label, nested, onDone, flipX, container }: MenuListProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const baseId = useId()
+  const itemId = (i: number) => `${baseId}-item-${i}`
   const [pos, setPos] = useState({ x, y })
   const [active, setActive] = useState(-1)
   const [sub, setSub] = useState<{ index: number; x: number; y: number; flipX: number } | null>(null)
-  const actionable = items.map((it, i) => ('type' in it && (it.type === 'separator' || it.type === 'label')) ? -1 : i).filter(i => i >= 0)
+  const actionable = items.map((it, i) => (isEntry(it) ? i : -1)).filter(i => i >= 0)
+  const at = (i: number) => resolveMenuItem(items[i] as MenuEntry)
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -78,7 +90,7 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
   useEffect(() => {
     if (autoFocus) {
       ref.current?.focus()
-      setActive(actionable.find(i => !resolve(items[i] as never).disabled) ?? -1)
+      setActive(actionable.find(i => !at(i).disabled) ?? -1)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -87,9 +99,9 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
     if (nested) return
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement
-      if (!t.closest('.menu-list') && !t.closest('[data-menubar]')) onClose()
+      if (!t.closest('.menu-list') && !t.closest('[data-menubar]')) onClose('outside')
     }
-    const onBlur = () => onClose()
+    const onBlur = () => onClose('blur')
     window.addEventListener('mousedown', onDown, true)
     window.addEventListener('blur', onBlur)
     window.addEventListener('resize', onBlur)
@@ -97,7 +109,7 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
   }, [onClose, nested])
 
   const activate = (i: number) => {
-    const r = resolve(items[i] as never)
+    const r = at(i)
     if (r.disabled) return
     if (r.submenu) {
       const el = ref.current?.querySelectorAll<HTMLElement>('[data-index]')[actionable.indexOf(i)]
@@ -106,12 +118,12 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
       if (rect) setSub({ index: i, x: rect.right - 2, y: rect.top - 4, flipX: box?.left ?? rect.left })
       return
     }
-    ;(onDone ?? onClose)()
+    ;(onDone ?? onClose)('select')
     r.run?.()
   }
 
   const move = (d: number) => {
-    const enabled = actionable.filter(i => !resolve(items[i] as never).disabled)
+    const enabled = actionable.filter(i => !at(i).disabled)
     if (!enabled.length) return
     const k = enabled.indexOf(active)
     setActive(enabled[(k + d + enabled.length) % enabled.length])
@@ -124,6 +136,7 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
       role="menu"
       aria-label={label}
       tabIndex={-1}
+      aria-activedescendant={active >= 0 ? itemId(active) : undefined}
       style={{ left: pos.x, top: pos.y }}
       onContextMenu={e => e.preventDefault()}
       onKeyDown={e => {
@@ -133,30 +146,34 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
         else if (e.key === 'Home') { e.preventDefault(); setActive(-1); move(1) }
         else if (e.key === 'End') { e.preventDefault(); setActive(-1); move(-1) }
         else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (active >= 0) activate(active) }
-        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose() }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose('escape') }
         else if (e.key === 'ArrowRight') {
           e.preventDefault()
-          if (active >= 0 && resolve(items[active] as never).submenu) activate(active)
+          if (active >= 0 && at(active).submenu) activate(active)
           else onNavigate?.(1)
         } else if (e.key === 'ArrowLeft') {
           e.preventDefault()
-          if (nested) onClose()
+          if (nested) onClose('escape')
           else onNavigate?.(-1)
-        } else if (e.key === 'Tab') { e.preventDefault(); onClose() }
+        } else if (e.key === 'Tab') { e.preventDefault(); (onDone ?? onClose)('tab') }
         else if (e.key.length === 1) {
           const ch = e.key.toLowerCase()
-          const hit = actionable.find(i => i !== active && resolve(items[i] as never).label.toLowerCase().startsWith(ch) && !resolve(items[i] as never).disabled)
+          const hit = actionable.find(i => i !== active && at(i).label.toLowerCase().startsWith(ch) && !at(i).disabled)
           if (hit !== undefined) setActive(hit)
         }
       }}
     >
       {items.map((it, i) => {
-        if ('type' in it && it.type === 'separator') return <div key={i} className="menu-sep" role="separator" />
-        if ('type' in it && it.type === 'label') return <div key={i} className="menu-label">{it.label}</div>
-        const r = resolve(it as never)
+        if (!isEntry(it)) {
+          return it.type === 'separator'
+            ? <div key={i} className="menu-sep" role="separator" />
+            : <div key={i} className="menu-label" role="presentation">{it.label}</div>
+        }
+        const r = resolveMenuItem(it)
         return (
           <div
             key={i}
+            id={itemId(i)}
             data-index={i}
             role={r.checked !== undefined ? 'menuitemcheckbox' : 'menuitem'}
             aria-checked={r.checked}
@@ -179,7 +196,7 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
       {sub && (
         <MenuList
           nested
-          items={resolve(items[sub.index] as never).submenu ?? []}
+          items={at(sub.index).submenu ?? []}
           x={sub.x}
           y={sub.y}
           flipX={sub.flipX}
@@ -188,7 +205,7 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
         />
       )}
     </div>,
-    document.body,
+    container ?? document.body,
   )
 }
 
@@ -216,7 +233,11 @@ export function useContextMenu() {
         x={state.x}
         y={state.y}
         label="Context menu"
-        onClose={() => { setState(null); restore.current?.focus?.() }}
+        onClose={reason => {
+          setState(null)
+          // a click elsewhere moves focus itself; keyboard closes and chosen items return it
+          if (reason !== 'outside' && restore.current?.isConnected) restore.current.focus()
+        }}
       />
     ) : null,
   }

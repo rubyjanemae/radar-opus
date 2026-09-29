@@ -32,7 +32,7 @@
 
 /* ───────── menus ───────── */
 .menu-list {
-  position: fixed; z-index: 1000; min-width: 220px; max-width: 360px; padding: 4px;
+  position: fixed; z-index: var(--z-menu); min-width: 220px; max-width: 360px; padding: 4px;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 7px; box-shadow: var(--shadow-2);
   font-size: var(--fs-sm); outline: none; animation: pop .09s ease-out;
   max-height: calc(100vh - 8px); overflow-y: auto; overscroll-behavior: contain;
@@ -42,8 +42,8 @@
   display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 6px;
   height: 24px; padding: 0 8px 0 6px; border-radius: 4px; color: var(--text); white-space: nowrap;
 }
-.menu-item.active { background: var(--accent); color: #fff; }
-.menu-item.active .menu-keys { color: rgba(255, 255, 255, .8); }
+.menu-item.active { background: var(--active-bg); color: var(--active-fg); }
+.menu-item.active .menu-keys, .menu-item.active .menu-arrow { color: var(--active-fg-2); }
 .menu-item.disabled { color: var(--text-3); }
 .menu-item.disabled.active { background: var(--bg-hover); color: var(--text-3); }
 .menu-item.danger:not(.active) { color: var(--danger); }
@@ -56,8 +56,8 @@
 
 /* ───────── dialog ───────── */
 .dialog-backdrop {
-  position: fixed; inset: 0; z-index: 900; display: grid; place-items: start center; padding-top: 12vh;
-  background: rgba(15, 20, 30, .32); animation: fade .12s ease-out;
+  position: fixed; inset: 0; z-index: var(--z-dialog); display: grid; place-items: start center; padding-top: 12vh;
+  background: var(--scrim); animation: fade .12s ease-out;
 }
 @keyframes fade { from { opacity: 0; } }
 .dialog {
@@ -71,22 +71,26 @@
 .dialog-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border); background: var(--bg); border-radius: 0 0 9px 9px; }
 
 /* ───────── toasts ───────── */
-.toasts { position: fixed; bottom: 34px; left: 50%; transform: translateX(-50%); z-index: 1100; display: grid; gap: 6px; }
+/* bottom-right, just above the status bar: clear of the document being read */
+.toasts { position: fixed; right: 12px; bottom: 34px; z-index: var(--z-toast); display: grid; justify-items: end; gap: 6px; max-width: min(420px, calc(100vw - 24px)); }
 .toast {
   display: flex; align-items: center; gap: 10px; min-width: 260px; padding: 7px 8px 7px 12px;
-  border-radius: 7px; background: #1f2530; color: #f1f3f6; box-shadow: var(--shadow-2); font-size: var(--fs-sm);
+  border-radius: 7px; background: var(--inverse-bg); color: var(--inverse-fg); box-shadow: var(--shadow-2); font-size: var(--fs-sm);
   animation: pop .15s ease-out;
 }
 .toast span { flex: 1; }
-.toast-success { border-left: 3px solid #3ecf82; }
-.toast-error { border-left: 3px solid #ff6b5e; }
-.toast-action { border: 0; background: transparent; color: #8fb6ff; font-weight: 600; }
-.toast-x { border: 0; background: transparent; color: #aab1bd; font-size: 16px; line-height: 1; }
+.toast-success { border-left: 3px solid var(--inverse-success); }
+.toast-error { border-left: 3px solid var(--inverse-danger); }
+.toast-action { border: 0; background: transparent; color: var(--inverse-accent); font-weight: 600; }
+.toast-x { border: 0; background: transparent; color: var(--inverse-fg-2); font-size: 16px; line-height: 1; }
 
 /* ───────── states ───────── */
 .stub { padding: 16px; color: var(--text-3); font-style: italic; }
 .error-state { padding: 24px; display: grid; gap: 8px; justify-items: start; }
 .error-state h3 { margin: 0; font-size: 14px; }
+.error-inline { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 2px 8px; color: var(--danger); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; }
+.error-inline span { overflow: hidden; text-overflow: ellipsis; }
+.doc-skeleton { display: grid; align-content: start; gap: 12px; padding: 24px 28px; }
 .error-state pre { margin: 0; color: var(--danger); white-space: pre-wrap; font-size: var(--fs-sm); }
 .empty-state { display: grid; place-items: center; align-content: center; gap: 6px; padding: 32px 16px; text-align: center; color: var(--text-3); font-size: var(--fs-sm); height: 100%; }
 .empty-state strong { color: var(--text-2); font-weight: 600; font-size: var(--fs); }
@@ -102,7 +106,9 @@
 .splitter::after { content: ""; position: absolute; }
 .splitter-vertical::after { inset: 0 -3px; }
 .splitter-horizontal::after { inset: -3px 0; }
-.splitter:hover, .splitter:focus-visible { background: var(--accent); outline: none; }
+.splitter:hover { background: var(--accent); }
+/* keyboard focus: a 3px accent bar (the 1px line plus a 1px ring either side) */
+.splitter:focus-visible { background: var(--accent); outline: none; box-shadow: 0 0 0 1px var(--accent); }
 body.resizing-x, body.resizing-x * { cursor: col-resize !important; user-select: none; }
 body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select: none; }
 

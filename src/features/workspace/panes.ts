@@ -102,3 +102,23 @@ export function announce(text: string) {
   el.textContent = ''
   window.setTimeout(() => { el!.textContent = text }, 30)
 }
+
+/**
+ * Move focus into the active document: its `[data-autofocus]` element when it has one, otherwise the
+ * best focus target of the document pane (a list, the selected item, the first control).
+ * Used when focus would otherwise fall back to <body> (a closed tab, a closed menu or overlay).
+ */
+export function focusDocument(root: Document = document): HTMLElement | null {
+  const doc = root.querySelector<HTMLElement>(PANES[1].selector)
+  if (!doc) return null
+  const auto = doc.querySelector<HTMLElement>('[data-autofocus]')
+  const target = auto && isFocusable(auto) ? auto : focusTarget(doc, 'document')
+  target.focus({ preventScroll: true })
+  return target
+}
+
+/** True when nothing meaningful has focus (focus fell back to <body> or to a removed element). */
+export function focusIsLost(root: Document = document): boolean {
+  const a = root.activeElement
+  return !a || a === root.body || a === root.documentElement || !a.isConnected
+}
