@@ -71,8 +71,10 @@
 .srch-whole { color: var(--text-2); }
 .srch-scope .srch-field select { height: 24px; }
 .srch-rp { position: relative; display: flex; align-items: center; flex: 1; min-width: 220px; max-width: 420px; }
-.srch-rp-icon { position: absolute; left: 9px; color: var(--text-3); pointer-events: none; }
-.srch-rp-input { width: 100%; height: 30px; padding-left: 29px; font-size: var(--fs); }
+.srch-rp-icon { position: absolute; left: 10px; z-index: 1; color: var(--text-3); pointer-events: none; }
+/* scoped under .srch-rp so the shared .input padding cannot put the text under the icon */
+.srch-rp .srch-rp-input { width: 100%; height: 32px; padding: 0 10px 0 32px; border-radius: 7px; font-size: calc(var(--fs) + 1px); }
+.srch-rp-none { padding: 6px 8px; color: var(--text-3); font-size: var(--fs-sm); }
 .srch-rp-pop {
   position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 60; max-height: 320px; overflow: auto; padding: 3px;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 7px; box-shadow: var(--shadow-2);
@@ -89,16 +91,21 @@
 
 .srch-body { flex: 1; display: flex; min-height: 0; }
 .srch-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.srch-bar-row { flex: none; display: flex; align-items: center; gap: 8px; overflow: hidden; height: 34px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--border); background: var(--bg); font-size: var(--fs-sm); }
+.srch-bar-row { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-height: 34px; padding: 4px 8px 4px 12px; border-bottom: 1px solid var(--border); background: var(--bg); font-size: var(--fs-sm); }
 .srch-total { white-space: nowrap; color: var(--text-2); }
 .srch-total b { color: var(--text); font-variant-numeric: tabular-nums; }
 .srch-ms { margin-left: 8px; color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
-.srch-status { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; overflow: hidden; white-space: nowrap; }
+.srch-status { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 10px; overflow: hidden; white-space: nowrap; }
 .srch-desc { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); }
 .srch-err { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); font-size: var(--fs-xs); }
 .srch-pend { display: inline-flex; align-items: center; gap: 4px; color: var(--text-3); font-size: var(--fs-xs); }
 .srch-chip { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border: 1px solid var(--accent); border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-xs); font-weight: 600; }
-.srch-actions { display: flex; align-items: center; gap: 4px; }
+.srch-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.srch-open-label { margin-left: 4px; }
+/* narrow results column: the query description moves to its own line, Open collapses to its icon */
+.srch-body.narrow .srch-status { order: 10; flex: 1 1 100%; }
+.srch-body.narrow .srch-status:empty { display: none; }
+.srch-body.narrow .srch-open-label { display: none; }
 .srch-take { display: inline-flex; }
 .srch-take .btn-primary:first-child { border-radius: var(--radius) 0 0 var(--radius); }
 .srch-take-more { border-radius: 0 var(--radius) var(--radius) 0; padding: 0 4px; border-left-color: color-mix(in srgb, #fff 35%, var(--accent)); }
@@ -140,14 +147,20 @@
 .srch-recent-item:hover, .srch-recent-item:focus-visible { background: var(--bg-hover); }
 
 /* summary */
-.srch-sum { flex: none; width: 272px; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border); background: var(--bg); }
-.srch-sum-tabs { display: flex; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid var(--border); }
-.srch-sum-tabs button { height: 26px; padding: 0 8px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-2); font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; }
+.srch-sum { flex: none; width: clamp(210px, 32%, 300px); min-width: 0; overflow: hidden; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border); background: var(--bg); }
+.srch-sum-tabs { flex: none; display: flex; gap: 0; padding: 6px 6px 0; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+.srch-sum-tabs::-webkit-scrollbar { display: none; }
+.srch-sum-tabs button { flex: none; height: 26px; padding: 0 7px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-2); font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; }
 .srch-sum-tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
 .srch-sum-note { margin: 0; padding: 8px 12px 4px; color: var(--text-3); font-size: var(--fs-xs); line-height: 1.4; }
 .srch-bars { list-style: none; margin: 0; padding: 2px 6px 8px; overflow: auto; flex: 1; }
 .srch-barrow { display: grid; grid-template-columns: 74px 1fr 34px; align-items: center; gap: 6px; width: 100%; height: 22px; padding: 0 6px; border: 0; border-radius: 4px; background: transparent; font-size: var(--fs-xs); text-align: left; }
 .srch-barrow:hover { background: var(--bg-hover); }
+.srch-chapbars .srch-barrow { grid-template-columns: minmax(0, 118px) 1fr 34px; }
+.srch-bargroup { display: flex; justify-content: space-between; gap: 8px; padding: 8px 6px 3px; font-size: 10.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); }
+.srch-bargroup:first-child { padding-top: 2px; }
+.srch-bargroup span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srch-bargroup span:last-child { font-variant-numeric: tabular-nums; letter-spacing: 0; }
 .srch-barrow.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
 .srch-barlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); }
 .srch-bartrack { height: 12px; display: flex; align-items: center; }
@@ -176,4 +189,3 @@
 .srch-dot.d4 { background: var(--text-2); }
 .srch-dot.d5 { background: var(--g2); }
 
-@media (max-width: 1100px) { .srch-sum { width: 240px; } }

@@ -5,7 +5,7 @@ import { formatScore } from '../../engine/analysis'
 import type { AnalysisResult, AnalysisRow, ResolvedSymptom } from '../../engine/analysis'
 import type { MenuItem } from '../../ui/Menu'
 import { useContextMenu } from '../../ui/Menu'
-import { EXCLUSION_LABEL } from './export'
+import { exclusionText } from './export'
 
 export interface GridProps {
   result: AnalysisResult
@@ -23,6 +23,8 @@ export interface GridProps {
   symptomMenu?: (i: number) => MenuItem[]
   /** Scroll a remedy's column into view when `nonce` changes. */
   reveal?: { remedyId: number; nonce: number } | null
+  /** Remedies appended beyond the limit (drawn after a divider). */
+  pinned?: Set<number>
   compact?: boolean
   label?: string
 }
@@ -141,7 +143,8 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
     if (!p.reveal) return
     const c = rows.findIndex(r => r.remedyId === p.reveal!.remedyId)
     if (c < 0) return
-    setActive(a => ({ r: a.r, c }))
+    setActive({ r: -1, c })
+    focusWithin.current = true
     const el = scrollRef.current
     if (el) el.scrollLeft = Math.max(0, c * S.col - (el.clientWidth - S.label) / 2 + S.col / 2)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -286,6 +289,8 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
             if (row.excluded) cls.push('excl')
             if (p.highlight?.has(row.remedyId)) cls.push('fam')
             if (symSel != null) cls.push(row.grades[symSel] ? 'hit' : 'dim')
+            if (p.pinned?.has(row.remedyId)) cls.push('pinned')
+            if (p.pinned?.has(row.remedyId) && !p.pinned.has(rows[j - 1]?.remedyId)) cls.push('pin-first')
             return (
               <div
                 key={row.remedyId}
@@ -294,10 +299,11 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
                 aria-colindex={j + 2}
                 aria-selected={row.remedyId === p.selectedRemedy}
                 style={{ left: S.label + j * S.col }}
-                title={`${row.rank ? `#${row.rank} ` : ''}${rem.name}${row.excluded ? ` (${EXCLUSION_LABEL[row.excluded]})` : ''}\n${row.coverage} symptoms · ${row.degrees} degrees · score ${formatScore(result.strategy, row)}`}
+                title={`${row.rank ? `#${row.rank} ` : ''}${rem.name}${row.excluded ? ` (${exclusionText(result, row)})` : ''}\n${row.coverage} symptoms · ${row.degrees} degrees · score ${formatScore(result.strategy, row)}`}
                 {...cellProps(-1, j)}
               >
                 <span className="an-rank">{row.rank || '–'}</span>
+                {p.pinned?.has(row.remedyId) && <span className="sr-only">pinned beyond the limit</span>}
                 <span className="an-abbrev">{rem.abbrev}</span>
                 <span className="an-score">{formatScore(result.strategy, row)}</span>
               </div>
@@ -318,21 +324,25 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
               {cols.map(j => {
                 const row = rows[j]
                 const g = row.grades[i]
+                // Bönninghausen: grade raised from the linked general rubric
+                const gen = g > 0 && s.generals.length > 0 && (s.baseGrades.get(row.remedyId) ?? 0) < g
                 const c = ['an-cell']
                 if (row.excluded) c.push('excl')
                 if (p.highlight?.has(row.remedyId)) c.push('fam')
                 if (dimCol(row)) c.push('dim')
+                if (p.pinned?.has(row.remedyId) && !p.pinned.has(rows[j - 1]?.remedyId)) c.push('pin-first')
                 return (
                   <div
                     key={row.remedyId}
                     className={c.join(' ')}
                     role="gridcell"
                     aria-colindex={j + 2}
-                    aria-label={g ? `grade ${g}` : 'absent'}
+                    aria-label={`${catalog.remedy(row.remedyId).abbrev}, ${s.label}: ${g ? `grade ${g}${gen ? ' (generalised)' : ''}` : 'absent'}`}
                     style={{ left: S.label + j * S.col }}
                     {...cellProps(i, j)}
                   >
                     <GradeMark g={g} />
+                    {gen && <span className="an-cell-gen" aria-hidden="true">G</span>}
                   </div>
                 )
               })}

@@ -18,6 +18,7 @@ export function RepertoriesView({ tab }: { tab: RepertoriesTab }) {
   const idx = infos.indexOf(selected)
 
   return (
+    <div className="rtoc-wrap">
     <div className="rtoc">
       <div className="rtoc-list" role="listbox" aria-label="Repertories" tabIndex={0}
         aria-activedescendant={selected ? `rtoc-${selected.abbrev}` : undefined}
@@ -42,6 +43,7 @@ export function RepertoriesView({ tab }: { tab: RepertoriesTab }) {
         ))}
       </div>
       {selected ? <RepertoryDetail info={selected} /> : <div className="empty-state"><strong>No repertories installed</strong></div>}
+    </div>
     </div>
   )
 }

@@ -110,6 +110,42 @@ describe('clipboard ops', () => {
     expect(cb().symptoms).toHaveLength(4)
   })
 
+  it('undo of a deleted clipboard restores it in place without undoing later edits', () => {
+    const c = () => useApp.getState().consultations[useApp.getState().activeConsultationId!]
+    const first = cb().id
+    const second = actions.addClipboard()!
+    actions.addRubrics(['r:9'], { clipboardId: second })
+    actions.renameClipboard(second, 'Mentals')
+    actions.addClipboard()
+    ops.toggleInAnalysis(second)
+    ops.toggleInAnalysis(second)
+    actions.setActiveClipboard(second)
+    ops.deleteClipboard()
+    expect(c().clipboards).toHaveLength(2)
+    const toast = useApp.getState().toasts.at(-1)!
+    // a later, unrelated edit
+    actions.updateSymptom(first, c().clipboards[0].symptoms[0].id, { weight: 4 })
+    toast.action!.run()
+    expect(c().clipboards.map(x => x.id)[1]).toBe(second)
+    expect(c().clipboards[1]).toMatchObject({ name: 'Mentals', symptoms: [{ rubrics: ['r:9'] }] })
+    expect(c().analysis.clipboardIds).toContain(second)
+    expect(c().clipboards[0].symptoms[0].weight).toBe(4)
+    expect(cb().id).toBe(second)
+  })
+
+  it('clears all clipboards in one step, undo restores them', () => {
+    const c = () => useApp.getState().consultations[useApp.getState().activeConsultationId!]
+    const second = actions.addClipboard()!
+    actions.addRubrics(['r:7', 'r:8'], { clipboardId: second })
+    expect(ops.hasAnySymptoms()).toBe(true)
+    const past = useApp.getState().past.length
+    ops.clearAllClipboards()
+    expect(c().clipboards.every(x => x.symptoms.length === 0)).toBe(true)
+    expect(useApp.getState().past.length).toBe(past + 1)
+    useApp.getState().toasts.at(-1)!.action!.run()
+    expect(c().clipboards.map(x => x.symptoms.length)).toEqual([4, 2])
+  })
+
   it('toggles clipboards in the analysis selection, keeping clipboard order', () => {
     const first = cb().id
     const second = actions.addClipboard()!

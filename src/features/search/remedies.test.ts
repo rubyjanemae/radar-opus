@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Catalog } from '../../data/catalog'
-import { findRemedies, resolveRemedy } from './remedies'
+import { findRemedies, remedyIntent, resolveRemedy } from './remedies'
 
 const catalog = new Catalog([
   { id: 1, abbrev: 'Lach', name: 'Lachesis Muta', altName: null },
@@ -25,5 +25,18 @@ describe('remedy lookup', () => {
     expect(resolveRemedy(catalog, 'nat-m')).toBe(5)
     expect(resolveRemedy(catalog, 'lachesis')).toBe(1)
     expect(resolveRemedy(catalog, 'zzz')).toBeNull()
+  })
+  it('recognises a remedy typed on purpose', () => {
+    const intent = (q: string) => remedyIntent(q, findRemedies(catalog, q.replace(/^#/, '')))
+    expect(intent('lach')).toBe(true)
+    expect(intent('nat-m')).toBe(true)
+    expect(intent('Lachesis muta')).toBe(true)
+    expect(intent('#lac')).toBe(true)
+    expect(intent('acet')).toBe(true)
+    // short prefixes and ordinary words stay rubric searches
+    expect(intent('la')).toBe(false)
+    expect(intent('lac')).toBe(false)
+    expect(intent('muriat')).toBe(false)
+    expect(intent('fear')).toBe(false)
   })
 })

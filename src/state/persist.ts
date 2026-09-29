@@ -4,7 +4,7 @@ import type { AppState } from './store'
 
 const DB = createStore('radar-opus', 'workspace')
 const KEY = 'state-v1'
-const PERSISTED = ['patients', 'consultations', 'tabs', 'activeTabId', 'layout', 'settings', 'bookmarks', 'rubricNotes', 'recentSearches', 'activeConsultationId', 'activeClipboardId'] as const
+const PERSISTED = ['patients', 'consultations', 'tabs', 'activeTabId', 'layout', 'settings', 'bookmarks', 'rubricNotes', 'remedyNotes', 'recentSearches', 'activeConsultationId', 'activeClipboardId'] as const
 export type PersistedState = Pick<AppState, (typeof PERSISTED)[number]>
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
@@ -34,11 +34,15 @@ export async function hydrate(): Promise<boolean> {
 }
 
 let timer: ReturnType<typeof setTimeout> | null = null
+let suspended = false
+/** Stop writing the workspace (used before wiping storage and reloading). */
+export function suspendAutosave() { suspended = true; if (timer) { clearTimeout(timer); timer = null } }
 /** Autosave: debounce writes of persisted slices whenever they change. */
 export function startAutosave() {
   let last = pickPersisted(useApp.getState())
   const flush = async () => {
     timer = null
+    if (suspended) return
     setStatus('saving')
     try { await idbSet(KEY, pickPersisted(useApp.getState()), DB); setStatus('saved') } catch { setStatus('error') }
   }

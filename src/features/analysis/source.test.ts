@@ -63,6 +63,25 @@ describe('real repertories', () => {
   const pub = load('publicum', 'rep-publicum.json')
   const kent = load('kent-de', 'rep-kent-de.json')
 
+  it('links rubrics to Generalities for Bönninghausen and changes the ranking', () => {
+    const src = new CatalogSource(withRepertories([pub, kent]))
+    expect(src.label('publicum:7914')).toBe('HEAD - pain, morning')
+    const [g] = src.generalRubrics('publicum:7914')
+    expect(src.label(g)).toBe('GENERALITIES - morning')
+    expect(src.generalRubrics('publicum:191')).toEqual([]) // Mind is not generalised
+    expect(src.generalRubrics(g)).toEqual([]) // already general
+    expect(src.generalRubrics('publicum:7914')).toBe(src.generalRubrics('publicum:7914')) // cached
+    const refs = [191, 3774, 7914, 28632, 4559, 73029, 70850, 5739, 25321].map(i => `publicum:${i}`)
+    const cbs: Clipboard[] = [{ id: 'a', name: 'a', color: '', symptoms: refs.map((r, k) => ({ id: `s${k}`, rubrics: [r], combine: 'union', weight: 1, eliminatory: false, exclusive: false, group: null, causal: false, addedAt: 0 })) }]
+    const o = { clipboardIds: ['a'], remedyFilter: null, excludedRemedies: [], minCoverage: 0, limit: 20 }
+    const def = analyze(src, cbs, { ...o, strategy: 'sum-symptoms-degrees' })
+    const boen = analyze(src, cbs, { ...o, strategy: 'boenninghausen' })
+    expect(boen.symptoms.filter(s => s.generals.length).length).toBe(2) // head pain morning, perspiration night
+    expect(boen.rows.map(r => r.remedyId)).not.toEqual(def.rows.map(r => r.remedyId))
+    // generalisation only ever raises coverage
+    for (const r of def.all) expect(boen.all.find(x => x.remedyId === r.remedyId)!.coverage).toBeGreaterThanOrEqual(r.coverage)
+  })
+
   it('60 symptoms across both repertories analyse in < 30 ms (cold cache, every strategy warm)', () => {
     const pick = (rep: Repertory, k: number) => {
       // walk to the k-th rubric with 30+ remedies, spread over the book

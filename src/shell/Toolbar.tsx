@@ -1,9 +1,23 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, ArrowRight, ArrowUp, BarChart3, BookText, ClipboardPlus, Network, PanelLeft, PanelRight, PanelBottom, Users, Undo2, Redo2, Bookmark } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ArrowUp, BarChart3, BookText, ClipboardPlus, Network, PanelLeft, PanelRight, PanelBottom, Users, Undo2, Redo2, Bookmark, MoreHorizontal } from 'lucide-react'
 import { formatKeys, getCommand, isEnabled, onCommandsChanged, runCommand } from '../commands/registry'
 import { useCatalog } from '../data/CatalogContext'
 import { actions, useApp, selectActiveTab, selectActiveConsultation } from '../state/store'
 import { QuickFind } from '../features/search/QuickFind'
+import { useContextMenu } from '../ui/Menu'
+import type { MenuItem } from '../ui/Menu'
+
+/** Lower-priority tools that fold into the "More tools" menu in narrow windows (see workspace.css). */
+const OVERFLOW_ITEMS: MenuItem[] = [
+  { command: 'rubric.bookmark' },
+  { type: 'separator' },
+  { command: 'edit.undo' },
+  { command: 'edit.redo' },
+  { type: 'separator' },
+  { command: 'patients.open' },
+  { command: 'mm.open' },
+  { command: 'families.open' },
+]
 
 function ToolButton({ command, icon: Icon, label, pressed }: { command: string; icon: typeof ArrowLeft; label?: string; pressed?: boolean }) {
   const cmd = getCommand(command)
@@ -33,6 +47,7 @@ export function Toolbar() {
   const activeClipboardId = useApp(s => s.activeClipboardId)
   const layout = useApp(s => s.layout)
   useApp(s => s.past.length + s.future.length)
+  const more = useContextMenu()
 
   return (
     <div className="toolbar" role="toolbar" aria-label="Main toolbar">
@@ -54,8 +69,8 @@ export function Toolbar() {
       </div>
       <QuickFind />
       <div className="tool-group">
-        <ToolButton command="rubric.add" icon={ClipboardPlus} label="Add" />
-        <ToolButton command="rubric.bookmark" icon={Bookmark} />
+        <ToolButton command="rubric.add" icon={ClipboardPlus} label="Take" />
+        <span className="tool-low"><ToolButton command="rubric.bookmark" icon={Bookmark} /></span>
       </div>
       <div className="tool-group clip-switch" role="group" aria-label="Active clipboard">
         {consultation?.clipboards.map((cb, i) => (
@@ -85,21 +100,27 @@ export function Toolbar() {
         <ToolButton command="analysis.open" icon={BarChart3} label="Analyse" />
       </div>
       <div className="tool-spacer" />
-      <div className="tool-group">
+      <div className="tool-group tool-low">
         <ToolButton command="edit.undo" icon={Undo2} />
         <ToolButton command="edit.redo" icon={Redo2} />
       </div>
-      <div className="tool-group">
+      <div className="tool-group tool-low">
         <ToolButton command="patients.open" icon={Users} />
         <ToolButton command="mm.open" icon={BookText} />
         <ToolButton command="families.open" icon={Network} />
       </div>
-      <div className="tool-group">
+      <div className="tool-group tool-more">
+        <button className="tool-btn" aria-label="More tools" title="More tools" aria-haspopup="menu" onClick={e => more.openAt(e.currentTarget, OVERFLOW_ITEMS)}>
+          <MoreHorizontal size={15} />
+        </button>
+      </div>
+      <div className="tool-group tool-panes">
         <ToolButton command="view.toggleTree" icon={PanelLeft} pressed={layout.showTree} />
         <ToolButton command="view.toggleDock" icon={PanelBottom} pressed={layout.showAnalysisDock} />
         <ToolButton command="view.toggleClipboard" icon={PanelRight} pressed={layout.showClipboard} />
       </div>
       <span hidden>{consultation?.id}</span>
+      {more.element}
     </div>
   )
 }

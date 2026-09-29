@@ -37,6 +37,9 @@ async function analysedCase(page: Page, refs = RUBRICS) {
 test.beforeEach(async ({ page }) => { await openApp(page) })
 
 test('F8 without a case explains instead of opening an empty tab', async ({ page }) => {
+  // the app seeds a demo case: close it first
+  await page.getByTestId('clipboard-panel').getByRole('button', { name: 'Switch case' }).click()
+  await page.getByRole('menuitem', { name: 'Close case' }).click()
   await page.keyboard.press('F8')
   await expect(page.locator('.toast')).toContainText('No active case')
   await expect(view(page)).toHaveCount(0)
@@ -83,6 +86,8 @@ test('keyboard grid navigation and drill-down panel', async ({ page }) => {
   await page.keyboard.press('ArrowRight')
   await page.keyboard.press('ArrowRight')
   await expect(page.locator('[data-cell="-1:1"]')).toBeFocused()
+  // cells name their remedy and symptom for screen readers
+  await expect(page.locator('[data-cell="0:0"]')).toHaveAttribute('aria-label', /^\S+, MIND - anxiety, night: (grade \d|absent)$/)
   await page.keyboard.press('Enter')
   const panel = page.getByTestId('remedy-panel')
   await expect(panel).toBeVisible()
@@ -132,18 +137,67 @@ test('exclude, show in position, intensity toggle and filters', async ({ page })
   await intensity.click()
   await expect(intensity).toHaveAttribute('aria-pressed', 'false')
 
-  // remedy filter dialog: limit to two remedies
+  // family filter (the Filter button defers to the families feature): limit to Plants
   await view(page).getByRole('button', { name: 'Filter remedies' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Filter remedies' })
-  await dialog.getByRole('checkbox').nth(1).check()
-  await dialog.getByRole('checkbox').nth(2).check()
-  await dialog.getByRole('button', { name: 'Apply' }).click()
-  await expect(view(page).locator('.an-count')).toContainText('2 remedies')
-  await expect(view(page).locator('.an-pill')).toContainText('Limited: 2 remedies')
+  const fam = page.getByRole('dialog', { name: 'Family filter' })
+  const find = fam.getByLabel('Find family')
+  await find.fill('plants')
+  await find.press('ArrowDown')
+  await page.keyboard.press('Space')
+  await fam.getByTestId('fam-apply').click()
+  await expect(fam).toBeHidden()
+  await expect(view(page).locator('.an-pillbar')).toContainText('Limited: Plants')
+  const toolbarHeight = await view(page).locator('.an-toolbar').evaluate(e => e.getBoundingClientRect().height)
+
+  // the analysis's own picker: exclude a remedy and require a minimum coverage
+  await view(page).getByRole('button', { name: 'Filter options' }).click()
+  await page.getByRole('menuitem', { name: 'Include / exclude remedies…' }).click()
+  const pick = page.getByRole('dialog', { name: 'Filter remedies' })
+  await pick.getByRole('tab', { name: 'Exclude' }).click()
+  // checkbox 0 is "In this analysis only"; 1 is the first remedy
+  await pick.getByRole('checkbox').nth(1).check()
+  await pick.getByLabel('Minimum symptoms covered').fill('3')
+  await pick.getByRole('button', { name: 'Apply' }).click()
+  await expect(view(page).locator('.an-pillbar')).toContainText('1 excluded')
+  await expect(view(page).locator('.an-pillbar')).toContainText('≥ 3 symptoms')
+  // pills live below the toolbar, so the toolbar keeps its height
+  expect(await view(page).locator('.an-toolbar').evaluate(e => e.getBoundingClientRect().height)).toBe(toolbarHeight)
+
   await page.keyboard.press('Control+k')
-  await page.keyboard.type('Remove remedy filters')
+  await page.keyboard.type('Remove all remedy filters')
   await page.keyboard.press('Enter')
-  await expect(view(page).locator('.an-pill')).toHaveCount(0)
+  await expect(view(page).locator('.an-pillbar')).toHaveCount(0)
+})
+
+test('remedy box pins a remedy beyond the limit as an extra column', async ({ page }) => {
+  await analysedCase(page)
+  await view(page).getByRole('combobox', { name: 'Remedies shown' }).selectOption('10')
+  await expect(headers(page)).toHaveCount(10)
+  const lastRanked = await headers(page).nth(9).locator('.an-abbrev').textContent()
+  // pick a remedy ranked beyond the top 10 from the remedy box
+  const box = view(page).getByRole('combobox', { name: 'Jump to remedy in analysis' })
+  await box.fill('a')
+  const options = view(page).getByRole('option')
+  await expect(options.first()).toBeVisible()
+  const ranks = (await options.locator('.an-rbox-rank').allTextContents()).map(Number)
+  const k = ranks.findIndex(r => r > 10)
+  expect(k).toBeGreaterThanOrEqual(0)
+  const target = (await options.nth(k).locator('strong').textContent())!
+  const rank = String(ranks[k])
+  await options.nth(k).click()
+  await expect(headers(page)).toHaveCount(11)
+  await expect(headers(page).nth(9).locator('.an-abbrev')).toHaveText(lastRanked!)
+  const pinned = headers(page).nth(10)
+  await expect(pinned).toHaveClass(/pinned/)
+  await expect(pinned.locator('.an-abbrev')).toHaveText(target)
+  await expect(pinned.locator('.an-rank')).toHaveText(rank)
+  await expect(pinned).toBeFocused()
+  await expect(page.getByTestId('remedy-panel').locator('h3')).toHaveText(target)
+  // the same remedy is appended in bars too, and unpinning removes it
+  await page.keyboard.press('b')
+  await expect(view(page).locator('.an-bar-row.pinned .an-bar-abbrev')).toHaveText(target)
+  await view(page).getByRole('button', { name: `Unpin ${target}` }).click()
+  await expect(view(page).locator('.an-bar-row.pinned')).toHaveCount(0)
 })
 
 test('bars and cards views, keyboard view switching', async ({ page }) => {
@@ -154,6 +208,16 @@ test('bars and cards views, keyboard view switching', async ({ page }) => {
   const bars = view(page).locator('.an-bar-row')
   await expect(bars.first()).toBeVisible()
   expect(await bars.first().locator('.an-bseg').count()).toBeGreaterThan(5)
+  // focus follows the view switch, so the keyboard keeps working without the mouse
+  await expect(bars.first()).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(bars.nth(1)).toBeFocused()
+  await page.keyboard.press('c')
+  await expect(view(page).locator('.an-card').first()).toBeFocused()
+  await page.keyboard.press('g')
+  await expect(view(page).locator('.an-grid [data-cell][tabindex="0"]')).toBeFocused()
+  await page.keyboard.press('b')
+  await expect(bars.first()).toBeFocused()
   await bars.first().locator('.an-bar-abbrev').click()
   await expect(page.getByTestId('remedy-panel')).toBeVisible()
   await view(page).getByRole('radio', { name: 'Cards' }).click()
@@ -181,6 +245,12 @@ test('export CSV and print', async ({ page }) => {
   await view(page).locator('.an-corner').click()
   await page.keyboard.press('Control+p')
   await expect.poll(() => page.evaluate(() => (window as unknown as { __printed: string }).__printed)).toContain('MIND - anxiety, night')
+  // outside a print command the app is not hidden, so a browser-menu print is not blank
+  await expect(page.locator('.an-print-root')).toHaveCount(0)
+  await expect(page.locator('body')).not.toHaveClass(/an-printing/)
+  await page.emulateMedia({ media: 'print' })
+  await expect(page.locator('.shell')).toBeVisible()
+  await page.emulateMedia({ media: 'screen' })
 })
 
 test('compare remedies and the analysis dock', async ({ page }) => {
@@ -204,4 +274,11 @@ test('compare remedies and the analysis dock', async ({ page }) => {
   const dock = page.getByTestId('analysis-dock')
   await expect(dock.locator('.an-dock-bar')).toHaveCount(15)
   await expect(dock.locator('.an-hcell')).toHaveCount(15)
+  // bars are stacked by grade, carry the score and select the remedy in the analysis tab
+  const bar = dock.locator('.an-dock-bar').nth(4)
+  await expect(bar).toHaveAttribute('title', /\d+\/\d+\ngrade/)
+  expect(await bar.locator('.an-dock-stack > span').count()).toBeGreaterThan(0)
+  const abbrev = (await bar.getAttribute('aria-label'))!.split(', ')[1]
+  await bar.click()
+  await expect(page.getByTestId('remedy-panel').locator('h3')).toHaveText(abbrev)
 })

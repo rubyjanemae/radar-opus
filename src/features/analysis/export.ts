@@ -27,6 +27,15 @@ export const EXCLUSION_LABEL: Record<NonNullable<AnalysisRow['excluded']>, strin
   coverage: 'too few symptoms covered',
 }
 
+/** Why a row is excluded, naming the responsible symptom line when there is one. */
+export function exclusionText(result: Pick<AnalysisResult, 'symptoms'>, row: Pick<AnalysisRow, 'excluded' | 'excludedBy'>): string {
+  if (!row.excluded) return ''
+  const line = row.excludedBy ? result.symptoms.find(s => s.symptom.id === row.excludedBy || s.members.some(m => m.id === row.excludedBy)) : undefined
+  if (row.excluded === 'eliminative' && line) return `missing eliminative symptom: ${line.label}`
+  if (row.excluded === 'excluding' && line) return `in excluding symptom: ${line.label}`
+  return EXCLUSION_LABEL[row.excluded]
+}
+
 function cell(v: string | number): string {
   const s = String(v)
   return /[",\n\r;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s

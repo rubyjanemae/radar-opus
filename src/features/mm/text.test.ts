@@ -59,7 +59,8 @@ describe('remedy resolver', () => {
   it('rejects prose', () => {
     expect(abbrevOf('Gnawing, hungry, faint feeling')).toBeNull()
     expect(abbrevOf('in')).toBeNull()
-    expect(abbrevOf('Hyd')).toBeNull()
+    expect(abbrevOf('Hydrocele')).toBeNull()
+    expect(abbrevOf('Hyd')).toBe('Hydr')
   })
 })
 
@@ -95,6 +96,17 @@ describe('relationships', () => {
     const g = groupRelations(rel)
     expect(g.map(x => x.kind)).toEqual(['Inimical', 'Compare'])
     expect(g[1].remedies).toEqual([3, 6])
+  })
+  it('links a remedy in a sequence phrase and plain names in Incompatible clauses', () => {
+    const withBook = new RemedyResolver(REMS, REMS.map(r => [r.id, r.name.toUpperCase()]))
+    const rel = groupRelations(parseRelationships('Complementary: *Sep* acts well *after Pulsat* and *Thuja*.\nIncompatible: *Bry*; Phosphorus should not be given *after* Sep.\nCompare: *Water cure*.', withBook, 16))
+    const ab = (k: string) => rel.find(g => g.kind === k)!.remedies.map(id => REMS.find(r => r.id === id)!.abbrev)
+    expect(ab('Complementary')).toEqual(['Puls', 'Thuj'])
+    expect(ab('Inimical')).toEqual(['Bry', 'Phos'])
+    expect(rel.find(g => g.kind === 'Compare')).toBeUndefined()
+    // prose stays prose outside Incompatible clauses
+    const spans = parseParagraph('Compare: Phosphorus should be studied.', withBook, { relationship: true, selfId: 16 })
+    expect(spans.some(s => s.remedyId !== undefined)).toBe(false)
   })
   it('treats an unlabelled opening as Compare', () => {
     expect(parseRelationships('*Puls; Sep*.', resolver, null)[0]).toMatchObject({ kind: 'Compare', remedies: [3, 16] })

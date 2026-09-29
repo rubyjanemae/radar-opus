@@ -20,7 +20,7 @@ export function parseMode(q: string): { mode: Mode; text: string } {
 }
 
 export type PaletteItem =
-  | { kind: 'command'; command: Command; positions?: number[]; disabled?: boolean; recent?: boolean; score: number }
+  | { kind: 'command'; command: Command; positions?: number[]; disabled?: boolean; recent?: boolean; score: number; why?: string }
   | { kind: 'tab'; id: string; title: string; subtitle?: string; positions?: number[]; disabled?: boolean; score: number }
   | { kind: 'patient'; patient: Patient; label: string; positions?: number[]; disabled?: boolean; score: number }
   | { kind: 'remedy'; remedy: Remedy; disabled?: boolean; score: number }
@@ -34,10 +34,40 @@ export interface PaletteInput {
   text: string
   commands: Command[]
   recent: string[]
-  tabs: { id: string; title: string; subtitle?: string }[]
+  /** How often each command was run from the palette (for the empty-query suggestions). */
+  counts?: Record<string, number>
+  tabs: { id: string; title: string; subtitle?: string; active?: boolean }[]
   patients: Patient[]
   remedies: (q: string) => RemedyMatch[]
   rubrics: (q: string) => { hits: { ref: RubricRef; rep: Repertory; index: number }[]; pending: boolean }
+}
+
+/** Everyday commands suggested on an empty palette before anything has been used. */
+const COMMON = ['search.open', 'search.remedy', 'analysis.open', 'patients.open', 'patient.new', 'mm.open', 'app.settings']
+
+const foldWord = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+
+/**
+ * Why a command matched although its title did not: the keyword or category words that
+ * start with (or, for longer queries, contain) each query word. Null when there is no such match.
+ */
+export function keywordReason(q: string, c: Pick<Command, 'title' | 'category' | 'keywords'>): string | null {
+  const words = foldWord(q).split(/\s+/).filter(Boolean)
+  if (!words.length) return null
+  const split = (s: string) => s.split(/[\s,…]+/).filter(Boolean)
+  const title = split(c.title)
+  const pool = split(`${c.keywords ?? ''} ${c.category}`)
+  const find = (list: string[], w: string) => list.find(p => foldWord(p).startsWith(w)) ?? (w.length >= 3 ? list.find(p => foldWord(p).includes(w)) : undefined)
+  const found: string[] = []
+  let viaKeyword = false
+  for (const w of words) {
+    if (find(title, w)) continue
+    const hit = find(pool, w)
+    if (!hit) return null
+    viaKeyword = true
+    if (!found.includes(hit)) found.push(hit)
+  }
+  return viaKeyword ? found.join(', ') : null
 }
 
 export const patientLabel = (p: Patient) => [p.lastName, p.firstName].filter(Boolean).join(', ') || 'Unnamed patient'
@@ -55,23 +85,37 @@ export function paletteItems(inp: PaletteInput): Section[] {
     const visible = inp.commands.filter(c => !c.hidden)
     if (!q) {
       const byId = new Map(visible.map(c => [c.id, c]))
-      const recent = inp.recent.map(id => byId.get(id)).filter((c): c is Command => !!c).slice(0, 5)
-      if (recent.length) sections.push({ key: 'recent', label: 'Recently used', strength: 3000, items: recent.map(c => ({ kind: 'command', command: c, recent: true, disabled: !isEnabled(c), score: 0 })) })
-      const rest = visible.filter(c => !recent.includes(c)).map(c => ({ c, on: isEnabled(c) }))
-        .sort((a, b) => Number(b.on) - Number(a.on) || a.c.category.localeCompare(b.c.category) || a.c.title.localeCompare(b.c.title))
-      sections.push({ key: 'commands', label: 'Commands', strength: 2000, items: rest.map(({ c, on }) => ({ kind: 'command', command: c, disabled: !on, score: 0 })) })
+      const recent = inp.recent.map(id => byId.get(id)).filter((c): c is Command => !!c && isEnabled(c)).slice(0, 5)
+      if (recent.length) sections.push({ key: 'recent', label: 'Recently used', strength: 3000, items: recent.map(c => ({ kind: 'command', command: c, recent: true, score: 0 })) })
+      const shown = new Set(recent)
+      if (all) {
+        // open tabs come right after the recent commands
+        const tabs = inp.tabs.filter(t => !t.active).slice(0, 8)
+        if (tabs.length) sections.push({ key: 'tabs', label: 'Open tabs', strength: 2500, items: tabs.map(t => ({ kind: 'tab', id: t.id, title: t.title, subtitle: t.subtitle, score: 0 })) })
+        // then the commands used most, else a short list of everyday ones
+        const counts = inp.counts ?? {}
+        const used = visible.filter(c => !shown.has(c) && (counts[c.id] ?? 0) > 0 && isEnabled(c)).sort((a, b) => counts[b.id] - counts[a.id]).slice(0, 6)
+        const common = used.length ? used : COMMON.map(id => byId.get(id)).filter((c): c is Command => !!c && !shown.has(c) && isEnabled(c))
+        if (common.length) sections.push({ key: 'frequent', label: used.length ? 'Most used' : 'Suggested', strength: 2200, items: common.map(c => ({ kind: 'command', command: c, score: 0 })) })
+        common.forEach(c => shown.add(c))
+      }
+      // everything else, alphabetically; unavailable commands only when browsing commands on purpose
+      const rest = visible.filter(c => !shown.has(c)).map(c => ({ c, on: isEnabled(c) })).filter(x => x.on || !all)
+        .sort((a, b) => Number(b.on) - Number(a.on) || a.c.title.localeCompare(b.c.title))
+      sections.push({ key: 'commands', label: all ? 'All commands' : 'Commands', strength: 2000, items: rest.map(({ c, on }) => ({ kind: 'command', command: c, disabled: !on, score: 0 })) })
     } else {
       const recentRank = new Map(inp.recent.map((id, i) => [id, i]))
       const scored: PaletteItem[] = []
       for (const c of visible) {
         const m = fuzzy(q, c.title)
-        const alt = m ? null : fuzzy(q, `${c.category} ${c.title} ${c.keywords ?? ''}`)
-        const hit = m ?? (alt ? { score: alt.score - 400, positions: [] } : null)
+        // keyword / category matches are listed below title matches and say why they matched
+        const why = m ? undefined : keywordReason(q, c) ?? undefined
+        const hit = m ?? (why ? { score: -200 - why.length, positions: [] } : null)
         if (!hit) continue
         const r = recentRank.get(c.id)
         const enabled = isEnabled(c)
         const score = hit.score + (r != null ? 60 - r * 3 : 0) - (enabled ? 0 : 150)
-        scored.push({ kind: 'command', command: c, positions: m?.positions, disabled: !enabled, recent: r != null, score })
+        scored.push({ kind: 'command', command: c, positions: m?.positions, disabled: !enabled, recent: r != null, score, why })
       }
       scored.sort((a, b) => b.score - a.score)
       const items = scored.slice(0, lim(8, 200))
@@ -132,8 +176,24 @@ export function recentCommands(): string[] {
   try { const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]'); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [] } catch { return [] }
 }
 
+const COUNT_KEY = 'palette.counts'
+
+export function commandCounts(): Record<string, number> {
+  try {
+    const v = JSON.parse(localStorage.getItem(COUNT_KEY) ?? '{}')
+    return v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).filter(([, n]) => typeof n === 'number')) as Record<string, number> : {}
+  } catch { return {} }
+}
+
 export function rememberCommand(id: string) {
-  try { localStorage.setItem(RECENT_KEY, JSON.stringify([id, ...recentCommands().filter(x => x !== id)].slice(0, 12))) } catch { /* storage blocked */ }
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify([id, ...recentCommands().filter(x => x !== id)].slice(0, 12)))
+    const counts = commandCounts()
+    counts[id] = (counts[id] ?? 0) + 1
+    // keep the map small: drop the least used beyond 60 entries
+    const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 60)
+    localStorage.setItem(COUNT_KEY, JSON.stringify(Object.fromEntries(top)))
+  } catch { /* storage blocked */ }
 }
 
 let initialQuery = ''

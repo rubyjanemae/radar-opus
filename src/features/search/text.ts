@@ -48,6 +48,25 @@ export function branchMatch(root: string, word: string): 0 | 1 | 2 {
   return BRANCH_SUFFIXES.has(word.slice(root.length)) ? 1 : 0
 }
 
+/**
+ * Modality words that mean the same thing in repertory language, so "worse" finds "agg."
+ * and "better" finds "amel." (and the German "schlechter" / "besser").
+ */
+const SYNONYM_GROUPS: string[][] = [
+  ['agg', 'worse', 'aggravation', 'aggravated', 'aggravates', 'schlechter', 'verschlimmerung'],
+  ['amel', 'better', 'amelioration', 'ameliorated', 'ameliorates', 'besser', 'besserung'],
+]
+const SYNONYMS = new Map<string, string[]>()
+for (const g of SYNONYM_GROUPS) for (const w of g) SYNONYMS.set(w, g.filter(x => x !== w))
+
+/** Other words that stand for the same modality as `word` (empty for ordinary words). */
+export function synonymsOf(word: string): readonly string[] { return SYNONYMS.get(word) ?? [] }
+
+/** Same word, or synonymous modality words. */
+export function sameOrSynonym(a: string, b: string): boolean {
+  return a === b || (SYNONYMS.get(a)?.includes(b) ?? false)
+}
+
 export interface Segment { text: string; hit: boolean }
 
 /** Split `text` into highlighted / plain segments using a token predicate. */

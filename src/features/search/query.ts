@@ -5,11 +5,12 @@ import { fold, tokenize } from './text'
  *   dream cats          AND (a space or `&`)
  *   fear | anxiety      OR
  *   dream cats ! dogs   NOT (`!`, also `-word`)
- *   "worse at night"    phrase, words in this order
+ *   "fear of death"     phrase: consecutive words, in this order, anywhere in the rubric path
  *   fear*  *phobia  *xyz*  wildcards (prefix, suffix, infix)
  *   (a | b) c           grouping
  *   #lach  #lach:3      rubrics containing a remedy (optionally with minimum grade)
- * Words without a wildcard also match their inflected branches (fear → fears, feared).
+ * Words without a wildcard also match their inflected branches (fear → fears, feared), and the
+ * modality words are interchangeable: worse = agg. (schlechter), better = amel. (besser).
  */
 
 export type Wildcard = 'none' | 'prefix' | 'suffix' | 'infix'

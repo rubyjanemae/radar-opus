@@ -1,4 +1,5 @@
 import type { RubricRef } from '../data/types'
+import type { StrategyId } from '../engine/model'
 
 export type TabKind = 'repertory' | 'analysis' | 'materia-medica' | 'remedy' | 'patients' | 'patient' | 'search' | 'families' | 'repertories'
 
@@ -7,6 +8,8 @@ export interface RepertoryTab extends TabBase {
   kind: 'repertory'; repertory: string; rubric: number; back: number[]; forward: number[]
   /** Space cycle: 'count' hides remedies in the book view (remedy style comes from settings). */
   display?: 'count' | 'remedies'
+  /** Rubrics dwelt on or acted on in this tab, most recent first (navigator Recent list). */
+  recent?: number[]
 }
 /** Table of contents of the installed repertories. */
 export interface RepertoriesTab extends TabBase { kind: 'repertories'; selected?: string }
@@ -17,6 +20,8 @@ export interface AnalysisTab extends TabBase {
   view?: AnalysisViewMode
   /** Remedy shown in the drill-down panel. */
   remedy?: number | null
+  /** Remedies appended as extra columns because they rank beyond the display limit (remedy box jumps). */
+  pinnedRemedies?: number[] | null
 }
 export interface MateriaMedicaTab extends TabBase { kind: 'materia-medica'; remedyId: number | null; query: string }
 export interface RemedyTab extends TabBase { kind: 'remedy'; remedyId: number }
@@ -68,6 +73,10 @@ export interface Settings {
   defaultRepertory: string
   showRemedyCounts: boolean
   analysisLimit: number
+  /** Strategy for new consultations. */
+  defaultStrategy: StrategyId
+  /** Turn off animations regardless of the OS preference. */
+  reduceMotion: boolean
 }
 
 export interface Layout {
@@ -88,6 +97,8 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultRepertory: 'publicum',
   showRemedyCounts: true,
   analysisLimit: 30,
+  defaultStrategy: 'sum-symptoms-degrees',
+  reduceMotion: false,
 }
 
 export const DEFAULT_LAYOUT: Layout = {

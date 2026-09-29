@@ -5,7 +5,7 @@ import { actions, useApp } from '../../state/store'
 import { useCatalog } from '../../data/CatalogContext'
 import { parseRef } from '../../data/catalog'
 import type { Bookmark } from '../../state/workspace'
-import { goToRef } from './ops'
+import { featureToast, goToRef } from './ops'
 import { bookmarkFolders } from './logic'
 
 const ALL = '\u0000all'
@@ -39,7 +39,7 @@ export function BookmarksDialog({ onClose, selectId }: { onClose: () => void; se
     const idx = visible.indexOf(b)
     actions.removeBookmark(b.id)
     setSel(visible[idx + 1]?.id ?? visible[idx - 1]?.id ?? null)
-    actions.toast('Bookmark deleted', 'info', { label: 'Undo', run: () => actions.addBookmark(b.ref, b.label, b.folder) })
+    featureToast('bookmark', () => 'Bookmark deleted', 'info', { label: 'Undo', run: () => actions.addBookmark(b.ref, b.label, b.folder) })
   }
   const commitFolder = () => {
     if (!folderEdit) return

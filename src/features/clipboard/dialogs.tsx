@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Dialog } from '../../ui/Dialog'
 import { actions, useApp } from '../../state/store'
 import { useCatalog } from '../../data/CatalogContext'
@@ -56,9 +56,11 @@ export function NewCaseDialog({ onClose }: { onClose: () => void }) {
   const [last, setLast] = useState('')
   const [complaint, setComplaint] = useState('')
   const [title, setTitle] = useState('First consultation')
-  const valid = first.trim() || last.trim()
+  const valid = !!(first.trim() || last.trim())
+  const [tried, setTried] = useState(false)
+  const firstRef = useRef<HTMLInputElement>(null)
   const create = () => {
-    if (!valid) return
+    if (!valid) { setTried(true); firstRef.current?.focus(); return }
     const pid = actions.createPatient({ firstName: first.trim(), lastName: last.trim() })
     actions.createConsultation(pid, { title: title.trim() || 'Consultation', complaint: complaint.trim() })
     actions.toast(`Case opened for ${[first.trim(), last.trim()].filter(Boolean).join(' ')}`, 'success')
@@ -71,14 +73,15 @@ export function NewCaseDialog({ onClose }: { onClose: () => void }) {
       width={440}
       footer={<>
         <button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" disabled={!valid} onClick={create}>Create case</button>
+        <button className="btn btn-primary" onClick={create}>Create case</button>
       </>}
     >
       <form className="cbp-form" onSubmit={e => { e.preventDefault(); create() }}>
         <div className="cbp-form-row">
-          <label className="field">First name<input className="input" value={first} onChange={e => setFirst(e.target.value)} /></label>
-          <label className="field">Last name<input className="input" value={last} onChange={e => setLast(e.target.value)} /></label>
+          <label className="field">First name<input ref={firstRef} className="input" value={first} onChange={e => setFirst(e.target.value)} aria-invalid={tried && !valid} aria-describedby={tried && !valid ? 'cbp-name-error' : undefined} autoFocus /></label>
+          <label className="field">Last name<input className="input" value={last} onChange={e => setLast(e.target.value)} aria-invalid={tried && !valid} aria-describedby={tried && !valid ? 'cbp-name-error' : undefined} /></label>
         </div>
+        {tried && !valid && <p id="cbp-name-error" className="cbp-form-error" role="alert">Enter a first or last name.</p>}
         <label className="field">Consultation<input className="input" value={title} onChange={e => setTitle(e.target.value)} /></label>
         <label className="field">Chief complaint<input className="input" value={complaint} onChange={e => setComplaint(e.target.value)} placeholder="Optional" /></label>
         <button type="submit" hidden />

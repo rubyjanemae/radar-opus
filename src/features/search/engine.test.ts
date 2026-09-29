@@ -38,6 +38,10 @@ function rep(): Repertory {
     ['Gemüt', -1, []],
     ['Ängstlichkeit', 16, [[1, 2]]],
   ]
+  return build(rows)
+}
+
+function build(rows: [string, number, [number, number][]][]): Repertory {
   const text = rows.map(r => r[0]), parent = rows.map(r => r[1])
   const depth = parent.map(function d(p: number): number { return p < 0 ? 0 : 1 + d(parent[p]) })
   const chapters = parent.flatMap((p, i) => p < 0 ? [i] : [])
@@ -163,6 +167,27 @@ describe('search', () => {
   })
 })
 
+describe('modality synonyms', () => {
+  // Sleep(0) > night(1) > agg.(2); Sleep > walking, amel.(3); Sleep > better(4)
+  const M = build([['Sleep', -1, []], ['night', 0, []], ['agg.', 1, []], ['walking, amel.', 0, []], ['better', 0, []]])
+  const find = (q: string) => new Set(search(q, [{ rep: M }]).hits.map(h => h.index))
+  it('treats worse/agg. and better/amel. as the same word', () => {
+    expect(find('night worse')).toEqual(new Set([2]))
+    expect(find('"night worse"')).toEqual(new Set([2]))
+    expect(find('"night agg"')).toEqual(new Set([2]))
+    expect(find('better')).toEqual(new Set([3, 4]))
+    expect(find('amel')).toEqual(new Set([3, 4]))
+    // wildcards stay literal
+    expect(find('bett*')).toEqual(new Set([4]))
+  })
+  it('highlights the synonym found in the rubric', () => {
+    const hl = highlighter(parseQuery('worse "walking better"'))
+    expect(hl('agg')).toBe(true)
+    expect(hl('amel')).toBe(true)
+    expect(hl('night')).toBe(false)
+  })
+})
+
 describe('remedy search', () => {
   it('lists rubrics of a remedy with grade, size and co-remedy filters', () => {
     expect(remedyRubrics(R, 1).map(h => h.index)).toEqual([1, 2, 3, 5, 7, 9, 10, 13, 17])
@@ -202,7 +227,7 @@ describe.skipIf(!haveData)('performance on 140k rubrics', () => {
   })
 
   it.each([
-    'fear', 'head pain', 'fear | anxiety night', 'pain ! head', '"worse at night"', 'burn*', 'a*', '*ache', 'dream cats ! dogs',
+    'fear', 'head pain', 'fear | anxiety night', 'pain ! head', '"as if"', '"night agg"', 'burn*', 'a*', '*ache', 'dream cats ! dogs',
   ])('searches “%s” in under 50 ms', q => {
     search(q, targets) // warm JIT
     const t0 = performance.now()
@@ -210,6 +235,7 @@ describe.skipIf(!haveData)('performance on 140k rubrics', () => {
     const ms = performance.now() - t0
     expect(ms).toBeLessThan(50)
     expect(r.error).toBeNull()
+    expect(r.total).toBeGreaterThan(0)
   })
 
   it('finds sensible top results in the real repertory', () => {

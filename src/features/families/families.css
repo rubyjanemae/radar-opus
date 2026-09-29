@@ -1,0 +1,229 @@
+/* ───────── families view ───────── */
+.fam-view { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; overflow: hidden; background: var(--bg-elev); color: var(--text); font-size: var(--fs); container-type: inline-size; container-name: famview; }
+.fam-toolbar { flex: none; display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 8px; border-bottom: 1px solid var(--border); background: var(--chrome); min-width: 0; }
+.fam-toolbar > .icon-btn, .fam-toolbar > .btn { flex: none; }
+.fam-status { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fam-spacer { flex: 1; }
+.fam-muted { color: var(--text-3); font-size: var(--fs-sm); }
+.fam-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.fam-search { position: relative; display: flex; align-items: center; flex: 0 1 320px; min-width: 150px; }
+.fam-search > svg { position: absolute; left: 8px; color: var(--text-3); pointer-events: none; }
+.fam-search .input { width: 100%; padding-left: 28px; padding-right: 26px; }
+.fam-search .icon-btn { position: absolute; right: 2px; }
+.fam-body { flex: 1; min-height: 0; min-width: 0; display: flex; overflow: hidden; }
+.fam-left { flex: none; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--bg-elev); container-type: inline-size; container-name: famleft; }
+.fam-right { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; container-type: inline-size; container-name: famright; }
+.fam-loading .fam-skel, .fam-skel { display: grid; gap: 10px; padding: 16px; }
+
+/* tree */
+.fam-tree { flex: 1; min-height: 80px; overflow: auto; position: relative; outline: none; user-select: none; }
+.fam-tree-note { padding: 10px 12px; }
+.fam-tree:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+.fam-row {
+  position: absolute; left: 0; right: 0; height: 24px; display: flex; align-items: center; gap: 5px; padding-right: 8px;
+  cursor: default; white-space: nowrap; border-radius: 0;
+}
+.fam-row:hover { background: var(--bg-hover); }
+.fam-row.on { background: var(--bg-active); }
+.fam-tree:focus .fam-row.on { background: var(--bg-selected); box-shadow: inset 2px 0 0 var(--accent); }
+.fam-row.root .fam-name { font-weight: 600; }
+.fam-row.match .fam-name { font-weight: 600; }
+.fam-row mark, .fam-remhit mark { background: var(--accent-soft); color: inherit; border-radius: 2px; padding: 0 1px; }
+.fam-twist { flex: none; width: 16px; height: 16px; display: grid; place-items: center; color: var(--text-3); border-radius: 3px; }
+.fam-twist:not(.leaf):hover { background: var(--bg-sunken); color: var(--text); }
+.fam-check { flex: none; margin: 0 2px 0 0; }
+.fam-icon { flex: none; color: var(--accent); }
+.fam-icon-dim { color: var(--text-3); }
+.fam-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fam-note { flex: none; color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.fam-count {
+  flex: none; min-width: 22px; text-align: right; color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums;
+}
+
+/* remedy search hits under the tree; they fill the pane when no group name matches */
+.fam-remhits { flex: none; height: 40%; min-height: 96px; display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+.fam-left.only-remedies .fam-tree { flex: none; min-height: 0; height: auto; overflow: hidden; }
+.fam-left.only-remedies .fam-remhits { flex: 1; height: auto; }
+.fam-remhits-list { flex: 1; min-height: 0; overflow: auto; position: relative; outline: none; }
+.fam-remhits-list:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+.fam-remhits-list:focus .fam-remhit.on { background: var(--bg-selected); box-shadow: inset 2px 0 0 var(--accent); }
+.fam-remhit { position: absolute; left: 0; right: 0; display: grid; grid-template-columns: 76px minmax(0, 1fr) minmax(0, 110px); gap: 8px; align-items: center; height: 24px; padding: 0 10px; cursor: default; }
+.fam-remhit:hover { background: var(--bg-hover); }
+.fam-remhit.on { background: var(--bg-active); }
+.fam-remhit strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* overview */
+.fam-overview { padding: 20px 24px; overflow: auto; min-width: 0; }
+.fam-ov-head h1 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+.fam-ov-head p { margin: 0 0 16px; max-width: 70ch; }
+.fam-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 10px; }
+.fam-card {
+  display: grid; gap: 6px; text-align: left; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-elev); color: var(--text); font: inherit; cursor: pointer; box-shadow: var(--shadow-1);
+}
+.fam-card:hover { border-color: var(--border-strong); background: var(--bg-hover); }
+.fam-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.fam-card-head { display: flex; align-items: center; gap: 8px; }
+.fam-card-head strong { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fam-card-head .fam-count { font-size: var(--fs-sm); color: var(--text-2); }
+.fam-card-sub { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.4; }
+.fam-source { display: flex; gap: 6px; align-items: flex-start; margin: 18px 0 0; color: var(--text-3); font-size: var(--fs-xs); max-width: 90ch; line-height: 1.5; }
+.fam-source svg { flex: none; margin-top: 2px; }
+
+/* detail */
+.fam-detail { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; padding: 10px 14px 0; gap: 8px; overflow: hidden; }
+.fam-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font-size: var(--fs-sm); color: var(--text-3); }
+.fam-crumb { display: inline-flex; align-items: center; gap: 2px; }
+.fam-sep { padding: 0 3px; }
+.fam-link { border: 0; background: none; padding: 0 2px; color: var(--accent); font: inherit; cursor: pointer; border-radius: 3px; }
+.fam-link:hover { text-decoration: underline; }
+.fam-link:focus-visible { outline: 2px solid var(--focus); }
+.fam-head { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 6px 10px; }
+.fam-head > .fam-icon { margin-top: 3px; }
+.fam-head > .fam-icon { color: var(--accent); }
+.fam-title { flex: 1 1 200px; min-width: 0; }
+.fam-title h1 { margin: 0; font-size: 17px; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fam-sub { display: flex; align-items: baseline; gap: 12px; color: var(--text-3); font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; min-width: 0; }
+.fam-sub > span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fam-sub > .fam-kind { flex: none; }
+.fam-kind { color: var(--text-2); font-weight: 600; text-transform: uppercase; font-size: var(--fs-xs); letter-spacing: .04em; }
+.fam-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
+.fam-actions .btn { white-space: nowrap; }
+.fam-actions .btn svg, .fam-toolbar .btn svg { margin-right: 2px; }
+.fam-active { display: flex; flex-wrap: wrap; gap: 6px; }
+.fam-pill {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 4px 0 8px; border-radius: 11px;
+  background: var(--accent-soft); color: var(--text); font-size: var(--fs-sm); border: 1px solid var(--border);
+}
+.fam-pill.hl { background: var(--bg-sunken); }
+.fam-pill button { border: 0; background: none; color: var(--text-2); width: 18px; height: 18px; display: grid; place-items: center; border-radius: 9px; cursor: pointer; }
+.fam-pill button:hover { background: var(--bg-hover); color: var(--text); }
+.fam-children-wrap { flex: none; display: flex; align-items: flex-start; gap: 5px; min-width: 0; }
+.fam-children { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 5px; overflow: hidden; }
+.fam-children.open { max-height: 40vh; overflow-y: auto; }
+.fam-children .fam-chip { max-width: 100%; min-width: 0; white-space: nowrap; }
+.fam-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fam-chip-more { flex: none; color: var(--accent); border-style: dashed; gap: 3px; }
+.fam-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border: 1px solid var(--border); border-radius: 11px;
+  background: var(--bg-elev); color: var(--text); font: inherit; font-size: var(--fs-sm); cursor: pointer;
+}
+.fam-chip:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+.fam-chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.fam-table-tools { display: flex; align-items: center; gap: 10px; }
+.fam-filter { flex: 0 1 220px; min-width: 100px; }
+.fam-table-tools .fam-muted { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fam-table-tools .fam-muted > span { overflow: hidden; text-overflow: ellipsis; }
+
+/* remedy table: one role=grid holding the header rowgroup and the scrolling body rowgroup */
+.fam-table { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; margin: 0 -14px; border-top: 1px solid var(--border); overflow: hidden; outline: none; }
+.fam-table:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+.fam-hrow, .fam-tr { display: grid; grid-template-columns: 96px minmax(120px, 1.4fr) minmax(90px, 1fr) 74px 60px; align-items: center; }
+.fam-thead { flex: none; height: 26px; background: var(--chrome); border-bottom: 1px solid var(--border); padding: 0 14px; overflow: hidden; }
+.fam-hrow { height: 100%; }
+.fam-thc { height: 100%; min-width: 0; display: flex; }
+.fam-th {
+  flex: 1; display: inline-flex; align-items: center; gap: 3px; height: 100%; border: 0; background: none; padding: 0 6px; font: inherit;
+  font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; cursor: pointer; text-align: left;
+  white-space: nowrap; overflow: hidden; min-width: 0;
+}
+.fam-th-label, .fam-th-short { overflow: hidden; text-overflow: ellipsis; }
+.fam-th-short { display: none; }
+.fam-th svg { flex: none; }
+.fam-th:hover { color: var(--text); }
+.fam-th.num { justify-content: flex-end; }
+.fam-th:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.fam-tbody { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; position: relative; }
+.fam-tr { position: absolute; left: 0; right: 0; height: 24px; padding: 0 14px; cursor: default; }
+.fam-tr.odd { background: color-mix(in srgb, var(--bg-sunken) 45%, transparent); }
+.fam-tr:hover { background: var(--bg-hover); }
+.fam-tr.on { background: var(--bg-active); }
+.fam-table:focus .fam-tr.on { background: var(--bg-selected); box-shadow: inset 2px 0 0 var(--accent); }
+.fam-tr.out { color: var(--text-3); }
+.fam-tr.out .fam-c-abbrev { text-decoration: line-through; text-decoration-color: var(--text-3); }
+.fam-td { padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.fam-td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.fam-c-abbrev { font-weight: 600; }
+.fam-c-primary { color: var(--text-3); }
+.fam-c-high b { color: var(--g3); font-weight: 700; }
+
+/* filter dialog */
+.fam-dlg { display: flex; flex-direction: column; gap: 8px; }
+.fam-dlg-top { display: flex; align-items: center; gap: 10px; }
+.fam-dlg-top .fam-search { flex: 1; width: auto; max-width: none; }
+.fam-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; flex: none; }
+.fam-seg button {
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border: 0; background: var(--bg-elev); color: var(--text-2);
+  font: inherit; cursor: pointer;
+}
+.fam-seg button + button { border-left: 1px solid var(--border); }
+.fam-seg button.on { background: var(--accent); color: var(--on-accent); }
+.fam-seg button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.fam-dlg-hint { margin: 0; }
+/* the tree takes the flexible height so the dialog (max 76vh) always shows the summary */
+.fam-dlg-body { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 10px; height: clamp(180px, calc(76vh - 236px), 380px); }
+.fam-dlg-cur, .fam-dlg-sum { flex: none; }
+.fam-dlg-tree { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.fam-dlg-side { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.fam-dlg-none { padding: 10px; }
+.fam-dlg-sel { list-style: none; margin: 0; padding: 4px 0; flex: 1; overflow: auto; }
+.fam-dlg-sel li { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 10px; }
+.fam-dlg-sel li:hover { background: var(--bg-hover); }
+.fam-dlg-sel li .fam-ellipsis { flex: 1; }
+.fam-dlg-sum { padding: 8px 10px; border-top: 1px solid var(--border); font-size: var(--fs-sm); color: var(--text-2); }
+.fam-dlg-cur { padding: 8px 10px; border-top: 1px solid var(--border); font-size: var(--fs-xs); color: var(--text-3); display: grid; gap: 2px; background: var(--bg-sunken); }
+.fam-dlg-cur strong { color: var(--text-2); font-weight: 600; }
+
+/* narrow detail pane (side panels open on a small screen): drop the secondary column first, then shrink the rest */
+@container famright (max-width: 520px) {
+  .fam-hrow, .fam-tr { grid-template-columns: 88px minmax(0, 1fr) 72px 56px; }
+  .fam-c-primary { display: none; }
+  .fam-overview { padding: 14px 14px; }
+}
+@container famright (max-width: 440px) {
+  .fam-hrow, .fam-tr { grid-template-columns: 60px minmax(0, 1fr) 44px 44px; }
+  .fam-td, .fam-th { padding: 0 3px; }
+  .fam-table { margin: 0 -10px; }
+  .fam-tr, .fam-thead { padding: 0 8px; }
+  .fam-detail { padding: 8px 10px 0; }
+  .fam-th-short { display: inline; }
+  .fam-th:has(.fam-th-short) .fam-th-label { display: none; }
+  .fam-head { flex-wrap: nowrap; align-items: flex-start; }
+  .fam-sub { gap: 8px; }
+  .fam-actions { flex-wrap: nowrap; }
+  .fam-actions .btn { padding: 0 6px; }
+  .fam-actions .btn svg { margin-right: 0; }
+  .fam-actions .fam-btn-label { display: none; }
+  .fam-title h1 { font-size: 15px; }
+  .fam-filter { flex: 1 1 130px; min-width: 130px; }
+  .fam-table-tools { gap: 8px; }
+}
+/* narrow view: the toolbar button keeps its icon and tooltip */
+/* the search status keeps its numbers when the toolbar is tight ("0 · 3" instead of "0 groups · 3 remedies") */
+.fam-status-short { display: none; }
+@container famview (max-width: 760px) {
+  /* still read by screen readers */
+  .fam-status-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .fam-status-short { display: inline; }
+  .fam-status { flex: 0 1 auto; }
+}
+@container famview (max-width: 720px) {
+  .fam-tb-filter .fam-btn-label { display: none; }
+  .fam-tb-filter svg { margin-right: 0 !important; }
+}
+/* narrow tree pane: remedy hits keep abbreviation and name; the family moves to the row tooltip */
+@container famleft (max-width: 320px) {
+  .fam-remhit { grid-template-columns: 70px minmax(0, 1fr); }
+  .fam-remhit > :nth-child(3) { display: none; }
+}
+.fam-dlg-custom { display: flex; align-items: flex-start; gap: 6px; margin: 0; padding: 6px 8px; border-radius: var(--radius); background: var(--bg-sunken); color: var(--text-2); font-size: var(--fs-sm); }
+.fam-dlg-custom svg { flex: none; margin-top: 2px; color: var(--text-3); }
+
+/* load error: one compact block centred in the pane */
+.fam-error-wrap { align-items: center; justify-content: center; padding: 24px; }
+.fam-error { display: grid; justify-items: center; gap: 6px; max-width: 420px; text-align: center; }
+.fam-error-icon { color: var(--danger); }
+.fam-error h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.fam-error p { margin: 0 0 4px; color: var(--text-3); font-size: var(--fs-sm); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fam-error .btn { display: inline-flex; align-items: center; gap: 5px; }
+.fam-seg-dot { width: 6px; height: 6px; border-radius: 3px; background: var(--accent); margin-left: 1px; }

@@ -28,8 +28,14 @@ export function newConsultation(patientId: string, title = 'Consultation'): Cons
   return {
     id: uid('c'), patientId, date: new Date(now).toISOString().slice(0, 10), title, kind: 'first',
     complaint: '', notes: '', assessment: '', clipboards: [cb],
-    analysis: { ...DEFAULT_ANALYSIS, clipboardIds: [cb.id] }, prescriptions: [], createdAt: now, updatedAt: now,
+    analysis: { ...DEFAULT_ANALYSIS, ...analysisDefaults(), clipboardIds: [cb.id] }, prescriptions: [], createdAt: now, updatedAt: now,
   }
+}
+
+/** Analysis defaults for new consultations from the user's settings. */
+function analysisDefaults(): Partial<AnalysisOptions> {
+  const st = useApp.getState().settings
+  return { strategy: st.defaultStrategy ?? DEFAULT_ANALYSIS.strategy, limit: st.analysisLimit ?? DEFAULT_ANALYSIS.limit }
 }
 
 /** The part of state that undo/redo covers (case data). */
@@ -49,6 +55,8 @@ export interface AppState extends CaseData {
   settings: Settings
   bookmarks: Bookmark[]
   rubricNotes: Record<RubricRef, string>
+  /** User notes per remedy id (remedy information window › Sources & notes). */
+  remedyNotes: Record<number, string>
   recentSearches: string[]
   // case focus
   activeConsultationId: string | null
@@ -107,6 +115,7 @@ export const useApp = create<AppState>(() => ({
   settings: DEFAULT_SETTINGS,
   bookmarks: [],
   rubricNotes: {},
+  remedyNotes: {},
   recentSearches: [],
   activeConsultationId: null,
   activeClipboardId: null,
@@ -247,6 +256,14 @@ export const actions = {
   },
   removeBookmark(id: string) { set(s => ({ bookmarks: s.bookmarks.filter(b => b.id !== id) })) },
   updateBookmark(id: string, patch: Partial<Bookmark>) { set(s => ({ bookmarks: s.bookmarks.map(b => b.id === id ? { ...b, ...patch } : b) })) },
+  setRemedyNote(remedyId: number, text: string) {
+    set(s => {
+      const remedyNotes = { ...s.remedyNotes }
+      if (text.trim()) remedyNotes[remedyId] = text
+      else delete remedyNotes[remedyId]
+      return { remedyNotes }
+    })
+  },
   setRubricNote(ref: RubricRef, text: string) {
     set(s => {
       const rubricNotes = { ...s.rubricNotes }
@@ -330,6 +347,29 @@ export const actions = {
       ...c, clipboards: c.clipboards.filter(cb => cb.id !== id), analysis: { ...c.analysis, clipboardIds: c.analysis.clipboardIds.filter(x => x !== id) },
     })))
     set(s => s.activeClipboardId === id ? { activeClipboardId: selectActiveConsultation(s)?.clipboards[0]?.id ?? null } : {})
+  },
+  /** Empty several clipboards in one undoable step. */
+  clearClipboards(ids: string[]) {
+    mutateCase(set, s => {
+      let consultations = s.consultations
+      for (const id of ids) {
+        const p = updateClipboard({ ...s, consultations }, id, cb => cb.symptoms.length ? { ...cb, symptoms: [] } : cb)
+        if (p?.consultations) consultations = p.consultations
+      }
+      return consultations === s.consultations ? null : { consultations }
+    })
+  },
+  /** Put a deleted clipboard back at its position (targeted undo of deleteClipboard). Returns false when it cannot be restored. */
+  restoreClipboard(consultationId: string, clipboard: Clipboard, index: number, inAnalysis: boolean): boolean {
+    const c = get().consultations[consultationId]
+    if (!c || c.clipboards.length >= MAX_CLIPBOARDS || c.clipboards.some(cb => cb.id === clipboard.id)) return false
+    mutateCase(set, s => updateConsultation(s, consultationId, x => {
+      const clipboards = [...x.clipboards]
+      clipboards.splice(Math.min(index, clipboards.length), 0, clipboard)
+      const ids = inAnalysis ? [...x.analysis.clipboardIds, clipboard.id] : x.analysis.clipboardIds
+      return { ...x, clipboards, analysis: { ...x.analysis, clipboardIds: clipboards.map(cb => cb.id).filter(id => ids.includes(id)) } }
+    }))
+    return true
   },
 
   // symptoms

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { AppWindow, Check, ChevronRight, Command as CommandIcon, History, Pill, Search, TextSearch, User } from 'lucide-react'
+import { AppWindow, Check, ChevronRight, Command as CommandIcon, History, Pill, Search, TextSearch, User, X } from 'lucide-react'
 import { allCommands, formatKeys, onCommandsChanged } from '../../commands/registry'
 import { useCatalog } from '../../data/CatalogContext'
 import { actions, useApp } from '../../state/store'
@@ -9,9 +9,9 @@ import { goToRef } from '../repertory/ops'
 import { highlighter, search } from '../search/engine'
 import { findRemedies } from '../search/remedies'
 import { openRemedySearch, openSearch, prepare, readyTargets, remedyResolver } from '../search/ops'
-import { Highlight, RubricPath } from '../search/components'
+import { Highlight, RubricPath, titleIfTruncated } from '../search/components'
 import { markPositions } from './fuzzy'
-import { bindQuerySetter, paletteItems, parseMode, recentCommands, rememberCommand, takeInitialQuery } from './model'
+import { bindQuerySetter, commandCounts, paletteItems, parseMode, recentCommands, rememberCommand, takeInitialQuery } from './model'
 import type { PaletteItem, Section } from './model'
 import './palette.css'
 
@@ -27,6 +27,9 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   // captured before the palette takes focus (a layout effect would see the palette input under StrictMode)
   const [restoreEl] = useState(() => document.activeElement as HTMLElement | null)
   const tabs = useApp(s => s.tabs)
+  const activeTabId = useApp(s => s.activeTabId)
+  // the whole input text was selected before this keystroke: typing replaces the mode chip too
+  const replaceAll = useRef(false)
   const patients = useApp(s => s.patients)
   const consultations = useApp(s => s.consultations)
 
@@ -56,7 +59,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       mode, text,
       commands: allCommands(),
       recent: recentCommands(),
-      tabs: tabs.map(t => ({ id: t.id, ...tabTitle(t, catalog, { patients, consultations }) })),
+      counts: commandCounts(),
+      tabs: tabs.map(t => ({ id: t.id, active: t.id === activeTabId, ...tabTitle(t, catalog, { patients, consultations }) })),
       patients: Object.values(patients),
       remedies: q => findRemedies(catalog, q, mode === 'remedies' ? 50 : 6),
       rubrics: q => {
@@ -65,7 +69,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         return { hits: res.hits.map(h => ({ ref: h.rep.ref(h.index), rep: h.rep, index: h.index })), pending: pending.length > 0 }
       },
     })
-  }, [mode, text, tabs, patients, consultations, catalog, scopeTab, repVersion]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, text, tabs, activeTabId, patients, consultations, catalog, scopeTab, repVersion]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const flat = useMemo(() => sections.flatMap(s => s.items), [sections])
   const rubricHl = useMemo(() => {
@@ -112,7 +116,13 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     <div className="pal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) close() }}>
       <div className="pal" role="dialog" aria-modal="true" aria-label="Command palette" onKeyDown={onKeyDown}>
         <div className="pal-inputrow">
-          {mode !== 'all' ? <span className={`pal-mode pal-mode-${mode}`}>{MODE_LABEL[mode]}</span> : <Search size={16} className="pal-search-ico" />}
+          {mode !== 'all' ? (
+            <span className={`pal-mode pal-mode-${mode}`}>
+              {MODE_LABEL[mode]}
+              <button className="pal-mode-x" tabIndex={-1} aria-label={`Leave ${MODE_LABEL[mode].toLowerCase()} mode`} title="Search everything (Backspace)"
+                onMouseDown={e => e.preventDefault()} onClick={() => { setQuery(text); inputRef.current?.focus() }}><X size={11} /></button>
+            </span>
+          ) : <Search size={16} className="pal-search-ico" />}
           <input
             ref={inputRef}
             className="pal-input"
@@ -126,7 +136,16 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
             spellCheck={false}
             autoComplete="off"
             value={mode === 'all' ? query : text}
-            onChange={e => { const v = e.target.value; setQuery(mode === 'all' || /^[>#@/]/.test(v) ? v : PREFIX[mode] + v) }}
+            onKeyDown={e => {
+              const el = e.currentTarget
+              replaceAll.current = mode !== 'all' && el.value.length > 0 && el.selectionStart === 0 && el.selectionEnd === el.value.length
+            }}
+            onChange={e => {
+              const v = e.target.value
+              const wasAll = replaceAll.current
+              replaceAll.current = false
+              setQuery(mode === 'all' || wasAll || /^[>#@/]/.test(v) ? v : PREFIX[mode] + v)
+            }}
           />
         </div>
         <div className="pal-list" id="pal-list" role="listbox" aria-label="Results" ref={listRef}>
@@ -206,6 +225,7 @@ function ItemBody({ item, text, hl }: { item: PaletteItem; text: string; hl: ((n
         <>
           <span className="pal-ico">{item.recent ? <History size={14} /> : checked ? <Check size={14} /> : <CommandIcon size={14} />}</span>
           <span className="pal-text"><Marked text={c.title} positions={item.positions} /></span>
+          {item.why && <span className="pal-why" title="Matched a keyword">{item.why}</span>}
           <span className="pal-cat">{c.category}</span>
           {item.disabled && <span className="pal-note">unavailable</span>}
           {c.keys?.[0] && <kbd className="kbd pal-keys">{formatKeys(c.keys[0])}</kbd>}
@@ -243,7 +263,7 @@ function ItemBody({ item, text, hl }: { item: PaletteItem; text: string; hl: ((n
       return (
         <>
           <span className="pal-ico"><TextSearch size={14} /></span>
-          <span className="pal-text pal-rubric"><RubricPath parts={parts} hit={hl} /></span>
+          <span className="pal-text pal-rubric" onMouseEnter={titleIfTruncated(() => parts.join(', '))}><RubricPath parts={parts} hit={hl} /></span>
           <span className="pal-cat">{catalog.repertoryInfos.length > 1 ? item.rep.info.abbrev : 'Rubric'} · {item.rep.remedyCount(item.index)}</span>
         </>
       )

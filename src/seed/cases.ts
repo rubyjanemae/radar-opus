@@ -422,13 +422,26 @@ export const COMMON_RUBRICS = [
 
 // ───────────────────────── follow-up material ─────────────────────────
 
-export const FOLLOW_UP_NOTES = [
-  (r: string) => `Clear improvement since ${r}: energy up, sleeping through most nights. Main complaint about 60% better. Mild return of old symptoms in week 2 for three days, then settled.`,
-  (r: string) => `After ${r}: initial aggravation for 4 days, then marked improvement. Mood noticeably lighter ("like a fog lifted"). Particulars 50% better.`,
-  (r: string) => `Partial response to ${r}; general state better but the chief complaint only slightly changed. Improvement plateaued after week 4.`,
-  (r: string) => `Well on ${r}. Only minor symptoms left; wants to continue. Family noticed calmer behaviour.`,
-  (r: string) => `Relapse after a stressful month; ${r} had worked well until then. Picture unchanged, same modalities.`,
+/** Follow-up notes with the matching outcome (GHHOS score) and the practitioner's short evaluation. */
+export const FOLLOW_UP_NOTES: { text: (remedy: string) => string; score: number; response: string }[] = [
+  { text: r => `Clear improvement since ${r}: energy up, sleeping through most nights. Main complaint about 60% better. Mild return of old symptoms in week 2 for three days, then settled.`, score: 3, response: 'Energy and sleep first, then the chief complaint; brief return of old symptoms. Curative direction.' },
+  { text: r => `After ${r}: initial aggravation for 4 days, then marked improvement. Mood noticeably lighter ("like a fog lifted"). Particulars 50% better.`, score: 2, response: 'Short initial aggravation followed by improvement, mentals first.' },
+  { text: r => `Partial response to ${r}; general state better but the chief complaint only slightly changed. Improvement plateaued after week 4.`, score: 1, response: 'Generals better, particulars barely changed; plateau after 4 weeks.' },
+  { text: r => `Well on ${r}. Only minor symptoms left; wants to continue. Family noticed calmer behaviour.`, score: 4, response: 'Near complete resolution; family confirms the change.' },
+  { text: r => `Relapse after a stressful month; ${r} had worked well until then. Picture unchanged, same modalities.`, score: -1, response: 'Relapse after stress, same picture: remedy still indicated, effect used up.' },
 ]
+
+/** Patient-level notes for the archetypal cases (history, family, practical points). */
+export const ARCHETYPE_PATIENT_NOTES: Record<string, string> = {
+  puls: 'Referred by her sister (also a patient). Tearful at the first visit, relaxed quickly with a sympathetic ear. Oral contraceptive until 2023. Prefers late-morning appointments; avoid stuffy room 2.',
+  ars: 'Widower since 2021, lives alone, very punctual (arrives 15 minutes early). Brings typed lists of symptoms. Omeprazole 20 mg on demand. Father died of gastric cancer: high health anxiety.',
+  sulph: 'Works from home, irregular meals, sweets and beer at night. Childhood eczema treated with cortisone creams for years. Wants to avoid steroids now. Contact by email.',
+  lyc: 'Senior partner in a law firm; confident at work, anxious before court hearings. Father had gout and kidney stones. Prefers first appointment of the day. Takes pantoprazole occasionally.',
+  natm: 'Reserved, needed time before talking about the separation. Grief is the key; do not rush. Migraine diary kept since 2024. Contact by email only; declines phone calls at work.',
+  phos: 'Warm, open, easily frightened (thunderstorms, being alone at night). Iron deficiency 2024 (ferritin 12), supplemented. Blood donor in the past, stopped after fainting.',
+  calc: 'Comes with his mother. Late teething and walking (15 months). Mother: easily scared of dark and dogs, very attached to routines. Vaccinations up to date. Allergic to strawberries (hives).',
+  nux: 'Sales director, frequent travel. Coffee 4 cups/day, wine most evenings, occasional ibuprofen for headaches. Impatient in the waiting room; keep appointments on time. Wife encouraged the visit.',
+}
 
 export const FOLLOW_UP_ASSESSMENTS = [
   'Good response, same remedy. Wait and watch; repeat only on relapse.',

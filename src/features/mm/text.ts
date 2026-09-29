@@ -12,20 +12,67 @@ export interface Span { text: string; em: boolean; remedyId?: number }
 /** Separators between remedy names inside an emphasised list. */
 const LIST_SPLIT = /(\s*[;,]\s*|\.\s+(?=[A-Z])|\s+(?:and|or|also)\s+)/
 
-/** Split an emphasised remedy list into tokens; resolved ones become links. */
-function linkList(content: string, resolver: RemedyResolver, selfId: number | null, out: Span[]) {
+/** A plain-text remedy token in a Relationship list: capitalised, letters only, up to three words ("Lyc", "Nat mur"). */
+const PLAIN_TOKEN = /^[A-Z][A-Za-z]*(?:[ .-]+[A-Za-z]+){0,2}$/
+/** Relationship labels and connectives that are never remedies. */
+const PLAIN_STOP = /^(compare|complementary|antidotes?|antidoted|incompatible|inimical|compatible|follows?|followed|also|dose|see|in|after|before|especially)\b/i
+
+/**
+ * Split a run of text into list tokens; resolved ones become remedy links.
+ *  - emphasised runs (`em`): every capitalised token of up to four words is tried; lower-case
+ *    tokens ("*calcarea*") only resolve by exact abbreviation, name or known shorthand.
+ *  - plain runs (Relationship sections only): only list items, i.e. tokens next to a ";",
+ *    between two ",", or standing alone, only capitalised names ("Lyc; Sep; Sars; Puls"), and only remedies
+ *    with a monograph, so prose ("Cystitis, Lupus") stays text.
+ */
+function linkList(content: string, resolver: RemedyResolver, selfId: number | null, out: Span[], em = true, mode: { relationship?: boolean; loose?: boolean } = {}) {
   const parts = content.split(LIST_SPLIT)
+  const tokens = parts.filter((_, k) => k % 2 === 0 && parts[k].trim()).length
   for (let k = 0; k < parts.length; k++) {
     const part = parts[k]
     if (!part) continue
-    if (k % 2 === 1) { push(out, part, true); continue }
-    const m = /^(\s*)(.*?)(\.?\s*)$/.exec(part)!
+    if (k % 2 === 1) { push(out, part, em); continue }
+    const m = /^(\s*)(.*?)(\.?\s*)$/s.exec(part)!
     const [, lead, core, trail] = m
-    const r = /^[A-Z]/.test(core) && core.split(' ').length <= 4 ? resolver.resolve(core) : null
-    if (lead) push(out, lead, true)
-    if (r && r.id !== selfId) out.push({ text: core, em: true, remedyId: r.id })
-    else push(out, core, true)
-    if (trail) push(out, trail, true)
+    let r: ReturnType<RemedyResolver['resolve']> = null
+    if (em) {
+      if (/^[A-Z]/.test(core) && core.split(' ').length <= 4) r = resolver.resolve(core)
+      else if (/^[a-z][a-z .-]*$/.test(core) && core.split(' ').length <= 2) r = resolver.resolveExact(core)
+    } else if (PLAIN_TOKEN.test(core) && !PLAIN_STOP.test(core)) {
+      // plain words are prose as often as remedies: only list items naming a remedy of the book
+      const before = parts[k - 1] ?? '', after = parts[k + 1] ?? ''
+      const listed = before.includes(';') || after.includes(';') || (before.includes(',') && after.includes(',')) || tokens === 1
+      const hit = listed ? resolver.resolve(core) : null
+      if (hit && resolver.hasMonograph(hit.id)) r = hit
+    }
+    if (lead) push(out, lead, em)
+    if (r && r.id !== selfId) out.push({ text: core, em, remedyId: r.id })
+    // Relationship sections: a remedy name inside a phrase ("*after Calcar*"), and in an
+    // Incompatible/Inimical clause even in plain prose ("Sulphur should not be given after")
+    else if (!r && em && mode.relationship && AFTER.test(core)) linkAfter(core, resolver, selfId, out)
+    else if (!r && !em && mode.loose && /\s/.test(core.trim())) linkWords(core, resolver, selfId, out, em)
+    else push(out, core, em)
+    if (trail) push(out, trail, em)
+  }
+}
+
+/** A sequence phrase in a Relationship section: "*after Calcar*", "*before Sulph*". */
+const AFTER = /^((?:acts |follows |given |especially )?(?:well )?(?:after|before|with|than|then|follows|followed by)\s+)([A-Z][A-Za-z]*(?: [a-z]+)?)$/
+
+function linkAfter(core: string, resolver: RemedyResolver, selfId: number | null, out: Span[]) {
+  const [, lead, name] = AFTER.exec(core)!
+  const hit = resolver.resolve(name)
+  push(out, lead, true)
+  if (hit && hit.id !== selfId) out.push({ text: name, em: true, remedyId: hit.id })
+  else push(out, name, true)
+}
+
+/** Link each capitalised word of a phrase that names a remedy of the book; the rest stays text. */
+function linkWords(core: string, resolver: RemedyResolver, selfId: number | null, out: Span[], em: boolean) {
+  for (const w of core.split(/(\s+)/)) {
+    const hit = /^[A-Z][a-z]{2,}$/.test(w) && !PLAIN_STOP.test(w) ? resolver.resolve(w) : null
+    if (hit && hit.id !== selfId && resolver.hasMonograph(hit.id)) out.push({ text: w, em, remedyId: hit.id })
+    else push(out, w, em)
   }
 }
 
@@ -38,25 +85,43 @@ function push(out: Span[], text: string, em: boolean) {
 
 /**
  * Parse one paragraph. Remedy links are made inside parentheses and, when `relationship` is
- * set (Boericke's "Relationship" section), in every emphasised list.
+ * set (Boericke's "Relationship" section), in every emphasised list and in plain remedy lists.
  */
-export function parseParagraph(text: string, resolver: RemedyResolver | null, opts: { relationship?: boolean; selfId?: number | null } = {}): Span[] {
+export function parseParagraph(text: string, resolver: RemedyResolver | null, opts: { relationship?: boolean; selfId?: number | null; inimical?: boolean } = {}): Span[] {
   const out: Span[] = []
   let depth = 0
   let i = 0
   const n = text.length
+  // Incompatible/Inimical clauses: [bodyAt, end) ranges where plain capitalised names are linked too
+  const inimical: [number, number][] = opts.inimical ? [[0, n]] : []
+  if (resolver && opts.relationship) {
+    const marks = [...text.matchAll(LABEL)]
+    marks.forEach((m, k) => {
+      if (kindOf(m[2]) === 'Inimical') inimical.push([m.index + m[0].length, k + 1 < marks.length ? marks[k + 1].index + marks[k + 1][1].length : n])
+    })
+  }
+  const looseAt = (at: number) => inimical.some(([a, b]) => at >= a && at < b)
+  /** Plain text: in a Relationship section, its remedy lists are linked line by line. */
+  const pushPlain = (plain: string, at: number) => {
+    if (!resolver || !opts.relationship) { push(out, plain, false); return }
+    let pos = at
+    for (const line of plain.split(/(\n)/)) {
+      if (line) linkList(line, resolver, opts.selfId ?? null, out, false, { loose: looseAt(pos) })
+      pos += line.length
+    }
+  }
   while (i < n) {
     const star = text.indexOf('*', i)
     const end = star < 0 ? -1 : text.indexOf('*', star + 1)
     if (star < 0 || end < 0) {
-      push(out, text.slice(i), false)
+      pushPlain(text.slice(i), i)
       break
     }
     const plain = text.slice(i, star)
     for (const ch of plain) { if (ch === '(') depth++; else if (ch === ')') depth = Math.max(0, depth - 1) }
-    push(out, plain, false)
+    pushPlain(plain, i)
     const content = text.slice(star + 1, end)
-    if (resolver && (depth > 0 || opts.relationship)) linkList(content, resolver, opts.selfId ?? null, out)
+    if (resolver && (depth > 0 || opts.relationship)) linkList(content, resolver, opts.selfId ?? null, out, true, { relationship: opts.relationship })
     else push(out, content, true)
     i = end + 1
   }
@@ -117,19 +182,22 @@ export function parseRelationships(text: string, resolver: RemedyResolver, selfI
     const m = marks[k]
     const body = text.slice(m.bodyAt, marks[k + 1]?.at ?? text.length).trim()
     if (!body) continue
-    const spans = parseParagraph(body, resolver, { relationship: true, selfId })
+    const kind = kindOf(m.label)
+    const spans = parseParagraph(body, resolver, { relationship: true, selfId, inimical: kind === 'Inimical' })
     const remedies = [...new Set(spans.flatMap(s => s.remedyId !== undefined ? [s.remedyId] : []))]
-    out.push({ kind: kindOf(m.label), context: contextOf(m.label), text: body, remedies })
+    out.push({ kind, context: contextOf(m.label), text: body, remedies })
   }
   return out
 }
 
-/** Group relation clauses by kind, remedies de-duplicated, in RELATION_ORDER. */
+/** Group relation clauses by kind, remedies de-duplicated, in RELATION_ORDER; kinds naming no remedy are left out. */
 export function groupRelations(rel: Relation[]): { kind: RelationKind; remedies: number[]; clauses: Relation[] }[] {
   return RELATION_ORDER.flatMap(kind => {
     const clauses = rel.filter(r => r.kind === kind)
-    if (!clauses.length) return []
-    return [{ kind, remedies: [...new Set(clauses.flatMap(c => c.remedies))], clauses }]
+    const remedies = [...new Set(clauses.flatMap(c => c.remedies))]
+    // a clause without remedy names ("Antidote: Paralysis from lead-poisoning") is not a group
+    if (!remedies.length) return []
+    return [{ kind, remedies, clauses }]
   })
 }
 

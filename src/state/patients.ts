@@ -25,6 +25,15 @@ export interface Prescription {
   note: string
 }
 
+/**
+ * Evaluation, at a follow-up, of the effect of the previous prescription:
+ * score on the Glasgow Homeopathic Hospital Outcome Scale (-3 major deterioration … +4 cured), plus the practitioner's note.
+ */
+export interface RemedyResponse {
+  score: number | null
+  note: string
+}
+
 /** One consultation (first visit or follow-up) with its own clipboards and analysis. */
 export interface Consultation {
   id: string
@@ -38,6 +47,8 @@ export interface Consultation {
   clipboards: Clipboard[]
   analysis: AnalysisOptions
   prescriptions: Prescription[]
+  /** Response to the previous prescription (follow-ups). */
+  response?: RemedyResponse
   createdAt: number
   updatedAt: number
 }

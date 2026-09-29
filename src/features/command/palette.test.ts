@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Command } from '../../commands/registry'
 import type { Patient } from '../../state/patients'
 import { fuzzy, markPositions } from './fuzzy'
-import { paletteItems, parseMode } from './model'
+import { keywordReason, paletteItems, parseMode } from './model'
 import type { PaletteInput } from './model'
 
 const cmd = (id: string, title: string, extra: Partial<Command> = {}): Command => ({ id, title, category: 'Test', run: () => {}, ...extra })
@@ -53,13 +53,23 @@ describe('palette model', () => {
     expect(parseMode('fear')).toEqual({ mode: 'all', text: 'fear' })
   })
 
-  it('shows recent commands first when empty, enabled before disabled', () => {
-    const commands = [cmd('a', 'Alpha'), cmd('b', 'Beta', { enabled: () => false }), cmd('c', 'Gamma'), cmd('h', 'Hidden', { hidden: true })]
-    const s = paletteItems(input({ commands, recent: ['c', 'zzz'] }))
-    expect(s.map(x => x.key)).toEqual(['recent', 'commands'])
+  it('empty query: recent commands, open tabs, most used, then available commands', () => {
+    const commands = [cmd('a', 'Alpha'), cmd('b', 'Beta', { enabled: () => false }), cmd('c', 'Gamma'), cmd('d', 'Delta'), cmd('h', 'Hidden', { hidden: true })]
+    const tabs = [{ id: 't1', title: 'Mind', active: true }, { id: 't2', title: 'Search' }]
+    const s = paletteItems(input({ commands, recent: ['c', 'zzz'], counts: { d: 4, c: 9, b: 7 }, tabs }))
+    expect(s.map(x => x.key)).toEqual(['recent', 'tabs', 'frequent', 'commands'])
     expect(s[0].items.map(i => i.kind === 'command' && i.command.id)).toEqual(['c'])
-    expect(s[1].items.map(i => i.kind === 'command' && i.command.id)).toEqual(['a', 'b'])
-    expect(s[1].items[1].disabled).toBe(true)
+    // the active tab is not offered, disabled commands are left out of the browse list
+    expect(s[1].items.map(i => i.kind === 'tab' && i.id)).toEqual(['t2'])
+    expect(s[2].items.map(i => i.kind === 'command' && i.command.id)).toEqual(['d'])
+    expect(s[3].items.map(i => i.kind === 'command' && i.command.id)).toEqual(['a'])
+  })
+
+  it('lists disabled commands last when browsing commands with >', () => {
+    const commands = [cmd('b', 'Beta', { enabled: () => false }), cmd('a', 'Alpha')]
+    const s = paletteItems(input({ mode: 'commands', commands }))
+    expect(s[0].items.map(i => i.kind === 'command' && i.command.id)).toEqual(['a', 'b'])
+    expect(s[0].items[1].disabled).toBe(true)
   })
 
   it('ranks commands by fuzzy score with a recent-use boost', () => {
@@ -68,10 +78,18 @@ describe('palette model', () => {
     expect(s[0].items.map(i => i.kind === 'command' && i.command.id)).toEqual(['y', 'x', 'z'])
   })
 
-  it('finds commands by keywords and category', () => {
-    const commands = [cmd('t', 'Dark', { keywords: 'theme' })]
-    const s = paletteItems(input({ mode: 'commands', text: 'theme', commands }))
-    expect(s[0].items).toHaveLength(1)
+  it('finds commands by keywords, ranks them below title matches and says why', () => {
+    const commands = [cmd('k', 'Keyboard shortcuts', { keywords: 'help keys take' }), cmd('t', 'Take rubric'), cmd('d', 'Dark', { keywords: 'theme colours' })]
+    const s = paletteItems(input({ mode: 'commands', text: 'take', commands }))
+    expect(s[0].items.map(i => i.kind === 'command' && i.command.id)).toEqual(['t', 'k'])
+    const k = s[0].items[1]
+    expect(k.kind === 'command' && k.why).toBe('take')
+    const t = s[0].items[0]
+    expect(t.kind === 'command' && t.why).toBeUndefined()
+    // words can mix title and keywords
+    const d = paletteItems(input({ mode: 'commands', text: 'dark theme', commands }))
+    expect(d[0].items.map(i => i.kind === 'command' && i.command.id)).toEqual(['d'])
+    expect(keywordReason('xyz', commands[0])).toBeNull()
   })
 
   it('mixes tabs, patients, remedies and rubrics and orders sections by strength', () => {

@@ -3,7 +3,7 @@ import { uid } from '../state/ids'
 import type { Consultation, Patient, Prescription } from '../state/patients'
 import { CLIPBOARD_COLORS, DEFAULT_ANALYSIS } from '../state/store'
 import {
-  ACUTES, ACUTE_FOLLOW, ARCHETYPES, CHRONIC, COMMON_RUBRICS, FEMALE_NAMES, FOLLOW_UP_ASSESSMENTS, FOLLOW_UP_NOTES,
+  ACUTES, ACUTE_FOLLOW, ARCHETYPE_PATIENT_NOTES, ARCHETYPES, CHRONIC, COMMON_RUBRICS, FEMALE_NAMES, FOLLOW_UP_ASSESSMENTS, FOLLOW_UP_NOTES,
   LAST_NAMES, MALE_NAMES, OCCUPATIONS, PATIENT_NOTES, STREETS, TOWNS,
 } from './cases'
 import type { CaseTemplate, RubricSpec } from './cases'
@@ -72,6 +72,9 @@ export function buildDemoPractice(input: SeedInput): SeedOutput {
   const missing = new Set<string>()
   const archetypes: Record<string, string> = {}
   const usedNames = new Set<string>()
+  const shuffle = <T,>(xs: readonly T[]): T[] => { const a = [...xs]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(r.next() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] } return a }
+  const femaleNames = shuffle(FEMALE_NAMES), maleNames = shuffle(MALE_NAMES), lastNames = shuffle(LAST_NAMES)
+  let fi = 0, mi = 0, li = 0
 
   const refOf = (path: string): string | null => {
     const i = resolvePath(rep, path)
@@ -119,12 +122,11 @@ export function buildDemoPractice(input: SeedInput): SeedOutput {
   }
 
   const person = (sex: 'female' | 'male', age: number, occupation?: string): Patient => {
-    let first = '', last = ''
-    for (let tries = 0; tries < 50; tries++) {
-      first = r.pick(sex === 'female' ? FEMALE_NAMES : MALE_NAMES)
-      last = r.pick(LAST_NAMES)
-      if (!usedNames.has(first + last)) break
-    }
+    // Walk shuffled name pools so first and last names repeat as little as possible.
+    const firsts = sex === 'female' ? femaleNames : maleNames
+    const first = firsts[(sex === 'female' ? fi++ : mi++) % firsts.length]
+    let last = lastNames[li++ % lastNames.length]
+    while (usedNames.has(first + last)) last = lastNames[li++ % lastNames.length]
     usedNames.add(first + last)
     const birth = now - age * 365.25 * DAY - r.int(0, 360) * DAY
     const child = age < 16
@@ -174,11 +176,14 @@ export function buildDemoPractice(input: SeedInput): SeedOutput {
       }
       const phone = r.chance(0.15)
       const noteFn = r.pick(FOLLOW_UP_NOTES)
-      const raise = r.chance(0.5)
-      if (raise) potency = nextPotency(potency)
+      const next = nextPotency(potency)
+      // Raise potency now and then, rarely beyond 1M.
+      const raise = next !== potency && r.chance(next === '10M' ? 0.1 : 0.35)
+      if (raise) potency = next
       const fu = addConsultation({
         patientId: p.id, date: iso(date), title: `Follow-up ${v}`, kind: phone ? 'phone' : 'follow-up',
-        complaint: t.complaint, notes: noteFn(rxLabel(prev, t)), assessment: r.pick(FOLLOW_UP_ASSESSMENTS),
+        complaint: t.complaint, notes: noteFn.text(rxLabel(prev, t)), assessment: r.pick(FOLLOW_UP_ASSESSMENTS),
+        response: { score: noteFn.score, note: noteFn.response },
         clipboards: cloneClipboards(prev.clipboards, date),
         prescriptions: rx(t, potency, iso(date), raise ? 'Potency raised' : 'Repeat'),
       }, date)
@@ -213,7 +218,7 @@ export function buildDemoPractice(input: SeedInput): SeedOutput {
     if (cs.some(c => c.kind === 'first')) tags.add('chronic')
     if (cs.some(c => c.kind === 'acute')) tags.add('acute')
     const last = cs[cs.length - 1]
-    if (tags.has('chronic') && last && now - Date.parse(last.date) > 90 * DAY) tags.add('follow-up due')
+    if (tags.has('chronic') && last && now - Date.parse(last.date) > 60 * DAY && now - Date.parse(last.date) < 200 * DAY) tags.add('follow-up due')
     if (last) p.updatedAt = Math.max(p.updatedAt, last.updatedAt)
     p.createdAt = Math.min(p.createdAt, ...cs.map(c => c.createdAt))
     p.tags = [...tags]
@@ -235,6 +240,7 @@ export function buildDemoPractice(input: SeedInput): SeedOutput {
   for (const t of ARCHETYPES) {
     const s = archetypeSetup[t.key]
     const p = person(s.sex, s.age, s.occupation)
+    p.notes = ARCHETYPE_PATIENT_NOTES[t.key] ?? p.notes
     const acute = r.chance(0.4) ? r.pick(ACUTES.filter(a => s.age >= 16 || a.paediatric)) : null
     const cs = chronicCourse(p, t, s.visits, true, acute)
     finish(p, cs, [...s.tags, 'constitutional'])

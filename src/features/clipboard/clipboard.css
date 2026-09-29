@@ -19,12 +19,14 @@
 
 /* clipboard chips */
 .cbp-chips {
-  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 5px 4px 5px 6px;
+  flex: none; display: flex; align-items: flex-start; gap: 4px; padding: 5px 4px 5px 6px;
   border-bottom: 1px solid var(--border); background: var(--bg);
 }
+.cbp-chip-wrap { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.cbp-chip-actions { flex: none; display: flex; align-items: center; gap: 2px; height: 24px; }
 .cbp-chip {
   --chip: var(--accent);
-  position: relative; display: inline-flex; align-items: center; gap: 5px; height: 24px; max-width: 170px; padding: 0 6px 0 3px;
+  position: relative; display: inline-flex; align-items: center; gap: 5px; height: 24px; max-width: 100%; min-width: 0; padding: 0 6px 0 3px;
   border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elev); color: var(--text-2); font-size: var(--fs-xs);
 }
 .cbp-chip:hover { border-color: var(--border-strong); color: var(--text); }
@@ -36,7 +38,11 @@
   flex: none; display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%;
   background: var(--chip); color: #fff; font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
 }
-.cbp-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cbp-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 200px; }
+.cbp-chips.compact .cbp-chip-wrap { gap: 3px 2px; }
+.cbp-chip.mini { gap: 1px; padding: 0 3px 0 2px; }
+.cbp-chip.mini .cbp-chip-count { min-width: 0; padding: 0 0 0 1px; background: none; color: var(--text-3); font-size: 10px; font-weight: 500; }
+.cbp-chips.compact .cbp-chip-name { max-width: 76px; }
 .cbp-chip-count { flex: none; min-width: 16px; padding: 0 4px; border-radius: 8px; background: var(--bg-sunken); color: var(--text-2); font-size: 10px; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; }
 .cbp-chip.active .cbp-chip-count { background: var(--chip); color: #fff; }
 .cbp-chip-add { width: 22px; height: 22px; border: 1px dashed var(--border-strong); border-radius: 11px; }
@@ -46,6 +52,7 @@
 }
 
 /* list */
+.cbp-tabpanel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .cbp-list { flex: 1; min-height: 0; overflow: auto; outline: none; padding: 2px 0 8px; position: relative; }
 .cbp-list:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
 .cbp-list.drop-end::after { content: ""; display: block; height: 2px; margin: 0 6px; background: var(--accent); border-radius: 1px; }
@@ -104,7 +111,13 @@
 .cbp-flag.f-x { background: var(--danger); color: #fff; }
 .cbp-flag.f-c { background: var(--warning); color: #fff; }
 .cbp-flag.f-g { border: 1px solid var(--accent); color: var(--accent); border-radius: 8px; font-weight: 700; }
-.cbp-note { display: inline-grid; place-items: center; color: var(--warning); }
+.cbp-note { position: relative; display: inline-grid; place-items: center; color: var(--warning); cursor: help; }
+.cbp-note-tip {
+  display: none; position: absolute; right: -4px; top: calc(100% + 6px); z-index: 20; width: max-content; max-width: 260px;
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-elev); box-shadow: var(--shadow-2);
+  color: var(--text); font-size: var(--fs-xs); line-height: 1.45; white-space: pre-wrap; word-break: break-word; pointer-events: none;
+}
+.cbp-note:hover .cbp-note-tip { display: block; }
 .cbp-size { min-width: 26px; text-align: right; color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 
 /* empty */
@@ -123,6 +136,9 @@
 }
 .cbp-stats b { color: var(--text); font-variant-numeric: tabular-nums; }
 .cbp-prompt { color: var(--accent); font-weight: 600; }
+.cbp-foot .btn[aria-disabled="true"] { opacity: .5; cursor: default; }
+.cbp-foot .btn-primary[aria-disabled="true"]:hover { background: var(--accent); border-color: var(--accent); }
+.cbp-form-error { margin: -4px 0 0; color: var(--danger); font-size: var(--fs-xs); }
 .cbp-key { opacity: .75; font-size: 10px; font-weight: 500; margin-left: 2px; }
 
 /* dialogs */

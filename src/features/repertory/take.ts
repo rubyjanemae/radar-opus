@@ -112,8 +112,11 @@ export function rubricHtml(path: string, remedies: { abbrev: string; grade: numb
   return `<p><b>${esc(path)}</b>${remedies.length ? `: ${rem}` : ''}</p>`
 }
 
-/** Rank chapters for the type-to-jump chooser: prefix matches first, then word prefix, then substring. */
-export function matchChapters<T extends { name: string }>(items: T[], query: string): T[] {
+/**
+ * Rank chapters for the type-to-jump chooser: prefix matches first, then word prefix, then
+ * substring. Within a tier, items with a lower `recency` rank (recently used chapters) come first.
+ */
+export function matchChapters<T extends { name: string }>(items: T[], query: string, recency?: (item: T) => number): T[] {
   const q = query.trim().toLowerCase()
   if (!q) return items
   const scored: { item: T; score: number; i: number }[] = []
@@ -125,5 +128,6 @@ export function matchChapters<T extends { name: string }>(items: T[], query: str
     else if (n.includes(q)) score = 2
     if (score >= 0) scored.push({ item, score, i })
   })
-  return scored.sort((a, b) => a.score - b.score || a.i - b.i).map(x => x.item)
+  const rank = (x: T) => { const r = recency?.(x) ?? -1; return r < 0 ? Infinity : r }
+  return scored.sort((a, b) => a.score - b.score || (rank(a.item) - rank(b.item) || 0) || a.i - b.i).map(x => x.item)
 }

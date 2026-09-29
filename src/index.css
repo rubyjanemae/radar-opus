@@ -23,6 +23,8 @@
   --accent: #2459c9;
   --accent-2: #1d4aa9;
   --accent-soft: #e5edfb;
+  /* text and icons on an accent background (same in both themes) */
+  --on-accent: #fff;
   --focus: #3a78f2;
   --danger: #c8372d;
   --success: #23864f;
@@ -58,6 +60,9 @@
     --accent: #6d9cf5;
     --accent-2: #8fb2f7;
     --accent-soft: #1f2f4d;
+    /* filled accent surfaces carrying --on-accent text (primary buttons): AA contrast with white */
+    --accent-fill: #2f62cc;
+    --accent-fill-2: #3a6fd9;
     --focus: #6d9cf5;
     --danger: #ef6b61;
     --success: #4cc27f;
@@ -88,6 +93,8 @@
   --accent: #6d9cf5;
   --accent-2: #8fb2f7;
   --accent-soft: #1f2f4d;
+  --accent-fill: #2f62cc;
+  --accent-fill-2: #3a6fd9;
   --focus: #6d9cf5;
   --danger: #ef6b61;
   --success: #4cc27f;

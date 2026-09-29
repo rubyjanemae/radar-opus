@@ -92,14 +92,17 @@ export function installKeybindings(): () => void {
     if (e.defaultPrevented) return
     const combo = eventToKeys(e)
     const editing = inEditable(e.target)
-    for (const c of commands.values()) {
-      if (!c.keys?.includes(combo)) continue
-      if (editing && !c.allowInInput) continue
-      if (c.scope && !(e.target instanceof Element && e.target.closest(c.scope))) continue
-      if (!isEnabled(c)) continue
-      e.preventDefault()
-      void c.run()
-      return
+    // Scoped commands (bound to a view) win over global ones with the same key when focus is inside their scope.
+    for (const scoped of [true, false]) {
+      for (const c of commands.values()) {
+        if (!!c.scope !== scoped || !c.keys?.includes(combo)) continue
+        if (editing && !c.allowInInput) continue
+        if (c.scope && !(e.target instanceof Element && e.target.closest(c.scope))) continue
+        if (!isEnabled(c)) continue
+        e.preventDefault()
+        void c.run()
+        return
+      }
     }
   }
   window.addEventListener('keydown', onKey)

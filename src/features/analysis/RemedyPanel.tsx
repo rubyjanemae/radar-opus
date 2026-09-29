@@ -1,9 +1,9 @@
 import { BookOpen, Ban, CircleCheck, ExternalLink, GitCompare, X } from 'lucide-react'
 import type { Catalog } from '../../data/catalog'
-import { explainTerm, formatScore, strategyInfo } from '../../engine/analysis'
+import { COVERAGE_FIRST, explainTerm, formatScore, strategyInfo } from '../../engine/analysis'
 import type { AnalysisResult, AnalysisRow, RubricSource } from '../../engine/analysis'
 import { GradeMark } from './AnalysisGrid'
-import { EXCLUSION_LABEL } from './export'
+import { exclusionText } from './export'
 
 interface Props {
   result: AnalysisResult
@@ -21,6 +21,11 @@ interface Props {
 }
 
 const num = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(2).replace(/0$/, ''))
+const FACTOR_NOTE: Record<string, string> = {
+  f: 'small-rubric factor (2 when the rubric has 10 remedies or fewer)',
+  R: 'remedy-size factor √(1000 / rubrics of the remedy), clamped 0.5–4',
+  κ: 'Kent hierarchy (mind 3, general 2, local 1)',
+}
 
 /** Drill-down: how a remedy's score is built, term by term, and which symptoms it misses. */
 export function RemedyPanel(p: Props) {
@@ -33,7 +38,8 @@ export function RemedyPanel(p: Props) {
   const other = result.symptoms.map((s, i) => ({ s, i })).filter(x => x.s.role !== 'scored' && row.grades[x.i])
   const terms = covered.map(({ i }) => explainTerm(result, p.source, row, i))
   const factorKeys = new Set(terms.flatMap(t => t.factors.map(f => f.key)))
-  const coverageFirst = result.strategy === 'sum-symptoms-degrees' || result.strategy === 'sum-symptoms' || result.strategy === 'boenninghausen'
+  const coverageFirst = COVERAGE_FIRST.has(result.strategy)
+  const generalised = terms.some(t => t.baseGrade !== null)
 
   return (
     <aside className="an-panel" aria-label={`Score of ${rem.name}`} data-testid="remedy-panel" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); p.onClose() } }}>
@@ -44,7 +50,7 @@ export function RemedyPanel(p: Props) {
           <button className="icon-btn" aria-label="Close details" title="Close (Esc)" onClick={p.onClose}><X size={14} /></button>
         </div>
         <div className="an-panel-name">{rem.name}{rem.altName ? <span className="an-panel-alt"> · {rem.altName.replace(/[{}"]/g, '').split(',')[0]}</span> : null}</div>
-        {row.excluded && <div className="an-panel-excl"><Ban size={12} /> Excluded: {EXCLUSION_LABEL[row.excluded]}</div>}
+        {row.excluded && <div className="an-panel-excl" title={exclusionText(result, row)}><Ban size={12} /><span className="an-ellipsis">Excluded: {exclusionText(result, row)}</span></div>}
         <div className="an-panel-stats">
           <div><span className="an-stat-v">{formatScore(result.strategy, row)}</span><span className="an-stat-k">score</span></div>
           <div><span className="an-stat-v">{row.coverage}/{scored.length}</span><span className="an-stat-k">symptoms</span></div>
@@ -66,18 +72,20 @@ export function RemedyPanel(p: Props) {
         <table className="an-terms">
           <caption className="sr-only">Score terms</caption>
           <thead>
-            <tr><th scope="col">Symptom</th><th scope="col" className="num">g</th><th scope="col">w × value × factors</th><th scope="col" className="num">pts</th></tr>
+            <tr><th scope="col">Symptom</th><th scope="col" className="num">g</th><th scope="col">i × g × factors</th><th scope="col" className="num">pts</th></tr>
           </thead>
           <tbody>
             {covered.map(({ s, i }, k) => {
               const t = terms[k]
               return (
                 <tr key={i} className={p.selectedSymptom === i ? 'selected' : ''} onClick={() => p.onSelectSymptom(p.selectedSymptom === i ? null : i)}>
-                  <td className="an-term-label" title={s.label}>{s.label}</td>
-                  <td className="num"><span className={`g${t.grade}`}>{t.grade}</span> <GradeMark g={t.grade} /></td>
+                  <td className="an-term-label" title={s.label}><span>{s.label}</span></td>
+                  <td className="num" title={t.baseGrade !== null ? `Generalised: grade ${t.baseGrade || 'absent'} in this rubric, ${t.grade} in ${s.generals.map(r => p.source.label(r)).join(', ')}` : undefined}>
+                    <span className={`g${t.grade}`}>{t.grade}</span>{t.baseGrade !== null && <sup className="an-gen" aria-label="generalised">G</sup>} <GradeMark g={t.grade} />
+                  </td>
                   <td className="an-term-calc">
-                    {t.weight} × {num(t.value)}
-                    {t.factors.map(f => <span key={f.key} title={f.label}> × {num(f.value)}<sub>{f.key}</sub></span>)}
+                    {t.weight}×{num(t.value)}
+                    {t.factors.map(f => <span key={f.key} title={f.label}>×{num(f.value)}<sub>{f.key}</sub></span>)}
                   </td>
                   <td className="num an-term-pts">{num(Math.round(t.points * 100) / 100)}</td>
                 </tr>
@@ -91,12 +99,10 @@ export function RemedyPanel(p: Props) {
             </tr>
           </tfoot>
         </table>
-        {factorKeys.size > 0 && (
+        {(factorKeys.size > 0 || generalised) && (
           <p className="an-legend-note">
-            {factorKeys.has('F') && <span><sub>F</sub> small-rubric factor </span>}
-            {factorKeys.has('R') && <span><sub>R</sub> small-remedy factor </span>}
-            {factorKeys.has('H') && <span><sub>H</sub> Kent hierarchy (mind 3, general 2, local 1) </span>}
-            {factorKeys.has('cov') && <span><sub>cov</sub> share of the case covered</span>}
+            {[...factorKeys].map(k => <span key={k}><sub>{k}</sub> {FACTOR_NOTE[k]}</span>)}
+            {generalised && <span><sup>G</sup> grade raised from the linked Generalities rubric</span>}
           </p>
         )}
         <section className="an-missing" aria-label="Missing symptoms">
@@ -106,7 +112,7 @@ export function RemedyPanel(p: Props) {
               {missing.map(({ s, i }) => (
                 <li key={i}>
                   <button className={`an-link${p.selectedSymptom === i ? ' on' : ''}`} onClick={() => p.onSelectSymptom(p.selectedSymptom === i ? null : i)} title={s.label}>
-                    {s.symptom.eliminatory && <span className="an-flag f-e">E</span>}{s.label}
+                    {s.symptom.eliminatory && <span className="an-flag f-e">E</span>}<span className="an-ellipsis">{s.label}</span>
                   </button>
                 </li>
               ))}
@@ -118,7 +124,7 @@ export function RemedyPanel(p: Props) {
             <h4>Present in unscored symptoms</h4>
             <ul>
               {other.map(({ s, i }) => (
-                <li key={i} className="an-muted"><GradeMark g={row.grades[i]} /> {s.role === 'excluding' ? 'Excluding: ' : 'Ignored: '}{s.label}</li>
+                <li key={i} className="an-muted an-other" title={s.label}><GradeMark g={row.grades[i]} /><span className="an-ellipsis">{s.role === 'excluding' ? 'Excluding: ' : 'Ignored: '}{s.label}</span></li>
               ))}
             </ul>
           </section>

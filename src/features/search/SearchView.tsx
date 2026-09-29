@@ -20,7 +20,7 @@ import { useFixedVirtual } from '../repertory/virtual'
 import { highlighter, remedyFrequency, remedyRubrics, search } from './engine'
 import type { RemedyFrequency } from './engine'
 import { describeQuery } from './query'
-import { GradeBar, RemedyPicker, RubricPath } from './components'
+import { GradeBar, RemedyPicker, RubricPath, titleIfTruncated } from './components'
 import { prepare, readyTargets, remedyResolver, selection, tabRepertories, tabRubrics, useSearchSel } from './ops'
 import './search.css'
 
@@ -96,6 +96,7 @@ function TextQueryBar({ tab }: { tab: SearchTab }) {
           autoComplete="off"
           autoFocus={!tab.query}
           onChange={e => actions.updateTab<SearchTab>(tab.id, { query: e.target.value })}
+          onBlur={() => actions.addRecentSearch(tab.query)}
           onKeyDown={e => {
             if (e.key === 'Enter' || e.key === 'ArrowDown') {
               if (e.key === 'Enter') actions.addRecentSearch(tab.query)
@@ -118,7 +119,8 @@ function SyntaxHelp({ onClose }: { onClose: () => void }) {
     ['fear night', 'both words (AND; also “fear & night”)'],
     ['fear | anxiety', 'either word (OR)'],
     ['dream cats ! dogs', 'without a word (NOT; also -dogs)'],
-    ['"worse at night"', 'exact phrase, in this order'],
+    ['"as if"  "night agg"', 'phrase: consecutive words in this order'],
+    ['worse  better', 'modalities: same as agg. / amel.'],
     ['burn*  *ache  *rehe*', 'wildcards: starts with, ends with, contains'],
     ['(fear | anxiety) alone', 'grouping'],
     ['#lach  #lach:3', 'rubrics containing a remedy (minimum grade)'],
@@ -141,6 +143,7 @@ function SyntaxHelp({ onClose }: { onClose: () => void }) {
       <div className="srch-help-head"><b>Query syntax</b><button className="icon-btn" aria-label="Close syntax help" onClick={onClose}><X size={13} /></button></div>
       <table><tbody>{rows.map(([a, b]) => <tr key={a}><td><code>{a}</code></td><td>{b}</td></tr>)}</tbody></table>
       <p>Words match anywhere in the rubric path (chapter, rubric and sub-rubrics), ignoring case and accents. A word without * also finds its inflections: <i>fear</i> finds <i>fears</i> and <i>feared</i>.</p>
+      <p>A phrase reads the path as one line, so <i>"fear night"</i> finds <i>Mind, fear, night</i>. Repertories put the modality last (<i>night, agg.</i>), so search <i>night worse</i> rather than <i>"worse at night"</i>.</p>
     </div>
   )
 }
@@ -325,7 +328,12 @@ interface BodyProps {
 
 function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, emptyText }: BodyProps) {
   const [showRemedies, setShowRemedies] = useState(false)
-  const [showSummary, setShowSummary] = useState(true)
+  // the summary shows by default only when the results keep a readable width; a click overrides
+  const [summaryPref, setSummaryPref] = useState<boolean | null>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const bodyWidth = useWidth(bodyRef)
+  const roomy = bodyWidth === 0 || bodyWidth >= SUMMARY_AUTO_MIN
+  const showSummary = summaryPref ?? roomy
   const [remFilter, setRemFilter] = useState<number | null>(null)
   const catalog = useCatalog()
   const selected = useSearchSel(s => s.selected[tab.id]) ?? EMPTY
@@ -497,7 +505,7 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, e
       >
         <div className="srch-line">
           <input type="checkbox" className="srch-cb" tabIndex={-1} checked={checked} aria-label="Select rubric" onClick={e => e.stopPropagation()} onChange={() => { selection.toggle(tab.id, ref); setCursor(k) }} />
-          <span className="srch-path">
+          <span className="srch-path" onMouseEnter={titleIfTruncated(() => r.rep.path(r.index, ', ') + (multiRep ? ` (${r.rep.info.title})` : ''))}>
             {r.grade && parts.length > 1 ? <RubricPath parts={parts} hit={hl} skip={1} /> : r.grade ? <i className="srch-whole">{parts[0]} (whole chapter)</i> : <RubricPath parts={parts} hit={hl} />}
           </span>
           {r.grade && <span className={`srch-grade g${r.grade}`} title={`Grade ${r.grade}`}>{bookAbbrev(catalog.remedy(tab.remedyId ?? 0).abbrev, r.grade)}</span>}
@@ -513,7 +521,7 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, e
   const focusedHit = rows[cur]?.t === 'hit'
 
   return (
-    <div className="srch-body">
+    <div className={`srch-body${bodyWidth && bodyWidth < 640 ? ' narrow' : ''}`} ref={bodyRef}>
       <div className="srch-main">
         <div className="srch-bar-row">
           <input
@@ -537,9 +545,9 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, e
           )}
           <div className="srch-actions">
             <TakeButton count={targetRefs().length} selected={someSelected} onTake={w => take(w)} onOptions={() => openTakeOptions(targetRefs())} onCombined={() => takeCombined()} />
-            <button className="btn btn-sm" disabled={!focusedHit} onClick={() => open(rows[cur])} title="Open the focused rubric in the repertory (Enter)"><ExternalLink size={12} /> Open</button>
+            <button className="btn btn-sm srch-open" disabled={!focusedHit} onClick={() => open(rows[cur])} aria-label="Open" title="Open the focused rubric in the repertory (Enter)"><ExternalLink size={12} /><span className="srch-open-label">Open</span></button>
             <button className="icon-btn" aria-label="Show remedies" title="Show remedies under each rubric" aria-pressed={showRemedies} onClick={() => setShowRemedies(s => !s)}><Pill size={14} /></button>
-            <button className="icon-btn" aria-label="Result summary" title="Remedy summary chart" aria-pressed={showSummary} onClick={() => setShowSummary(s => !s)}><BarChart3 size={14} /></button>
+            <button className="icon-btn" aria-label="Result summary" title="Remedy summary chart" aria-pressed={showSummary} onClick={() => setSummaryPref(!showSummary)}><BarChart3 size={14} /></button>
             <button className="icon-btn" aria-label="Export CSV" title="Export results as CSV" disabled={!allRows.length} onClick={() => runCommand('search.export')}><Download size={14} /></button>
           </div>
         </div>
@@ -567,6 +575,21 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, e
 }
 
 const EMPTY: RubricRef[] = []
+/** Below this body width the summary starts hidden, so rubric paths stay readable. */
+const SUMMARY_AUTO_MIN = 760
+
+function useWidth(ref: React.RefObject<HTMLElement | null>): number {
+  const [w, setW] = useState(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    setW(el.clientWidth)
+    const ro = new ResizeObserver(() => setW(el.clientWidth))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [ref])
+  return w
+}
 
 function RemedyLine({ rep, index, highlight }: { rep: Repertory; index: number; highlight: number | null }) {
   const catalog = useCatalog()
@@ -624,7 +647,7 @@ function Summary({ tab, hits, remFilter, onFilter, rowsForChapters, onJump }: {
       <div className="srch-sum-tabs" role="tablist">
         {rowsForChapters && <button role="tab" aria-selected={view === 'chapters'} className={view === 'chapters' ? 'on' : ''} onClick={() => setView('chapters')}>Chapters</button>}
         <button role="tab" aria-selected={view === 'remedies'} className={view === 'remedies' ? 'on' : ''} onClick={() => setView('remedies')}>{rowsForChapters ? 'Co-remedies' : 'Remedies'}</button>
-        {otherSearches.length > 0 && <button role="tab" aria-selected={view === 'compare'} className={view === 'compare' ? 'on' : ''} onClick={() => setView('compare')} title="Remedies across all open search tabs">Compare {otherSearches.length + 1} searches</button>}
+        {otherSearches.length > 0 && <button role="tab" aria-selected={view === 'compare'} className={view === 'compare' ? 'on' : ''} onClick={() => setView('compare')} title={`Compare remedies across the ${otherSearches.length + 1} open search tabs`}>Compare ({otherSearches.length + 1})</button>}
       </div>
       {view === 'remedies' && (
         <>
@@ -640,19 +663,28 @@ function Summary({ tab, hits, remFilter, onFilter, rowsForChapters, onJump }: {
       {view === 'chapters' && rowsForChapters && (
         <>
           <p className="srch-sum-note">Rubrics of {catalog.remedy(tab.remedyId ?? 0).abbrev} per chapter. Click to jump.</p>
-          <ol className="srch-bars">
+          <ol className="srch-bars srch-chapbars">
             {(() => {
               const heads = rowsForChapters.map((r, k) => ({ r, k })).filter((x): x is { r: Extract<Row, { t: 'head' }>; k: number } => x.r.t === 'head')
               const m = Math.max(1, ...heads.map(h => h.r.count))
-              return heads.map(({ r, k }) => (
-                <li key={`${r.rep.abbrev}${r.root}`}>
-                  <button className="srch-barrow" onClick={() => onJump(k)} title={`${r.rep.info.title}: ${r.rep.text(r.root)}`}>
-                    <span className="srch-barlabel">{r.rep.text(r.root)}</span>
-                    <span className="srch-bartrack"><span className="srch-bar plain" style={{ width: `${Math.max(2, (r.count / m) * 100)}%` }} /></span>
-                    <span className="srch-barnum">{r.count}</span>
-                  </button>
-                </li>
-              ))
+              const multi = new Set(heads.map(h => h.r.rep)).size > 1
+              const out: React.ReactNode[] = []
+              heads.forEach(({ r, k }, j) => {
+                if (multi && (j === 0 || heads[j - 1].r.rep !== r.rep)) {
+                  const n = heads.reduce((a, h) => a + (h.r.rep === r.rep ? h.r.count : 0), 0)
+                  out.push(<li key={`g${r.rep.abbrev}`} className="srch-bargroup"><span>{r.rep.info.title}</span><span>{n.toLocaleString()}</span></li>)
+                }
+                out.push(
+                  <li key={`${r.rep.abbrev}${r.root}`}>
+                    <button className="srch-barrow" onClick={() => onJump(k)} title={`${r.rep.text(r.root)} (${r.rep.info.title}): ${r.count} rubrics`}>
+                      <span className="srch-barlabel">{r.rep.text(r.root)}</span>
+                      <span className="srch-bartrack"><span className="srch-bar plain" style={{ width: `${Math.max(2, (r.count / m) * 100)}%` }} /></span>
+                      <span className="srch-barnum">{r.count}</span>
+                    </button>
+                  </li>,
+                )
+              })
+              return out
             })()}
           </ol>
         </>

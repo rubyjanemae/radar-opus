@@ -5,7 +5,7 @@ import type { AnalysisResult, AnalysisRow } from '../../engine/analysis'
 import type { MenuItem } from '../../ui/Menu'
 import { useContextMenu } from '../../ui/Menu'
 import { GradeMark } from './AnalysisGrid'
-import { EXCLUSION_LABEL } from './export'
+import { exclusionText } from './export'
 
 interface Props {
   result: AnalysisResult
@@ -18,6 +18,7 @@ interface Props {
   onOpenRemedy: (id: number) => void
   remedyMenu: (row: AnalysisRow) => MenuItem[]
   reveal?: { remedyId: number; nonce: number } | null
+  pinned?: Set<number>
 }
 
 /** Remedy cards: coverage meter, per-symptom grade strip and the symptoms each remedy misses. */
@@ -70,6 +71,7 @@ export const AnalysisCards = memo(function AnalysisCards(p: Props) {
         if (row.excluded) cls.push('excl')
         if (p.highlight?.has(row.remedyId)) cls.push('fam')
         if (p.selectedSymptom != null && !row.grades[p.selectedSymptom]) cls.push('dim')
+        if (p.pinned?.has(row.remedyId)) cls.push('pinned')
         const pct = scored.length ? (row.coverage / scored.length) * 100 : 0
         return (
           <div
@@ -89,11 +91,12 @@ export const AnalysisCards = memo(function AnalysisCards(p: Props) {
           >
             <div className="an-card-head">
               <span className="an-card-rank">{row.rank ? `#${row.rank}` : '–'}</span>
+              {p.pinned?.has(row.remedyId) && <span className="an-card-pin" title="Beyond the display limit, pinned">pinned</span>}
               <span className="an-card-abbrev">{rem.abbrev}</span>
               <span className="an-card-score">{formatScore(result.strategy, row)}</span>
             </div>
             <div className="an-card-name" title={rem.name}>{rem.name}</div>
-            {row.excluded && <div className="an-card-excl">{EXCLUSION_LABEL[row.excluded]}</div>}
+            {row.excluded && <div className="an-card-excl">{exclusionText(result, row)}</div>}
             <div className="an-meter" role="img" aria-label={`${row.coverage} of ${scored.length} symptoms`}>
               <span style={{ width: `${pct}%` }} />
             </div>

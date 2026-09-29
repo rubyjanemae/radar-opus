@@ -13,6 +13,7 @@ import { AnalysisDock } from '../features/analysis/AnalysisDock'
 import { CommandPalette } from '../features/command/CommandPalette'
 import { DEFAULT_LAYOUT } from '../state/workspace'
 import { DialogHost } from './DialogHost'
+import { WorkspaceChrome } from '../features/workspace/WorkspaceChrome'
 
 export function Shell() {
   const layout = useApp(s => s.layout)
@@ -79,6 +80,7 @@ export function Shell() {
       <StatusBar />
       {paletteOpen && <CommandPalette onClose={() => actions.setCommandPalette(false)} />}
       <DialogHost />
+      <WorkspaceChrome />
       <Toasts />
     </div>
   )

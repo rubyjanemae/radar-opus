@@ -42,6 +42,41 @@ export const SEX_SHORT: Record<NonNullable<Patient['sex']>, string> = { female: 
 
 export const KIND_LABEL: Record<Consultation['kind'], string> = { first: 'First visit', 'follow-up': 'Follow-up', acute: 'Acute', phone: 'Phone' }
 
+/** Glasgow Homeopathic Hospital Outcome Scale, best first. */
+export const GHHOS: { score: number; label: string }[] = [
+  { score: 4, label: 'Cured or almost cured' },
+  { score: 3, label: 'Major improvement' },
+  { score: 2, label: 'Moderate improvement, affecting daily living' },
+  { score: 1, label: 'Slight improvement, no effect on daily living' },
+  { score: 0, label: 'No change' },
+  { score: -1, label: 'Slight deterioration' },
+  { score: -2, label: 'Moderate deterioration, affecting daily living' },
+  { score: -3, label: 'Major deterioration' },
+]
+
+export function formatScoreSigned(n: number): string { return n > 0 ? `+${n}` : n < 0 ? `\u2212${-n}` : '0' }
+
+export function ghhosLabel(score: number | null | undefined): string {
+  return score == null ? '' : GHHOS.find(g => g.score === score)?.label ?? ''
+}
+
+/**
+ * The prescription a consultation evaluates: the latest one made before it, with the consultation it came from.
+ * Follow-ups evaluate the constitutional line, so acute interludes are skipped unless nothing else was prescribed.
+ */
+export function previousPrescription(list: Consultation[], c: Consultation): { rx: Prescription; from: Consultation } | null {
+  const pick = (skipAcute: boolean) => {
+    let best: { rx: Prescription; from: Consultation } | null = null
+    for (const o of list) {
+      if (o.id === c.id || byNewest(o, c) <= 0) continue // only consultations older than c
+      if (skipAcute && o.kind === 'acute') continue
+      for (const rx of o.prescriptions) if (!best || rx.date > best.rx.date || (rx.date === best.rx.date && byNewest(o, best.from) < 0)) best = { rx, from: o }
+    }
+    return best
+  }
+  return (c.kind !== 'acute' ? pick(true) : null) ?? pick(false)
+}
+
 export type PatientDraft = Pick<Patient, 'firstName' | 'lastName' | 'birthDate' | 'sex' | 'email' | 'phone' | 'address' | 'occupation'>
 export type PatientErrors = Partial<Record<keyof PatientDraft, string>>
 
@@ -147,8 +182,14 @@ export interface PatientRow {
   haystack: string
 }
 
+/** Optional text sources for the search haystack (remedy names, rubric labels). */
+export interface RowText {
+  remedyName?: (id: number) => string
+  rubricText?: (ref: RubricRef) => string | null
+}
+
 /** One row per patient with the derived columns of the patients table. */
-export function patientRows(patients: Record<string, Patient>, consultations: Record<string, Consultation>, remedyAbbrev: (id: number) => string, now = Date.now()): PatientRow[] {
+export function patientRows(patients: Record<string, Patient>, consultations: Record<string, Consultation>, remedyAbbrev: (id: number) => string, now = Date.now(), text: RowText = {}): PatientRow[] {
   const byPatient = new Map<string, Consultation[]>()
   for (const c of Object.values(consultations)) {
     const l = byPatient.get(c.patientId)
@@ -164,7 +205,17 @@ export function patientRows(patients: Record<string, Patient>, consultations: Re
       for (const rx of c.prescriptions) if (!lastRx || rx.date > lastRx.date) lastRx = rx
     }
     const name = patientName(p)
-    const haystack = [p.firstName, p.lastName, p.email, p.phone, p.occupation, p.address, ...p.tags, ...cs.map(c => c.complaint), lastRx ? remedyAbbrev(lastRx.remedyId) : ''].join(' ').toLowerCase()
+    const parts: string[] = [p.firstName, p.lastName, p.email, p.phone, p.occupation, p.address, p.notes, ...p.tags]
+    const remedies = new Set<number>()
+    const rubrics = new Set<RubricRef>()
+    for (const c of cs) {
+      parts.push(c.title, c.complaint, c.notes, c.assessment, c.response?.note ?? '')
+      for (const rx of c.prescriptions) { remedies.add(rx.remedyId); parts.push(rx.potency, rx.dosage, rx.note) }
+      if (text.rubricText) for (const cb of c.clipboards) for (const s of cb.symptoms) for (const r of s.rubrics) rubrics.add(r)
+    }
+    for (const id of remedies) parts.push(remedyAbbrev(id), text.remedyName?.(id) ?? '')
+    for (const r of rubrics) parts.push(text.rubricText!(r) ?? '')
+    const haystack = parts.join(' ').toLowerCase()
     return { patient: p, name, age: ageOf(p.birthDate, now), ageLabel: formatAge(p.birthDate, now), consultations: cs.length, lastVisit, lastRx, haystack }
   })
 }
@@ -182,7 +233,7 @@ export function sortRows(rows: PatientRow[], sort: Sort, remedyAbbrev: (id: numb
       case 'tags': return r.patient.tags.join(', ') || null
       case 'lastVisit': return r.lastVisit
       case 'consultations': return r.consultations
-      case 'lastRx': return r.lastRx ? `${remedyAbbrev(r.lastRx.remedyId)} ${r.lastRx.potency}` : null
+      case 'lastRx': return r.lastRx ? remedyAbbrev(r.lastRx.remedyId) : null
     }
   }
   return [...rows].sort((a, b) => {
@@ -190,9 +241,32 @@ export function sortRows(rows: PatientRow[], sort: Sort, remedyAbbrev: (id: numb
     // empty values always last
     if (x === null || x === '') return y === null || y === '' ? cmpStr(a.name, b.name) : 1
     if (y === null || y === '') return -1
-    const c = typeof x === 'number' && typeof y === 'number' ? x - y : cmpStr(String(x), String(y))
+    let c = typeof x === 'number' && typeof y === 'number' ? x - y : cmpStr(String(x), String(y))
+    if (!c && sort.key === 'lastRx') c = comparePotency(a.lastRx!.potency, b.lastRx!.potency)
     return c * sort.dir || cmpStr(a.name, b.name)
   })
+}
+
+/**
+ * Sort key of a potency: decimal (6X, D12) < centesimal (6C … 200C, 1M, 10M, CM, MM) < LM/Q (by number) < anything else.
+ * Returns [scale, value]; unknown notations sort last by text.
+ */
+export function potencyRank(potency: string): [number, number] {
+  const p = potency.trim().toUpperCase().replace(/\s+/g, '')
+  let m = /^(\d+(?:\.\d+)?)(X|D|DH)$/.exec(p) ?? /^D(\d+)$/.exec(p)
+  if (m) return [0, Number(m[1])]
+  if ((m = /^(\d+(?:\.\d+)?)(C|CH|K)?$/.exec(p))) return [1, Number(m[1])]
+  if ((m = /^(\d+(?:\.\d+)?)M$/.exec(p))) return [1, Number(m[1]) * 1000]
+  if (p === 'CM') return [1, 100_000]
+  if (p === 'MM') return [1, 1_000_000]
+  if ((m = /^(?:LM|Q)(\d+)$/.exec(p)) ?? (m = /^(\d+)(?:LM|Q)$/.exec(p))) return [2, Number(m[1])]
+  if (p === 'Q' || p === 'MT' || p === 'Ø') return [-1, 0]
+  return [3, 0]
+}
+
+export function comparePotency(a: string, b: string): number {
+  const x = potencyRank(a), y = potencyRank(b)
+  return x[0] - y[0] || x[1] - y[1] || a.localeCompare(b)
 }
 
 /** Every query word must appear somewhere; every selected tag must be on the patient. */

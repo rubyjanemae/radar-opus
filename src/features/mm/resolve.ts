@@ -39,12 +39,15 @@ const OVERRIDES: Record<string, string> = {
   alum: 'alum', alumina: 'alum', ambr: 'ambr', ambra: 'ambr', anac: 'anac', 'ant tar': 'ant-t', bar: 'bar-c', 'bar carb': 'bar-c',
   borax: 'bor', 'calc carb': 'calc', 'calc phos': 'calc-p', 'calc fl': 'calc-f', 'calc sulph': 'calc-s', 'kali bich': 'kali-bi',
   'kali carb': 'kali-c', 'kali phos': 'kali-p', 'kali sulph': 'kali-s', 'kali iod': 'kali-i', 'kali mur': 'kali-m', 'kali brom': 'kali-br',
+  pod: 'podo', podo: 'podo', tarant: 'tarent', 'tart emet': 'ant-t', 'tart em': 'ant-t', cup: 'cupr', hyd: 'hydr', sab: 'sabin',
+  lil: 'lil-t', 'ars jod': 'ars-i', 'ars iod': 'ars-i', 'kali bi': 'kali-bi', 'kali b': 'kali-bi',
   'nat sulph': 'nat-s', 'natr sulph': 'nat-s', 'nat carb': 'nat-c', 'natr carb': 'nat-c', 'nat phos': 'nat-p', 'natr phos': 'nat-p',
   'mag carb': 'mag-c', 'mag mur': 'mag-m', 'ammon carb': 'am-c', 'ammon mur': 'am-m', 'am carb': 'am-c', 'am mur': 'am-m',
   'merc cor': 'merc-c', 'merc corr': 'merc-c', 'merc sol': 'merc', 'merc viv': 'merc', 'merc dulc': 'merc-d', 'merc iod': 'merc-i-f',
   'nux vom': 'nux-v', 'nux mos': 'nux-m', 'nux mosch': 'nux-m', 'rhus t': 'rhus-t', 'rhus rad': 'rhus-r', 'rhus ven': 'rhus-v',
   'cimicif': 'cimic', cimicifuga: 'cimic', cimic: 'cimic', actea: 'cimic', 'actaea rac': 'cimic', 'arg nit': 'arg-n', 'argent nit': 'arg-n',
-  'arg met': 'arg-m', 'aur mur': 'aur-m', 'lac can': 'lac-c', 'lac def': 'lac-d', 'lil tig': 'lil-t', 'sulph iod': 'sul-i',
+  castor: 'cast', castoreum: 'cast', turpentine: 'ter', 'potass permang': 'kali-ma', 'kali permang': 'kali-ma', salt: 'nat-m', 'common salt': 'nat-m', 'arg met': 'arg-m', 'aur mur': 'aur-m', 'lac can': 'lac-c', 'lac def': 'lac-d', 'lil tig': 'lil-t', 'sulph iod': 'sul-i',
+  calcar: 'calc', ionesia: 'jon', 'ionesia asoca': 'jon', 'jonesia asoca': 'jon', 'magnetis polus articus': 'm-arct',
 }
 
 /** Lower-case, dots/hyphens to spaces, collapsed. */
@@ -70,7 +73,10 @@ export class RemedyResolver {
   private readonly byAbbrev = new Map<string, Remedy>()
   private readonly byName = new Map<string, Remedy>()
   private readonly byFirst = new Map<string, Entry[]>()
+  private readonly byWord = new Map<string, Entry[]>()
   private readonly cache = new Map<string, Remedy | null>()
+  /** Remedies with a chapter heading (a monograph in the book). */
+  private readonly withHeading = new Set<number>()
 
   /** `headings`: extra names per remedy id, e.g. Boericke chapter headings. */
   constructor(remedies: Iterable<Remedy>, headings: Iterable<[number, string]> = []) {
@@ -87,6 +93,7 @@ export class RemedyResolver {
     for (const [id, heading] of headings) {
       const e = byId.get(id)
       if (!e) continue
+      this.withHeading.add(id)
       for (const part of heading.split(/\s*(?:--|—|–| - |-(?=[A-Z]{3}))\s*/)) {
         const words = normToken(part).split(' ').filter(Boolean)
         if (words.length) e.names.push(words)
@@ -97,6 +104,12 @@ export class RemedyResolver {
         const key = n.join(' ')
         const prev = this.byName.get(key)
         if (!prev || prev.abbrev.length > e.remedy.abbrev.length) this.byName.set(key, e.remedy)
+      }
+      for (const n of e.names) for (const w of n.slice(1)) {
+        if (w.length < 4) continue
+        let list = this.byWord.get(w)
+        if (!list) this.byWord.set(w, (list = []))
+        if (!list.includes(e)) list.push(e)
       }
       const firsts = new Set([...e.names.map(n => n[0].slice(0, 2)), e.abbrevParts[0].slice(0, 2)])
       for (const f of firsts) {
@@ -118,6 +131,19 @@ export class RemedyResolver {
     return r
   }
 
+  /** Does the book have a monograph (chapter heading) for this remedy? */
+  hasMonograph(id: number): boolean { return this.withHeading.has(id) }
+
+  /** Only confident matches: exact abbreviation, exact name, or known Boericke shorthand. */
+  resolveExact(raw: string): Remedy | null {
+    const q = normToken(raw)
+    if (!q) return null
+    const ab = this.byAbbrev.get(q) ?? this.byName.get(q)
+    if (ab) return ab
+    const ov = OVERRIDES[q]
+    return ov ? this.byAbbrev.get(normToken(ov)) ?? null : null
+  }
+
   private compute(q: string): Remedy | null {
     const ab = this.byAbbrev.get(q)
     if (ab) return ab
@@ -137,11 +163,20 @@ export class RemedyResolver {
         if (!words.every((w, i) => n[i].startsWith(w))) continue
         // single-word queries must be a solid stem (avoid "Sore" → "Sorghum")
         if (words.length === 1 && words[0].length < 4 && words[0] !== n[0]) continue
-        const score = (words.length === n.length ? 0 : 100) + (words[0] === n[0] ? 0 : 20) + e.remedy.abbrev.length
+        // the abbreviation agreeing with the mention ("Dig" for "Digit") beats a longer namesake ("Digin")
+        const abbrevAgrees = words[0].startsWith(e.abbrevParts[0]) ? 0 : 10
+        const score = (words.length === n.length ? 0 : 100) + (words[0] === n[0] ? 0 : 20) + abbrevAgrees + e.remedy.abbrev.length
         if (!best || score < best.score) best = { e, score }
       }
     }
     if (best) return best.e.remedy
+
+    // a single full word of a longer name ("Cepa" → Allium cepa)
+    if (words.length === 1 && words[0].length >= 4) {
+      let hit: Entry | null = null
+      for (const e of this.byWord.get(words[0]) ?? []) if (!hit || e.remedy.abbrev.length < hit.remedy.abbrev.length) hit = e
+      if (hit) return hit.remedy
+    }
 
     // abbreviation prefix: each abbreviation part a prefix of the query word
     let bestAb: Entry | null = null
@@ -150,6 +185,8 @@ export class RemedyResolver {
       if (p.length !== words.length) continue
       if (!p.every((x, i) => words[i].startsWith(x))) continue
       if (p[0].length < 3) continue
+      // "Phosphor" → Phos, but not "Nephritis" → Nep
+      if (p.some((x, i) => words[i].length - x.length > 4)) continue
       if (!bestAb || e.abbrev.length > bestAb.abbrev.length) bestAb = e
     }
     return bestAb?.remedy ?? null

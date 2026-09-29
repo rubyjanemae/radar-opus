@@ -1,7 +1,7 @@
 import type { Catalog } from '../../data/catalog'
 import type { Repertory } from '../../data/repertory'
 import type { Grade, RubricRef } from '../../data/types'
-import { classifyChapter } from '../../engine/analysis'
+import { classifyChapter, isGeneralitiesChapter } from '../../engine/analysis'
 import type { ChapterClass, RemedyStats, RubricSource } from '../../engine/analysis'
 
 /**
@@ -15,6 +15,8 @@ export class CatalogSource implements RubricSource {
   private readonly labelCache = new Map<RubricRef, string>()
   private readonly classCache = new Map<string, ChapterClass>()
   private readonly statsCache = new Map<string, RemedyStats | null>()
+  private readonly generalIndex = new Map<string, { chapter: number; byPath: Map<string, number> } | null>()
+  private readonly generalCache = new Map<RubricRef, RubricRef[]>()
 
   constructor(catalog: Catalog) { this.catalog = catalog }
 
@@ -71,7 +73,53 @@ export class CatalogSource implements RubricSource {
   }
 
   remedyName(id: number): string { return this.catalog.remedy(id).abbrev }
+
+  /**
+   * Bönninghausen generalisation links (scoring-spec §4.12): the Generalities rubric whose
+   * path equals the longest tail of this rubric's path below its chapter. For example
+   * "HEAD - pain - morning" links to "GENERALITIES - morning", "VERTIGO - air - open" to
+   * "GENERALITIES - air, open". Mind rubrics and rubrics already in Generalities have none.
+   */
+  generalRubrics(ref: RubricRef): RubricRef[] {
+    const hit = this.generalCache.get(ref)
+    if (hit) return hit
+    const r = this.locate(ref)
+    let out: RubricRef[] = []
+    if (r) {
+      const idx = this.generalsOf(r.rep)
+      if (idx && r.rep.chapterOf(r.index) !== idx.chapter && this.chapterClass(ref) !== 'mental') {
+        const tail = r.rep.lineage(r.index).slice(1).map(i => normalise(r.rep.text(i)))
+        for (let k = 0; k < tail.length; k++) {
+          const g = idx.byPath.get(tail.slice(k).join('|'))
+          if (g !== undefined) { out = [r.rep.ref(g)]; break }
+        }
+      }
+    }
+    this.generalCache.set(ref, out)
+    return out
+  }
+
+  private generalsOf(rep: Repertory) {
+    if (this.generalIndex.has(rep.abbrev)) return this.generalIndex.get(rep.abbrev)!
+    let res: { chapter: number; byPath: Map<string, number> } | null = null
+    const root = rep.chapters.find(c => isGeneralitiesChapter(rep.text(c)))
+    if (root !== undefined) {
+      const byPath = new Map<string, number>()
+      const path = new Map<number, string>([[root, '']])
+      for (let i = root + 1; i < rep.subtreeEndOf(root); i++) {
+        const parent = path.get(rep.parent(i)) ?? ''
+        const p = parent ? `${parent}|${normalise(rep.text(i))}` : normalise(rep.text(i))
+        path.set(i, p)
+        if (!byPath.has(p)) byPath.set(p, i)
+      }
+      res = { chapter: rep.chapterOf(root), byPath }
+    }
+    this.generalIndex.set(rep.abbrev, res)
+    return res
+  }
 }
+
+const normalise = (t: string) => t.trim().toLowerCase().replace(/\s+/g, ' ')
 
 /** Count, for every remedy, the rubrics it appears in. */
 export function computeRemedyStats(rep: Pick<Repertory, 'size' | 'forEachRemedy'>): RemedyStats {

@@ -4,7 +4,7 @@ import { formatScore } from '../../engine/analysis'
 import type { AnalysisResult, AnalysisRow } from '../../engine/analysis'
 import type { MenuItem } from '../../ui/Menu'
 import { useContextMenu } from '../../ui/Menu'
-import { EXCLUSION_LABEL } from './export'
+import { exclusionText } from './export'
 
 interface Props {
   result: AnalysisResult
@@ -18,7 +18,13 @@ interface Props {
   onOpenRemedy: (id: number) => void
   remedyMenu: (row: AnalysisRow) => MenuItem[]
   reveal?: { remedyId: number; nonce: number } | null
+  pinned?: Set<number>
 }
+
+/** Fixed columns of a bar row: padding 6 + 12, rank 34, abbrev 78, score 64, three 8px gaps. */
+const ROW_CHROME = 6 + 12 + 34 + 78 + 64 + 3 * 8
+/** Segments narrower than this draw no grade digit (the tooltip still names it). */
+const MIN_DIGIT_PX = 12
 
 const ROW = 26
 const OVERSCAN = 6
@@ -37,7 +43,7 @@ export function GradeLegend() {
 export const AnalysisBars = memo(function AnalysisBars(p: Props) {
   const { result, rows, catalog } = p
   const ref = useRef<HTMLDivElement>(null)
-  const [vp, setVp] = useState({ top: 0, height: 600 })
+  const [vp, setVp] = useState({ top: 0, height: 600, width: 800 })
   const [active, setActive] = useState(0)
   const focusWithin = useRef(false)
   const cm = useContextMenu()
@@ -45,7 +51,7 @@ export const AnalysisBars = memo(function AnalysisBars(p: Props) {
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    const update = () => setVp(v => (v.top === el.scrollTop && v.height === el.clientHeight ? v : { top: el.scrollTop, height: el.clientHeight }))
+    const update = () => setVp(v => (v.top === el.scrollTop && v.height === el.clientHeight && v.width === el.clientWidth ? v : { top: el.scrollTop, height: el.clientHeight, width: el.clientWidth }))
     update()
     el.addEventListener('scroll', update, { passive: true })
     const ro = new ResizeObserver(update)
@@ -54,6 +60,7 @@ export const AnalysisBars = memo(function AnalysisBars(p: Props) {
   }, [])
 
   const max = Math.max(1e-9, ...rows.map(r => r.points))
+  const trackPx = Math.max(40, vp.width - ROW_CHROME)
   const a = Math.min(active, rows.length - 1)
   const start = Math.max(0, Math.floor(vp.top / ROW) - OVERSCAN)
   const end = Math.min(rows.length, Math.ceil((vp.top + vp.height) / ROW) + OVERSCAN)
@@ -80,6 +87,7 @@ export const AnalysisBars = memo(function AnalysisBars(p: Props) {
     const k = rows.findIndex(r => r.remedyId === p.reveal!.remedyId)
     if (k < 0) return
     setActive(k)
+    focusWithin.current = true
     const el = ref.current
     if (el) el.scrollTop = Math.max(0, k * ROW - el.clientHeight / 2)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -121,6 +129,8 @@ export const AnalysisBars = memo(function AnalysisBars(p: Props) {
           if (row.excluded) cls.push('excl')
           if (p.highlight?.has(row.remedyId)) cls.push('fam')
           if (p.selectedSymptom != null && !row.grades[p.selectedSymptom]) cls.push('dim')
+          if (p.pinned?.has(row.remedyId)) cls.push('pinned')
+          if (p.pinned?.has(row.remedyId) && !p.pinned.has(rows[k - 1]?.remedyId)) cls.push('pin-first')
           return (
             <div
               key={row.remedyId}
@@ -130,7 +140,7 @@ export const AnalysisBars = memo(function AnalysisBars(p: Props) {
               aria-selected={row.remedyId === p.selectedRemedy}
               tabIndex={k === a ? 0 : -1}
               style={{ top: k * ROW }}
-              title={`${rem.name}${row.excluded ? ` (${EXCLUSION_LABEL[row.excluded]})` : ''}`}
+              title={`${rem.name}${row.excluded ? ` (${exclusionText(result, row)})` : ''}`}
               onMouseDown={() => setActive(k)}
               onClick={() => p.onSelectRemedy(p.selectedRemedy === row.remedyId ? null : row.remedyId)}
               onDoubleClick={() => p.onOpenRemedy(row.remedyId)}
@@ -144,14 +154,15 @@ export const AnalysisBars = memo(function AnalysisBars(p: Props) {
                   if (!pts) return null
                   const g = row.grades[i]
                   const sel = p.selectedSymptom === i
+                  const w = (pts / max) * 100
                   return (
                     <span
                       key={i}
                       className={`an-bseg s${g}${sel ? ' on' : p.selectedSymptom != null ? ' off' : ''}`}
-                      style={{ width: `${(pts / max) * 100}%` }}
+                      style={{ width: `${w}%` }}
                       title={`${s.label}\ngrade ${g} · ${Math.round(pts * 100) / 100} points`}
                       onClick={e => { e.stopPropagation(); p.onSelectSymptom(sel ? null : i) }}
-                    >{g}</span>
+                    >{(w / 100) * trackPx >= MIN_DIGIT_PX ? g : null}</span>
                   )
                 })}
               </span>

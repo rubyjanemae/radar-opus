@@ -46,6 +46,39 @@ describe('taking rubrics', () => {
     expect(s.combine).toBe('union')
     expect(s.label).toMatch(/with 2 sub-rubrics/)
   })
+  it('does not duplicate a /s take: same rubric set updates the existing symptom', () => {
+    takeRefs(['t:1'], { ...DEFAULT_TAKE, subRubrics: true })
+    expect(takeRefs(['t:1'], { ...DEFAULT_TAKE, subRubrics: true })).toBe(0)
+    expect(takeRefs(['t:1'], { ...DEFAULT_TAKE, subRubrics: true, weight: 3, group: 'b' })).toBe(1)
+    const syms = consultation().clipboards[0].symptoms
+    expect(syms).toHaveLength(1)
+    expect(syms[0]).toMatchObject({ weight: 3, group: 'b' })
+  })
+  it('a /s take of a leaf acts on the plain rubric symptom', () => {
+    takeRefs(['t:2'], { ...DEFAULT_TAKE })
+    expect(takeRefs(['t:2'], { ...DEFAULT_TAKE, subRubrics: true })).toBe(0)
+    expect(takeRefs(['t:2'], { ...DEFAULT_TAKE, subRubrics: true, eliminatory: true })).toBe(1)
+    const syms = consultation().clipboards[0].symptoms
+    expect(syms).toHaveLength(1)
+    expect(syms[0]).toMatchObject({ rubrics: ['t:2'], eliminatory: true })
+    expect(useApp.getState().toasts.at(-1)?.text).toMatch(/no sub-rubrics/)
+  })
+  it('keeps one repertory toast on screen and merges successive takes', () => {
+    takeRefs(['t:2'], { ...DEFAULT_TAKE })
+    takeRefs(['t:3'], { ...DEFAULT_TAKE })
+    takeRefs(['t:4'], { ...DEFAULT_TAKE, weight: 2 })
+    const toasts = useApp.getState().toasts
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0].text).toMatch(/^3 rubrics taken · last: anger \(×2/)
+  })
+  it('records taken rubrics in the Recent list of the repertory tab', () => {
+    actions.openTab({ kind: 'repertory', repertory: 't', rubric: 0, back: [], forward: [] }, { reuse: false })
+    takeRefs(['t:2'], { ...DEFAULT_TAKE })
+    takeRefs(['t:3'], { ...DEFAULT_TAKE })
+    takeRefs(['t:2'], { ...DEFAULT_TAKE, weight: 2 })
+    const tab = useApp.getState().tabs[0]
+    expect(tab.kind === 'repertory' && tab.recent).toEqual([2, 3])
+  })
   it('creates clipboards up to the requested number and keeps the active one', () => {
     takeRefs(['t:4'], { ...DEFAULT_TAKE, clipboard: 3 })
     const c = consultation()

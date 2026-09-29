@@ -2,7 +2,7 @@
 /**
  * Builds public/data/ from the OOREP database dump (GPL v3).
  *   git clone --depth 1 https://github.com/nondeterministic/oorep
- *   node scripts/build-data.mjs oorep/oorep.sql.gz
+ *   node scripts/build-data.mjs oorep/oorep.sql.gz [--only=mm]
  *
  * Output:
  *   remedies.json            [[id, abbrev, longName, altName|null], ...]
@@ -16,8 +16,12 @@ import zlib from 'node:zlib';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
+import { buildBoericke } from './lib/boericke.mjs';
+
 const input = process.argv[2];
-if (!input) { console.error('usage: node scripts/build-data.mjs <oorep.sql[.gz]>'); process.exit(1); }
+if (!input) { console.error('usage: node scripts/build-data.mjs <oorep.sql[.gz]> [--only=mm]'); process.exit(1); }
+/** --only=mm rebuilds just the materia medica files. */
+const only = process.argv.find(a => a.startsWith('--only='))?.slice(7) ?? null;
 const outDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public', 'data');
 fs.mkdirSync(outDir, { recursive: true });
 
@@ -41,7 +45,7 @@ for await (const line of rl) {
 
 // ---- remedies ----
 const remedies = tables.remedy.map(([id, abbrev, long, alt]) => [Number(id), abbrev.replace(/\.$/, ''), long, alt]).sort((a, b) => a[0] - b[0]);
-fs.writeFileSync(path.join(outDir, 'remedies.json'), JSON.stringify(remedies));
+if (!only) fs.writeFileSync(path.join(outDir, 'remedies.json'), JSON.stringify(remedies));
 
 // ---- repertories ----
 const CHAPTER_ORDER = {
@@ -55,7 +59,7 @@ const TIMES = {
 };
 
 const reps = [];
-for (const info of tables.info) {
+for (const info of only ? [] : tables.info) {
   const [abbrev, title, lang, authorLast, authorFirst, year, publisher, license, , , displayTitle] = info;
   const rows = tables.rubric.filter(r => r[0] === abbrev).map(r => ({ oid: Number(r[1]), path: r[5].trim() }));
   const byPath = new Map();
@@ -126,26 +130,20 @@ for (const info of tables.info) {
   console.log(abbrev, flat.length, 'rubrics', data.length, 'entries', roots.length, 'chapters');
 }
 reps.sort((a, b) => (a.lang === 'en' ? 0 : 1) - (b.lang === 'en' ? 0 : 1) || a.title.localeCompare(b.title));
-fs.writeFileSync(path.join(outDir, 'repertories.json'), JSON.stringify(reps, null, 1));
+if (!only) fs.writeFileSync(path.join(outDir, 'repertories.json'), JSON.stringify(reps, null, 1));
 
 // ---- materia medica (Boericke) ----
 for (const mm of tables.mminfo) {
   const [mmId, abbrev, lang, fulltitle, last, first, publisher, year, license] = mm;
-  const chapters = tables.mmchapter.filter(c => c[1] === mmId).map(([id, , heading, remId]) => ({ id, heading, remedyId: remId ? Number(remId) : null }));
-  const secs = new Map();
-  for (const s of tables.mmsection) {
-    const [id, chId, depth, , , heading, content] = s;
-    if (!secs.has(chId)) secs.set(chId, []);
-    secs.get(chId).push({ id: Number(id), depth: Number(depth), heading, content: (content ?? '').trim() });
-  }
+  const { entries, log } = buildBoericke(
+    tables.mmchapter.filter(c => c[1] === mmId),
+    tables.mmsection,
+    remedies.map(([id, ab, name, altName]) => ({ id, abbrev: ab, name, altName })),
+  );
+  for (const l of log) console.log('mm', abbrev, l);
   const out = {
     abbrev, lang, title: fulltitle, author: [first, last].filter(Boolean).join(' '), year: Number(year), publisher, license: license ?? 'Public domain',
-    remedies: chapters.map(c => {
-      const s = (secs.get(c.id) ?? []).sort((a, b) => a.id - b.id);
-      const intro = s.find(x => x.depth === 1);
-      const [common, ...rest] = (intro?.content ?? '').split('\n');
-      return { remedyId: c.remedyId, heading: c.heading, commonName: common.trim(), intro: rest.join('\n').trim(), sections: s.filter(x => x.depth > 1).map(x => ({ heading: x.heading, text: x.content })) };
-    }).filter(r => r.remedyId != null).sort((a, b) => a.heading.localeCompare(b.heading)),
+    remedies: entries,
   };
   fs.writeFileSync(path.join(outDir, `mm-${abbrev}.json`), JSON.stringify(out));
   console.log('mm', abbrev, out.remedies.length);

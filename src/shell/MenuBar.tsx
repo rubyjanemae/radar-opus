@@ -6,6 +6,7 @@ import { actions, useApp, selectActiveConsultation } from '../state/store'
 import { MenuList } from '../ui/Menu'
 import { buildMenus } from './menus'
 import { SaveIndicator } from './SaveIndicator'
+import { patientName } from '../features/patients/logic'
 
 export function MenuBar() {
   const catalog = useCatalog()
@@ -76,7 +77,7 @@ export function MenuBar() {
       {patient && consultation && (
         <button className="menubar-case" onClick={() => actions.openTab({ kind: 'patient', patientId: patient.id })} title="Open active patient">
           <span className="menubar-case-dot" />
-          {patient.lastName}, {patient.firstName} <span className="menubar-case-sub">· {consultation.title}</span>
+          <span className="menubar-case-text">{patientName(patient)} <span className="menubar-case-sub">· {consultation.title}</span></span>
         </button>
       )}
       <button className="menubar-search" onClick={() => actions.setCommandPalette(true)} aria-label="Search commands, rubrics and remedies">

@@ -23,6 +23,7 @@ export function buildMenus(catalog: Catalog): { label: string; items: MenuItem[]
         { command: 'file.exportWorkspace' },
         sep,
         { command: 'analysis.print' },
+        { command: 'mm.print' },
         { command: 'case.report' },
         sep,
         { command: 'app.settings' },
@@ -75,6 +76,8 @@ export function buildMenus(catalog: Catalog): { label: string; items: MenuItem[]
         { command: 'tab.close' },
         { command: 'tab.next' },
         { command: 'tab.prev' },
+        { command: 'view.focusNext' },
+        { command: 'view.focusPrev' },
       ],
     },
     {
@@ -92,10 +95,10 @@ export function buildMenus(catalog: Catalog): { label: string; items: MenuItem[]
         sep,
         { command: 'rubric.add' },
         {
-          label: 'Add with weight', submenu: [
-            { command: 'rubric.add.w2' },
-            { command: 'rubric.add.w3' },
-            { command: 'rubric.add.w4' },
+          label: 'Take with intensity', submenu: [
+            { command: 'rubric.add.w2', label: 'Intensity 2' },
+            { command: 'rubric.add.w3', label: 'Intensity 3' },
+            { command: 'rubric.add.w4', label: 'Intensity 4' },
           ],
         },
         { command: 'rubric.takeOptions' },
@@ -132,11 +135,17 @@ export function buildMenus(catalog: Catalog): { label: string; items: MenuItem[]
     {
       label: 'Case',
       items: [
+        { command: 'consultation.activate' },
+        { command: 'consultation.followUp' },
+        { command: 'prescription.add' },
+        { command: 'consultation.delete' },
+        sep,
         { command: 'clipboard.new' },
         { command: 'clipboard.next' },
         { command: 'clipboard.prev' },
         { command: 'clipboard.rename' },
         { command: 'clipboard.clear' },
+        { command: 'clipboard.clearAll' },
         { command: 'clipboard.delete' },
         {
           label: 'Sort symptoms', submenu: [
@@ -184,7 +193,8 @@ export function buildMenus(catalog: Catalog): { label: string; items: MenuItem[]
           ],
         },
         sep,
-        { command: 'analysis.filter' },
+        { command: 'families.filter' },
+        { command: 'analysis.remedies' },
         { command: 'analysis.clearFilter' },
         { command: 'analysis.compare' },
         sep,
@@ -197,7 +207,10 @@ export function buildMenus(catalog: Catalog): { label: string; items: MenuItem[]
       label: 'Tools',
       items: [
         { command: 'mm.open' },
+        { command: 'mm.search' },
+        { command: 'remedy.open' },
         { command: 'families.open' },
+        { command: 'families.ofRemedy' },
         { command: 'app.palette' },
         { command: 'palette.rubrics' },
         { command: 'palette.remedies' },
@@ -208,6 +221,8 @@ export function buildMenus(catalog: Catalog): { label: string; items: MenuItem[]
       label: 'Help',
       items: [
         { command: 'help.shortcuts' },
+        { command: 'help.welcome' },
+        sep,
         { command: 'help.about' },
       ],
     },

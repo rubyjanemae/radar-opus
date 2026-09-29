@@ -45,24 +45,35 @@ interface MenuListProps {
   label?: string
   /** Opened as a submenu: Left closes it. */
   nested?: boolean
+  /** Submenus: close the whole menu tree after an item runs (defaults to onClose). */
+  onDone?: () => void
+  /** Submenus: left edge of the parent menu, used to flip the submenu to the left side when it does not fit on the right. */
+  flipX?: number
 }
 
 /** Floating keyboard-navigable menu list; used for menubar dropdowns and context menus. */
-export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, label, nested }: MenuListProps) {
+export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, label, nested, onDone, flipX }: MenuListProps) {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ x, y })
   const [active, setActive] = useState(-1)
-  const [sub, setSub] = useState<{ index: number; x: number; y: number } | null>(null)
+  const [sub, setSub] = useState<{ index: number; x: number; y: number; flipX: number } | null>(null)
   const actionable = items.map((it, i) => ('type' in it && (it.type === 'separator' || it.type === 'label')) ? -1 : i).filter(i => i >= 0)
 
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    const nx = Math.min(x, window.innerWidth - r.width - 4)
+    const fits = x + r.width <= window.innerWidth - 4
+    const nx = fits ? x : flipX !== undefined ? flipX - r.width + 2 : window.innerWidth - r.width - 4
     const ny = y + r.height > window.innerHeight - 4 ? Math.max(4, window.innerHeight - r.height - 4) : y
     setPos({ x: Math.max(4, nx), y: ny })
-  }, [x, y])
+  }, [x, y, flipX])
+
+  // keep the keyboard-active item visible when the menu scrolls (tall menus)
+  useEffect(() => {
+    if (active < 0) return
+    ref.current?.querySelector<HTMLElement>(`:scope > [data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [active])
 
   useEffect(() => {
     if (autoFocus) {
@@ -91,10 +102,11 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
     if (r.submenu) {
       const el = ref.current?.querySelectorAll<HTMLElement>('[data-index]')[actionable.indexOf(i)]
       const rect = el?.getBoundingClientRect()
-      if (rect) setSub({ index: i, x: rect.right - 2, y: rect.top - 4 })
+      const box = ref.current?.getBoundingClientRect()
+      if (rect) setSub({ index: i, x: rect.right - 2, y: rect.top - 4, flipX: box?.left ?? rect.left })
       return
     }
-    onClose()
+    ;(onDone ?? onClose)()
     r.run?.()
   }
 
@@ -170,6 +182,8 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
           items={resolve(items[sub.index] as never).submenu ?? []}
           x={sub.x}
           y={sub.y}
+          flipX={sub.flipX}
+          onDone={onDone ?? onClose}
           onClose={() => { setSub(null); ref.current?.focus() }}
         />
       )}

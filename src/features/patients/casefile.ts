@@ -98,6 +98,7 @@ export function parseCaseFile(text: string): CaseFile {
       prescriptions: (Array.isArray(c.prescriptions) ? c.prescriptions : []).filter(isObj).filter(rx => typeof rx.remedyId === 'number').map(rx => ({
         id: str(rx.id, 'rx'), remedyId: rx.remedyId as number, potency: str(rx.potency), dosage: str(rx.dosage), date: str(rx.date), note: str(rx.note),
       })),
+      ...(isObj(c.response) ? { response: { score: responseScore(c.response.score), note: str(c.response.note) } } : {}),
       createdAt: num(c.createdAt, Date.now()), updatedAt: num(c.updatedAt, Date.now()),
     }
   })
@@ -176,4 +177,8 @@ export function importCaseFile(file: CaseFile, ctx: ImportContext, now = Date.no
     return copy
   })
   return { patient, consultations, remapped, unresolved, duplicateOf }
+}
+
+function responseScore(v: unknown): number | null {
+  return typeof v === 'number' && Number.isInteger(v) && v >= -3 && v <= 4 ? v : null
 }

@@ -20,10 +20,19 @@ export function prefixSums(count: number, size: (i: number) => number): Float64A
   return out
 }
 
+/**
+ * Viewport (scrollTop, size) of the scroll element behind `ref`. The element is tracked by
+ * identity, not by ref object: when the scroller unmounts and a new one mounts (a tab switch,
+ * a conditional render) the listeners re-bind to the new element and the state is re-read.
+ */
 function useViewport(ref: RefObject<HTMLElement | null>) {
   const [vp, setVp] = useState({ top: 0, height: 0, width: 0 })
+  const [el, setEl] = useState<HTMLElement | null>(null)
+  // runs after every render: pick up a remounted scroll element
   useLayoutEffect(() => {
-    const el = ref.current
+    if (ref.current !== el) setEl(ref.current)
+  })
+  useLayoutEffect(() => {
     if (!el) return
     const update = () => setVp(v => (v.top === el.scrollTop && v.height === el.clientHeight && v.width === el.clientWidth) ? v : { top: el.scrollTop, height: el.clientHeight, width: el.clientWidth })
     update()
@@ -31,13 +40,13 @@ function useViewport(ref: RefObject<HTMLElement | null>) {
     const ro = new ResizeObserver(update)
     ro.observe(el)
     return () => { el.removeEventListener('scroll', update); ro.disconnect() }
-  }, [ref])
-  return vp
+  }, [el])
+  return { vp, el }
 }
 
 /** Fixed row-height virtualisation (trees, pickers). */
 export function useFixedVirtual(ref: RefObject<HTMLElement | null>, count: number, rowHeight: number, overscan = 8) {
-  const vp = useViewport(ref)
+  const { vp } = useViewport(ref)
   const start = Math.max(0, Math.floor(vp.top / rowHeight) - overscan)
   const end = Math.min(count, Math.ceil((vp.top + vp.height) / rowHeight) + overscan)
   const scrollToIndex = useCallback((i: number, align: 'auto' | 'center' = 'auto') => {
@@ -52,24 +61,63 @@ export function useFixedVirtual(ref: RefObject<HTMLElement | null>, count: numbe
 }
 
 /**
- * Variable-height virtualisation with measured rows. Rows are estimated until rendered,
- * then measured with a ResizeObserver; the first visible row stays anchored while
- * measurements above it settle, so the view does not jump.
+ * Scroll position that keeps row `index` at `delta` px from the viewport top, clamped so the
+ * row stays fully visible (its top wins when it is taller than the viewport).
  */
-export function useVariableVirtual(ref: RefObject<HTMLElement | null>, count: number, estimate: (i: number, width: number) => number, resetKey: unknown, overscan = 600) {
-  const vp = useViewport(ref)
+export function pinnedScrollTop(offsets: ArrayLike<number>, index: number, delta: number, viewport: number): number {
+  const top = offsets[index], height = offsets[index + 1] - top
+  let d = delta
+  if (d + height > viewport) d = viewport - height
+  if (d < 0) d = 0
+  return Math.max(0, top - d)
+}
+
+export interface VariableVirtualOptions {
+  /** Row to keep fixed on screen when the layout is reset (display mode, filters, width): usually the current row. */
+  focus?: number
+  /** Identity of the item set; the focus row is only carried across resets that keep it. */
+  contentKey?: unknown
+  overscan?: number
+}
+
+/**
+ * Variable-height virtualisation with measured rows. Rows are estimated until rendered,
+ * then measured with a ResizeObserver. While measurements settle, one row stays pinned at
+ * its viewport offset: the row last scrolled to or anchored (the current row), or, after a
+ * layout reset, the focus row. A user scroll releases the pin; the first visible row then
+ * anchors instead, so the view never jumps.
+ */
+export function useVariableVirtual(ref: RefObject<HTMLElement | null>, count: number, estimate: (i: number, width: number) => number, resetKey: unknown, opts: VariableVirtualOptions = {}) {
+  const overscan = opts.overscan ?? 600
+  const { vp, el: scrollEl } = useViewport(ref)
   const sizes = useRef<Float32Array>(new Float32Array(0))
   const [version, setVersion] = useState(0)
   const widthRef = useRef(0)
-  const pending = useRef<{ index: number; align: 'auto' | 'start' | 'center'; until: number } | null>(null)
+  const pin = useRef<{ index: number; delta: number } | null>(null)
+  const lastSet = useRef<number | null>(null)
   const estimateRef = useRef(estimate)
   estimateRef.current = estimate
+  const offsetsRef = useRef<Float64Array>(new Float64Array(1))
+  /** Offsets of the last committed layout (what the DOM and scrollTop reflect). */
+  const appliedRef = useRef<Float64Array>(new Float64Array(1))
+  const contentRef = useRef<unknown>(opts.contentKey)
 
   // reset measurements when content or width changes
   const widthBucket = Math.round(vp.width / 8)
   const key = useMemo(() => ({}), [resetKey, count, widthBucket]) // eslint-disable-line react-hooks/exhaustive-deps
   const keyRef = useRef<object | null>(null)
   if (keyRef.current !== key) {
+    // carry the focus row's on-screen position across the reset (read before the offsets are rebuilt)
+    const el = ref.current
+    const prev = appliedRef.current
+    const f = opts.focus
+    const sameContent = Object.is(contentRef.current, opts.contentKey)
+    if (!sameContent) pin.current = null
+    else if (el && f != null && f >= 0 && f < count && prev.length === count + 1) {
+      const top = prev[f] - el.scrollTop, bottom = prev[f + 1] - el.scrollTop
+      if (bottom > 0 && top < el.clientHeight) pin.current = { index: f, delta: top }
+    }
+    contentRef.current = opts.contentKey
     keyRef.current = key
     sizes.current = new Float32Array(count)
     widthRef.current = vp.width
@@ -82,23 +130,46 @@ export function useVariableVirtual(ref: RefObject<HTMLElement | null>, count: nu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, version, count])
 
-  const offsetsRef = useRef(offsets)
-  const prevOffsets = offsetsRef.current
   offsetsRef.current = offsets
 
-  // keep the anchor row (or a pending scroll target) stable when offsets change
+  const setScroll = (el: HTMLElement, y: number) => {
+    if (Math.abs(y - el.scrollTop) > 0.5) el.scrollTop = y
+    lastSet.current = el.scrollTop
+  }
+
+  // keep the pinned row (or else the first visible row) stable when offsets change
   useLayoutEffect(() => {
     const el = ref.current
+    const prevOffsets = appliedRef.current
+    appliedRef.current = offsets
     if (!el || prevOffsets === offsets) return
-    const p = pending.current
-    if (p && performance.now() < p.until) { applyScroll(el, offsets, count, p.index, p.align); return }
-    pending.current = null
-    if (prevOffsets.length !== offsets.length) return
+    if (prevOffsets.length !== offsets.length) { pin.current = null; return }
+    const p = pin.current
+    if (p && p.index < count) { setScroll(el, pinnedScrollTop(offsets, p.index, p.delta, el.clientHeight)); return }
     const anchor = indexAt(prevOffsets, count, el.scrollTop)
     const delta = el.scrollTop - prevOffsets[anchor]
-    const next = offsets[anchor] + delta
-    if (Math.abs(next - el.scrollTop) > 0.5) el.scrollTop = next
+    setScroll(el, offsets[anchor] + delta)
   }, [offsets]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // the viewport grew or shrank (a bar opened above or below the book): keep the pinned row in view
+  useLayoutEffect(() => {
+    const el = ref.current
+    const p = pin.current
+    if (el && p && p.index < count) setScroll(el, pinnedScrollTop(offsetsRef.current, p.index, p.delta, el.clientHeight))
+  }, [vp.height]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // a scroll we did not cause (wheel, scrollbar, touch, find-in-page) releases the pin
+  useEffect(() => {
+    const el = scrollEl
+    if (!el) return
+    const onScroll = () => {
+      if (lastSet.current != null && Math.abs(el.scrollTop - lastSet.current) <= 1) return
+      pin.current = null
+      lastSet.current = null
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [scrollEl])
 
   const ro = useRef<ResizeObserver | null>(null)
   const raf = useRef(0)
@@ -116,28 +187,54 @@ export function useVariableVirtual(ref: RefObject<HTMLElement | null>, count: nu
     return () => { ro.current?.disconnect(); cancelAnimationFrame(raf.current); raf.current = 0 }
   }, [])
 
+  const mounted = useRef(new Set<HTMLElement>())
   const measure = useCallback((el: HTMLElement | null) => {
     if (!el) return
+    mounted.current.add(el)
     ro.current?.observe(el)
-    return () => ro.current?.unobserve(el)
+    return () => { mounted.current.delete(el); ro.current?.unobserve(el) }
   }, [])
+
+  // after a reset (width, content) the rows already on screen keep their DOM nodes; a ResizeObserver
+  // only reports *changes*, so rows whose height did not change would stay on the estimate and overlap.
+  // Measure every mounted row now, before paint.
+  useLayoutEffect(() => {
+    let changed = false
+    for (const el of mounted.current) {
+      const i = Number(el.dataset.vindex)
+      const h = el.offsetHeight
+      if (h > 0 && i >= 0 && i < sizes.current.length && Math.abs(sizes.current[i] - h) > 0.5) { sizes.current[i] = h; changed = true }
+    }
+    if (changed) setVersion(v => v + 1)
+  }, [key])
 
   const start = Math.max(0, indexAt(offsets, count, vp.top - overscan))
   let end = indexAt(offsets, count, vp.top + vp.height + overscan) + 1
   end = Math.min(count, end)
 
+  /** Scroll row `index` into view and pin it there while heights settle. */
   const scrollToIndex = useCallback((index: number, align: 'auto' | 'start' | 'center' = 'auto') => {
     const el = ref.current
     if (!el || index < 0 || index >= count) return
-    pending.current = { index, align, until: performance.now() + 400 }
-    applyScroll(el, offsetsRef.current, count, index, align)
+    const o = offsetsRef.current
+    const y = targetScroll(el, o, index, align)
+    if (Math.abs(y - el.scrollTop) > 0.5) el.scrollTop = y
+    lastSet.current = el.scrollTop
+    pin.current = { index, delta: o[index] - el.scrollTop }
   }, [ref, count])
 
-  return { start, end, offsets, total: offsets[count] ?? 0, measure, scrollToIndex, viewport: vp }
+  /** Pin a row that is already on screen at its current position (e.g. the new current row). */
+  const anchor = useCallback((index: number) => {
+    const el = ref.current
+    if (!el || index < 0 || index >= count) return
+    lastSet.current = el.scrollTop
+    pin.current = { index, delta: offsetsRef.current[index] - el.scrollTop }
+  }, [ref, count])
+
+  return { start, end, offsets, total: offsets[count] ?? 0, measure, scrollToIndex, anchor, viewport: vp }
 }
 
-function applyScroll(el: HTMLElement, offsets: Float64Array, count: number, index: number, align: 'auto' | 'start' | 'center') {
-  if (index >= count) return
+function targetScroll(el: HTMLElement, offsets: Float64Array, index: number, align: 'auto' | 'start' | 'center'): number {
   const top = offsets[index], bottom = offsets[index + 1]
   const h = el.clientHeight
   const margin = Math.min(48, h / 4)
@@ -146,6 +243,5 @@ function applyScroll(el: HTMLElement, offsets: Float64Array, count: number, inde
   else if (align === 'center') next = top - (h - (bottom - top)) / 3
   else if (top < el.scrollTop + margin) next = top - margin
   else if (bottom > el.scrollTop + h - margin) next = bottom - h + margin
-  next = Math.max(0, next)
-  if (Math.abs(next - el.scrollTop) > 0.5) el.scrollTop = next
+  return Math.max(0, next)
 }

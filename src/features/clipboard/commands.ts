@@ -13,7 +13,7 @@ import { NewCaseDialog, NoteDialog } from './dialogs'
 const st = () => useApp.getState()
 const hasCase = () => !!selectActiveConsultation(st())
 const hasSymptoms = () => (ops.activeClipboard()?.symptoms.length ?? 0) > 0
-const INTENSITY = ['0: ignore in analysis', '1', '2', '3', '4: strongest']
+const INTENSITY = ['0 – ignore', '1', '2', '3', '4 – strongest']
 
 export function register(catalog: Catalog) {
   ops.setClipboardCatalog(catalog)
@@ -27,9 +27,10 @@ export function register(catalog: Catalog) {
     { id: 'clipboard.prev', title: 'Previous clipboard', category: 'Case', keys: ['Mod+['], enabled: () => ops.clipboards().length > 1, run: () => ops.cycleClipboard(-1) },
     { id: 'clipboard.rename', title: 'Rename clipboard…', category: 'Case', enabled: hasCase, run: () => ops.startRename() },
     { id: 'clipboard.clear', title: 'Clear clipboard', category: 'Case', enabled: hasSymptoms, run: () => ops.clearClipboard() },
+    { id: 'clipboard.clearAll', title: 'Clear all clipboards', category: 'Case', enabled: ops.hasAnySymptoms, run: ops.clearAllClipboards, keywords: 'empty remove symptoms' },
     { id: 'clipboard.delete', title: 'Delete clipboard', category: 'Case', enabled: () => ops.clipboards().length > 1, run: () => ops.deleteClipboard() },
-    { id: 'clipboard.selectAll', title: 'Select all symptoms', category: 'Edit', keys: ['Mod+A'], scope: ops.LIST_SCOPE, enabled: hasSymptoms, run: ops.selectAll },
-    { id: 'clipboard.deleteSelected', title: 'Remove selected symptoms', category: 'Edit', keys: ['Delete'], scope: ops.LIST_SCOPE, enabled: ops.hasTarget, run: ops.removeSelected },
+    { id: 'clipboard.selectAll', title: 'Select all symptoms', category: 'Edit', keys: ['Mod+A'], scope: ops.PANEL_SCOPE, enabled: hasCase, run: ops.selectAll },
+    { id: 'clipboard.deleteSelected', title: 'Remove selected symptoms', category: 'Edit', keys: ['Delete', 'Backspace'], scope: ops.LIST_SCOPE, enabled: ops.hasTarget, run: ops.removeSelected },
     { id: 'view.clipboardsOnly', title: 'Show clipboards', category: 'View', keys: ['F7'], run: ops.focusPanel, keywords: 'symptoms focus' },
 
     { id: 'symptom.combineUnion', title: 'Combine symptoms (union)', category: 'Case', enabled: ops.canCombine, run: () => ops.combine('union'), keywords: 'or merge' },

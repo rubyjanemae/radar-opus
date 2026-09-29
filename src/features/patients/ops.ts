@@ -57,7 +57,14 @@ export function contextConsultationId(): string | null {
 
 // ───────────────────────── navigation ─────────────────────────
 
-export function openPatients() { actions.openTab({ kind: 'patients' }) }
+export function openPatients() {
+  actions.openTab({ kind: 'patients' })
+  // Keyboard flow (Mod+3, then type or ↓ and Enter): put the caret in the list's search box.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const list = document.querySelector('.pt-list')
+    if (list && !list.contains(document.activeElement) && !document.querySelector('[role="dialog"]')) list.querySelector<HTMLElement>('.pt-search-input')?.focus()
+  }))
+}
 
 export function openPatient(patientId: string, consultationId?: string | null, section?: PatientTab['section']) {
   actions.openTab({ kind: 'patient', patientId })
@@ -77,11 +84,17 @@ export function newPatient() { actions.openDialog(NEW_PATIENT_DIALOG) }
 
 export function createPatient(fields: Partial<Patient>, startConsultation: boolean): string {
   const id = actions.createPatient(fields)
+  const name = patientName({ firstName: fields.firstName ?? '', lastName: fields.lastName ?? '' })
   if (startConsultation) {
     const cid = actions.createConsultation(id, { title: 'First consultation', kind: 'first', date: today() })
     openPatient(id, cid, 'consultations')
-  } else openPatient(id, null, 'details')
-  actions.toast(`Patient ${patientName({ firstName: fields.firstName ?? '', lastName: fields.lastName ?? '' })} created`, 'success')
+    actions.toast(`Patient ${name} created; the first consultation is now the active case`, 'success')
+    focusEditorTitle()
+  } else {
+    openPatient(id, null, 'details')
+    actions.toast(`Patient ${name} created`, 'success')
+    focusLater('.pt-details input[name="firstName"]')
+  }
   return id
 }
 
@@ -144,6 +157,7 @@ export function newConsultation(patientId = contextPatientId()) {
     date: today(), kind: first ? 'first' : 'follow-up', title: first ? 'First consultation' : `Follow-up ${nextFollowUpIndex(list)}`,
   })
   openPatient(patientId, cid, 'consultations')
+  actions.toast(`${first ? 'First consultation' : 'New consultation'} created; it is now the active case`, 'success')
   focusEditorTitle()
 }
 
@@ -158,9 +172,11 @@ export function newFollowUp(fromId = contextConsultationId()) {
   focusEditorTitle()
 }
 
-function focusEditorTitle() {
-  requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.pt-ed-title-input')?.focus()))
+function focusLater(selector: string) {
+  requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector<HTMLElement>(selector)?.focus()))
 }
+
+function focusEditorTitle() { focusLater('.pt-ed-title-input') }
 
 /** Show a consultation in its patient tab and put the caret in the new-prescription row. */
 export function focusPrescription(consultationId: string) {
@@ -168,7 +184,7 @@ export function focusPrescription(consultationId: string) {
   if (!c) return
   openPatient(c.patientId, consultationId, 'consultations')
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    const el = document.querySelector<HTMLInputElement>('.pt-rx-add .pt-combo-input')
+    const el = document.querySelector<HTMLInputElement>('.pt-rx-form .pt-combo-input')
     el?.scrollIntoView({ block: 'nearest' })
     el?.focus()
   }))

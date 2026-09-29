@@ -164,3 +164,81 @@ test('Ctrl+1 opens the repertories table of contents', async ({ page }) => {
   await page.locator('.rtoc-chapter', { hasText: 'Vertigo' }).click()
   await expect(crumbs(page).locator('.rv-crumb-last')).toHaveText('Vertigo')
 })
+
+const inView = (page: Page) => page.evaluate(() => {
+  const c = document.querySelector('.rv-current')!.getBoundingClientRect()
+  const s = document.querySelector('.rv-scroll')!.getBoundingClientRect()
+  return { top: Math.round(c.top - s.top), fully: c.top >= s.top - 1 && c.bottom <= s.bottom + 1 }
+})
+
+test('display changes keep the current rubric where it was', async ({ page }) => {
+  await openBook(page)
+  await page.locator('.rv-seg button', { hasText: 'Count' }).click()
+  await page.locator('.rv-scroll').focus()
+  for (let i = 0; i < 30; i++) await page.keyboard.press('ArrowDown')
+  const before = await inView(page)
+  expect(before.fully).toBe(true)
+  await page.locator('.rv-seg button', { hasText: 'Abbrev' }).click()
+  await page.waitForTimeout(500)
+  expect(await inView(page)).toEqual(before)
+  await page.locator('.rv-scroll').focus()
+  for (const _ of [1, 2, 3]) {
+    await page.keyboard.press('Space')
+    await page.waitForTimeout(400)
+    expect((await inView(page)).fully).toBe(true)
+  }
+  await page.selectOption('.rv-grade', '3')
+  await page.waitForTimeout(400)
+  expect((await inView(page)).fully).toBe(true)
+})
+
+test('take bar keeps the command and target readable; /s never duplicates', async ({ page }) => {
+  await page.setViewportSize({ width: 1152, height: 720 })
+  await openBook(page)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.type('+2>3a')
+  const bar = page.getByRole('dialog', { name: 'Take rubric' })
+  const w = async (sel: string) => (await bar.locator(sel).boundingBox())!.width
+  expect(await w('.rv-takebar-input')).toBeGreaterThanOrEqual(100)
+  expect(await w('.rv-takebar-rubric')).toBeGreaterThanOrEqual(100)
+  await expect(bar.locator('.rv-takebar-leaf')).toHaveText('morning')
+  expect((await inView(page)).fully).toBe(true)
+  await page.keyboard.press('Escape')
+  // a leaf: /s acts like a plain take, twice gives one symptom
+  await page.keyboard.press('ArrowRight')
+  for (const _ of [1, 2]) { await page.keyboard.type('+/s'); await page.keyboard.press('Enter') }
+  await expect(page.locator('.toast').last()).toContainText('Already in')
+  await expect(page.locator('.toast')).toHaveCount(1)
+})
+
+test('narrow pane: whole breadcrumb, readable repertories list', async ({ page }) => {
+  await page.setViewportSize({ width: 1152, height: 720 })
+  await openBook(page)
+  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight')
+  const clipped = await page.locator('.rv-crumbs .rv-crumb').evaluateAll(els => els.filter(e => e.scrollWidth > e.clientWidth + 1).length)
+  expect(clipped).toBe(0)
+  await expect(page.locator('.rv-crumb-last')).toBeVisible()
+  await page.keyboard.press('Control+1')
+  const open = page.locator('.rtoc-head .btn')
+  await expect(open).toBeVisible()
+  const [btn, detail] = await Promise.all([open.boundingBox(), page.locator('.rtoc-detail').boundingBox()])
+  expect(btn!.x + btn!.width).toBeLessThanOrEqual(detail!.x + detail!.width)
+})
+
+test('recent list fills from reading and acting; navigator marks the menu row', async ({ page }) => {
+  await openBook(page)
+  await page.keyboard.press('ArrowDown')
+  await page.waitForTimeout(1300)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Control+d')
+  const recent = page.getByRole('region', { name: 'Recent rubrics' }).locator('.rnav-link')
+  await expect(recent).toHaveCount(2)
+  await expect(recent.first()).toHaveAttribute('aria-current', 'location')
+  await recent.nth(1).click()
+  await expect(page.locator('.rv-crumb-last')).toHaveText('morning')
+  const row = page.locator('.rnav-row').nth(5)
+  await row.click({ button: 'right' })
+  await expect(row).toHaveClass(/menu-target/)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.rnav-row.menu-target')).toHaveCount(0)
+})

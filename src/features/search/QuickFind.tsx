@@ -7,13 +7,15 @@ import { actions, useApp } from '../../state/store'
 import { goToRef, takeRefs } from '../repertory/ops'
 import { DEFAULT_TAKE } from '../repertory/take'
 import { highlighter, search } from './engine'
-import { findRemedies } from './remedies'
+import { findRemedies, remedyIntent } from './remedies'
+import type { Catalog } from '../../data/catalog'
+import type { RepertoryTab } from '../../state/workspace'
 import { currentRepertory, openRemedySearch, openSearch, prepare, readyTargets, remedyResolver } from './ops'
-import { Highlight, RubricPath } from './components'
+import { Highlight, RubricPath, titleIfTruncated } from './components'
 import './search.css'
 
 type Item =
-  | { kind: 'rubric'; rep: Repertory; index: number }
+  | { kind: 'rubric'; rep: Repertory; index: number; full?: boolean }
   | { kind: 'remedy'; remedyId: number }
   | { kind: 'recent'; query: string }
   | { kind: 'search'; query: string }
@@ -26,6 +28,12 @@ const RUBRIC_LIMIT = 30
 export function QuickFind() {
   const catalog = useCatalog()
   const recent = useApp(s => s.recentSearches)
+  // the repertory tab the user last worked in, for its recent rubrics
+  const recentTab = useApp(s => {
+    const a = s.tabs.find(t => t.id === s.activeTabId)
+    const t = a?.kind === 'repertory' ? a : s.tabs.find(x => x.kind === 'repertory')
+    return t?.kind === 'repertory' ? t : null
+  })
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
@@ -59,11 +67,27 @@ export function QuickFind() {
     if (!q) {
       if (recent.length) {
         const g: Group = { key: 'recent', label: 'Recent searches', items: [] }
-        recent.slice(0, 8).forEach(r => push(g, { kind: 'recent', query: r }))
+        recent.slice(0, 6).forEach(r => push(g, { kind: 'recent', query: r }))
+        groups.push(g)
+      }
+      const rr = recentRubrics(catalog, recentTab)
+      if (rr.items.length) {
+        const g: Group = { key: 'recent-rubrics', label: 'Recent rubrics', sub: rr.rep?.info.title, items: [] }
+        rr.items.forEach(index => push(g, { kind: 'rubric', rep: rr.rep!, index, full: true }))
         groups.push(g)
       }
       return { groups, flat, total, pending }
     }
+    // a remedy abbreviation typed on purpose (sulph, lach, nat-m) goes before the rubrics
+    const rem = findRemedies(catalog, q.replace(/^#/, ''), 5).filter(m => m.score >= 55)
+    const remedyFirst = remedyIntent(q, rem)
+    const pushRemedies = () => {
+      if (!rem.length) return
+      const g: Group = { key: 'remedies', label: 'Remedies', items: [] }
+      rem.forEach(m => push(g, { kind: 'remedy', remedyId: m.remedy.id }))
+      groups.push(g)
+    }
+    if (remedyFirst) pushRemedies()
     if (q.length >= 2 && targets.length) {
       const res = search(deferred, targets, { prefixLast: true, limit: RUBRIC_LIMIT, resolveRemedy: remedyResolver })
       total = res.total
@@ -80,19 +104,14 @@ export function QuickFind() {
         g.items.push({ item: { kind: 'rubric', rep: h.rep, index: h.index }, n: -1 })
       }
       // number items in display order
-      for (const g of groups) for (const it of g.items) { it.n = flat.length; flat.push(it.item) }
+      for (const g of groups) for (const it of g.items) if (it.n < 0) { it.n = flat.length; flat.push(it.item) }
     }
-    const rem = findRemedies(catalog, q.replace(/^#/, ''), 5).filter(m => m.score >= 55)
-    if (rem.length) {
-      const g: Group = { key: 'remedies', label: 'Remedies', items: [] }
-      rem.forEach(m => push(g, { kind: 'remedy', remedyId: m.remedy.id }))
-      groups.push(g)
-    }
+    if (!remedyFirst) pushRemedies()
     const g: Group = { key: 'more', label: '', items: [] }
     push(g, { kind: 'search', query: deferred })
     groups.push(g)
     return { groups, flat, total, pending }
-  }, [deferred, q, tabLike, recent, catalog, version]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [deferred, q, tabLike, recent, recentTab, catalog, version]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const hl = useMemo(() => {
     const res = q ? search(deferred, [], { prefixLast: true }) : null
@@ -117,11 +136,13 @@ export function QuickFind() {
     if (item.kind === 'recent') { setQuery(item.query); inputRef.current?.focus(); return }
     if (item.kind === 'search' || how === 'search') {
       actions.addRecentSearch(query)
+      setQuery('')
       close(false)
       openSearch(query.trim(), { newTab: true, scope: 'all' })
       return
     }
     if (item.kind === 'remedy') {
+      setQuery('')
       close(false)
       if (how === 'take') openRemedySearch(item.remedyId, { newTab: true })
       else actions.openTab({ kind: 'remedy', remedyId: item.remedyId })
@@ -130,6 +151,7 @@ export function QuickFind() {
     const ref = item.rep.ref(item.index)
     actions.addRecentSearch(query)
     if (how === 'take') { takeRefs([ref], DEFAULT_TAKE); return }
+    setQuery('')
     close(false)
     void goToRef(ref).then(focusBook)
   }
@@ -155,7 +177,9 @@ export function QuickFind() {
       else run(flat[active], e.altKey ? 'take' : 'open')
     } else if (e.key === 'Escape') {
       e.preventDefault(); e.stopPropagation()
-      if (open && query) { setOpen(false) } else { setQuery(''); close(true) }
+      // one Esc closes the dropdown and hands focus back to where it was before Mod+F
+      setQuery('')
+      close(true)
     } else if (!open && e.key.length === 1) setOpen(true)
   }
 
@@ -261,8 +285,22 @@ function OptionBody({ item, hl, total }: { item: Item; hl: ((n: string) => boole
   const n = item.rep.remedyCount(item.index)
   return (
     <>
-      <span className="qf-text qf-path">{parts.length > 1 ? <RubricPath parts={parts} hit={hl} skip={1} /> : <Highlight text={parts[0]} hit={hl} />}</span>
+      <span className="qf-text qf-path" onMouseEnter={titleIfTruncated(() => parts.join(', '))}>{parts.length > 1 ? <RubricPath parts={parts} hit={hl} skip={item.full ? 0 : 1} /> : <Highlight text={parts[0]} hit={hl} />}</span>
       {n > 0 && <span className="qf-meta">{n}</span>}
     </>
   )
+}
+
+function recentRubrics(catalog: Catalog, tab: RepertoryTab | null): { rep: Repertory | undefined; items: number[] } {
+  if (!tab) return { rep: undefined, items: [] }
+  const rep = catalog.repertory(tab.repertory)
+  if (!rep) return { rep, items: [] }
+  const src = tab.recent?.length ? tab.recent : [...tab.back].reverse()
+  const seen = new Set<number>()
+  const items: number[] = []
+  for (const i of src) {
+    if (items.length >= 5) break
+    if (i >= 0 && i < rep.size && !seen.has(i)) { seen.add(i); items.push(i) }
+  }
+  return { rep, items }
 }

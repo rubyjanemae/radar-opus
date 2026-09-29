@@ -100,6 +100,15 @@ function Tree({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const cm = useContextMenu()
   const typeahead = useRef({ text: '', at: 0 })
+  // the row a context menu applies to stays marked while the menu is open
+  const [menuTarget, setMenuTarget] = useState<number | null>(null)
+  const menuOpen = cm.element != null
+  useEffect(() => { if (!menuOpen) setMenuTarget(null) }, [menuOpen])
+  const openMenu = (i: number, at: { e?: React.MouseEvent; el?: HTMLElement }) => {
+    setMenuTarget(i)
+    if (at.e) cm.open(at.e, menuFor(i))
+    else if (at.el) cm.openAt(at.el, menuFor(i))
+  }
 
   // follow the current rubric: expand its ancestors; entering another chapter folds the previous one
   const followedChapter = useRef<number | null>(null)
@@ -126,7 +135,8 @@ function Tree({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
   const v = useFixedVirtual(scrollRef, rows.length, ROW)
 
   const cursorRow = pos.get(cursor) ?? -1
-  useEffect(() => { if (cursorRow >= 0) v.scrollToIndex(cursorRow) }, [cursorRow, rows]) // eslint-disable-line react-hooks/exhaustive-deps
+  // keep the cursor in view, also when the tree pane shrinks (the Bookmarks / Recent sections grow)
+  useEffect(() => { if (cursorRow >= 0) v.scrollToIndex(cursorRow) }, [cursorRow, rows, v.pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = (i: number, open?: boolean) => {
     const isOpen = expanded.has(i)
@@ -184,7 +194,7 @@ function Tree({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
       expanded.add(cur); setVersion(x => x + 1)
     } else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
       const el = scrollRef.current?.querySelector<HTMLElement>(`[data-node="${cur}"]`)
-      if (el) cm.openAt(el, menuFor(cur))
+      if (el) openMenu(cur, { el })
     } else if (e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
       const now = performance.now()
       const t = typeahead.current
@@ -215,12 +225,12 @@ function Tree({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
         aria-level={depth + 1}
         aria-expanded={kids ? open : undefined}
         aria-selected={i === tab.rubric}
-        className={`rnav-row${i === tab.rubric ? ' current' : ''}${i === cursor ? ' cursor' : ''}${depth === 0 ? ' chapter' : ''}`}
+        className={`rnav-row${i === tab.rubric ? ' current' : ''}${i === cursor ? ' cursor' : ''}${i === menuTarget ? ' menu-target' : ''}${depth === 0 ? ' chapter' : ''}`}
         style={{ top: k * ROW, paddingLeft: 4 + depth * 14 }}
         draggable
         onDragStart={e => { e.dataTransfer.setData(RUBRIC_MIME, rep.ref(i)); e.dataTransfer.setData('text/plain', rep.path(i)); e.dataTransfer.effectAllowed = 'copy' }}
         onClick={e => { if ((e.target as HTMLElement).closest('.rnav-twist')) return; go(i); scrollRef.current?.focus() }}
-        onContextMenu={e => cm.open(e, menuFor(i))}
+        onContextMenu={e => openMenu(i, { e })}
       >
         <span className="rnav-twist" onClick={() => kids && toggle(i)} aria-hidden="true">
           {kids ? (open ? <ChevronDown size={12} /> : <ChevronRight size={12} />) : null}
@@ -313,14 +323,16 @@ function RecentSection({ tab, collapsed, onToggle }: { tab: RepertoryTab; collap
   const catalog = useCatalog()
   const rep = catalog.repertory(tab.repertory)
   const recent = useMemo(() => {
-    const seen = new Set<number>([tab.rubric])
+    if (tab.recent?.length) return tab.recent.slice(0, 15)
+    // tabs from before the Recent list existed: fall back to the jump history
+    const seen = new Set<number>()
     const out: number[] = []
-    for (let k = tab.back.length - 1; k >= 0 && out.length < 12; k--) {
+    for (let k = tab.back.length - 1; k >= 0 && out.length < 15; k--) {
       const r = tab.back[k]
       if (!seen.has(r)) { seen.add(r); out.push(r) }
     }
     return out
-  }, [tab.back, tab.rubric])
+  }, [tab.recent, tab.back])
   if (!rep) return null
   return (
     <section className={`rnav-sec${collapsed ? ' collapsed' : ''}`} aria-label="Recent rubrics">
@@ -331,10 +343,13 @@ function RecentSection({ tab, collapsed, onToggle }: { tab: RepertoryTab; collap
       </div>
       {!collapsed && (
         <div className="rnav-sec-body" role="list">
-          {recent.length === 0 && <div className="rnav-hint">Rubrics you visit in this tab appear here.</div>}
+          {recent.length === 0 && <div className="rnav-hint">Rubrics you jump to, read for a moment, take, copy or bookmark appear here.</div>}
           {recent.map(r => (
             <div key={r} role="listitem">
-              <button className="rnav-link" title={rep.path(r)} onClick={() => actions.navigateRubric(tab.id, r)}>
+              <button
+                className={`rnav-link${r === tab.rubric ? ' current' : ''}`} title={rep.path(r)} aria-current={r === tab.rubric ? 'location' : undefined}
+                onClick={() => { actions.navigateRubric(tab.id, r); if (useApp.getState().activeTabId !== tab.id) actions.activateTab(tab.id) }}
+              >
                 <span className="rnav-link-text">{rep.path(r, ' › ')}</span>
               </button>
             </div>

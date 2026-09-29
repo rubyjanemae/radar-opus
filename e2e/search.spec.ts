@@ -74,7 +74,7 @@ test('F4 search: operators, selection, take and summary filter', async ({ page }
   await page.keyboard.press('Space')
   await expect(page.locator('.srch-total')).toContainText('2 selected')
   await page.getByRole('button', { name: /^Take 2/ }).click()
-  await expect(page.locator('.toast').filter({ hasText: /Taken 2 rubrics/ })).toBeVisible()
+  await expect(page.locator('.toast').filter({ hasText: /Taken 2 rubrics|2 rubrics taken/ })).toBeVisible()
 
   // summary: clicking a remedy bar filters the results
   const bar = page.locator('.srch-sum .srch-barrow').first()
@@ -136,7 +136,7 @@ test('multiple search tabs and graphical comparison', async ({ page }) => {
   await page.keyboard.press('Control+Shift+F')
   await expect(searchTabs(page)).toHaveCount(2)
   await page.getByRole('combobox', { name: 'Search query' }).fill('vertigo morning')
-  await page.locator('.srch-sum').getByRole('tab', { name: /Compare 2 searches/ }).click()
+  await page.locator('.srch-sum').getByRole('tab', { name: 'Compare (2)' }).click()
   await expect(page.locator('.srch-legend-searches li')).toHaveCount(2)
   await expect(page.locator('.srch-sum .srch-barrow').first()).toContainText('2/2')
 })
@@ -180,4 +180,121 @@ test('command palette: commands, prefixes, remedies, rubrics, focus restore', as
   await expect(pal.locator('.pal-head').first()).toHaveText('Recently used')
   await pal.getByRole('option', { name: /Navigator pane/ }).click()
   await expect(nav).toHaveCount(had ? 1 : 0)
+})
+
+test('quick find: remedy abbreviations first, one Esc restores focus, recent items when empty', async ({ page }) => {
+  await ready(page)
+  const book = page.locator('.rv-scroll')
+  await book.focus()
+  const box = page.getByRole('combobox', { name: 'Quick find' })
+  const list = page.getByRole('listbox', { name: 'Quick find results' })
+
+  // an exact abbreviation puts the remedy first, so Enter opens it (and the box is cleared)
+  await page.keyboard.press('Control+f')
+  await page.keyboard.type('sulph')
+  await expect(list.getByRole('option').first()).toHaveClass(/qf-remedy/)
+  await expect(list.getByRole('option').first()).toContainText('Sulphur')
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('tab', { name: /Sulph/ }).first()).toHaveAttribute('aria-selected', 'true')
+  await expect(box).toHaveValue('')
+
+  // ordinary words still list rubrics first
+  await page.getByRole('tab', { name: /Mind/ }).first().click()
+  await book.focus()
+  await page.keyboard.press('Control+f')
+  await page.keyboard.type('fear night')
+  await expect(list.getByRole('option').first()).toHaveClass(/qf-rubric/)
+
+  // one Esc closes the dropdown, clears the box and returns focus to the book
+  await page.keyboard.press('Escape')
+  await expect(list).toBeHidden()
+  await expect(box).toHaveValue('')
+  await expect(book).toBeFocused()
+
+  // an empty box offers recent searches and recent rubrics
+  await page.keyboard.press('Control+f')
+  await page.keyboard.type('head pain')
+  await page.keyboard.press('Enter')
+  await expect(crumbs(page).locator('.rv-crumb-last')).toHaveText('pain')
+  await page.keyboard.press('Control+f')
+  await expect(list.getByRole('group', { name: 'Recent searches' })).toContainText('head pain')
+  await expect(list.getByRole('group', { name: 'Recent rubrics' }).getByRole('option').first()).toContainText('Head, pain')
+  await page.keyboard.press('Enter')
+  await expect(box).toHaveValue('head pain')
+})
+
+test('search view at 1152x720: every result action visible, summary collapses and returns', async ({ page }) => {
+  await page.setViewportSize({ width: 1152, height: 720 })
+  await ready(page)
+  await page.keyboard.press('F4')
+  await page.getByRole('combobox', { name: 'Search query' }).fill('fear night')
+  const bar = page.locator('.srch-bar-row')
+  await expect(page.locator('.srch-total')).toContainText('rubrics')
+  const barBox = (await bar.boundingBox())!
+  for (const name of ['More take options', 'Open', 'Show remedies', 'Result summary', 'Export CSV']) {
+    const b = (await bar.getByRole('button', { name, exact: true }).boundingBox())!
+    expect(b.x + b.width, name).toBeLessThanOrEqual(barBox.x + barBox.width)
+    expect(b.y + b.height, name).toBeLessThanOrEqual(barBox.y + barBox.height)
+  }
+  // the summary starts hidden when it would squeeze the results, and the toggle brings it back
+  const summaryBtn = bar.getByRole('button', { name: 'Result summary' })
+  if (await page.locator('.srch-sum').count() === 0) {
+    await expect(summaryBtn).toHaveAttribute('aria-pressed', 'false')
+    await summaryBtn.click()
+  }
+  await expect(page.locator('.srch-sum')).toBeVisible()
+  await expect(summaryBtn).toHaveAttribute('aria-pressed', 'true')
+  const sum = (await page.locator('.srch-sum').boundingBox())!
+  const tabs = page.locator('.srch-sum-tabs button')
+  for (let i = 0; i < await tabs.count(); i++) {
+    const t = (await tabs.nth(i).boundingBox())!
+    expect(t.x + t.width).toBeLessThanOrEqual(sum.x + sum.width + 0.5)
+  }
+})
+
+test('F5 picker: text clear of the icon, no-match feedback, chapters grouped by repertory', async ({ page }) => {
+  await ready(page)
+  await page.keyboard.press('F5')
+  const picker = page.getByRole('combobox', { name: 'Remedy' })
+  await expect(picker).toBeFocused()
+  const pad = await picker.evaluate(el => parseFloat(getComputedStyle(el).paddingLeft))
+  const icon = (await page.locator('.srch-rp-icon').boundingBox())!
+  const input = (await picker.boundingBox())!
+  expect(input.x + pad).toBeGreaterThan(icon.x + icon.width)
+  await picker.pressSequentially('xyzq')
+  await expect(page.getByText('No remedy matches “xyzq”')).toBeVisible()
+  await picker.fill('')
+  await picker.pressSequentially('lach')
+  await page.keyboard.press('Enter')
+  await page.getByRole('combobox', { name: 'Search scope' }).selectOption('all')
+  await expect(page.locator('.srch-sum .srch-bargroup')).toHaveCount(2)
+})
+
+test('command palette: empty state order, keyword reasons, leaving a prefix mode', async ({ page }) => {
+  await ready(page)
+  await page.keyboard.press('F4')
+  await page.getByRole('tab', { name: /Mind/ }).first().click()
+  await page.locator('.rv-scroll').focus()
+  await page.keyboard.press('Control+k')
+  const pal = page.getByRole('dialog', { name: 'Command palette' })
+  await expect(pal.locator('.pal-head').first()).toHaveText('Open tabs')
+  await expect(pal.locator('.pal-opt.disabled')).toHaveCount(0)
+  // keyword-only matches come after title matches and show the keyword
+  await page.keyboard.type('take')
+  await expect(pal.getByRole('option').first()).toContainText('Take')
+  await expect(pal.locator('.pal-why').first()).toBeVisible()
+  // select-all + typing replaces the mode chip too
+  await page.keyboard.press('Control+a')
+  await page.keyboard.type('/fear')
+  await expect(pal.locator('.pal-mode')).toHaveText('Rubrics')
+  await page.keyboard.press('Control+a')
+  await page.keyboard.type('zoom in')
+  await expect(pal.locator('.pal-mode')).toHaveCount(0)
+  await expect(pal.getByRole('option').first()).toContainText('Zoom in')
+  // the chip's close button leaves the mode and keeps the text
+  await page.keyboard.press('Control+a')
+  await page.keyboard.type('#lach')
+  await pal.getByRole('button', { name: 'Leave remedies mode' }).click()
+  await expect(pal.locator('.pal-mode')).toHaveCount(0)
+  await expect(pal.getByRole('combobox')).toHaveValue('lach')
 })

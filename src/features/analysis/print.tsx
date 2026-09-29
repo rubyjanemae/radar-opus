@@ -58,6 +58,8 @@ export function printResult({ result, rows, meta }: { result: AnalysisResult; ro
   const host = document.createElement('div')
   host.className = 'an-print-root'
   document.body.appendChild(host)
+  // hide the app only while this print runs, so a browser-menu print still prints the page
+  document.body.classList.add('an-printing')
   const root = createRoot(host)
   flushSync(() => root.render(<PrintableAnalysis result={result} rows={rows} meta={meta} />))
   let done = false
@@ -65,6 +67,7 @@ export function printResult({ result, rows, meta }: { result: AnalysisResult; ro
     if (done) return
     done = true
     window.removeEventListener('afterprint', cleanup)
+    document.body.classList.remove('an-printing')
     setTimeout(() => { root.unmount(); host.remove() }, 0)
   }
   window.addEventListener('afterprint', cleanup)

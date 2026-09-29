@@ -1,6 +1,6 @@
 import type { Repertory } from '../../data/repertory'
 import type { Grade } from '../../data/types'
-import { branchMatch, fold, tokenize } from './text'
+import { branchMatch, fold, sameOrSynonym, synonymsOf, tokenize } from './text'
 import { parseQuery, wordTermMatch } from './query'
 import type { Node, ParsedQuery, Term } from './query'
 
@@ -122,6 +122,13 @@ function vocabMatches(ix: WordIndex, term: Extract<Term, { kind: 'word' }>): [nu
       const m = wordTermMatch(term, words[k], branchMatch)
       if (m) out.push([k, m])
     }
+    // modality synonyms (worse = agg., better = amel.) count as branch matches
+    if (term.wildcard === 'none') {
+      for (const syn of synonymsOf(term.text)) {
+        const k = lowerBound(words, syn)
+        if (words[k] === syn) out.push([k, 1])
+      }
+    }
     return out
   }
   for (let k = 0; k < words.length; k++) {
@@ -200,7 +207,7 @@ function containsSeq(tokens: string[], words: string[], prefixLast: boolean): bo
     for (let k = 0; k < words.length; k++) {
       const t = tokens[s + k], w = words[k]
       const last = k === words.length - 1
-      if (last && prefixLast ? !t.startsWith(w) : t !== w) continue outer
+      if (last && prefixLast ? !t.startsWith(w) : !sameOrSynonym(w, t)) continue outer
     }
     return true
   }
@@ -336,7 +343,9 @@ export function highlighter(parsed: ParsedQuery): (norm: string) => boolean {
       t.words.forEach((w, k) => { if (k === t.words.length - 1 && t.prefixLast) phrasePrefixes.push(w); else phraseWords.add(w) })
     }
   }
-  return (norm: string) => phraseWords.has(norm) || phrasePrefixes.some(p => norm.startsWith(p)) || words.some(w => wordTermMatch(w, norm, branchMatch) > 0)
+  for (const w of [...phraseWords]) for (const syn of synonymsOf(w)) phraseWords.add(syn)
+  const synWords = new Set(words.filter(w => w.wildcard === 'none').flatMap(w => synonymsOf(w.text)))
+  return (norm: string) => phraseWords.has(norm) || synWords.has(norm) || phrasePrefixes.some(p => norm.startsWith(p)) || words.some(w => wordTermMatch(w, norm, branchMatch) > 0)
 }
 
 // ───────────────────────── remedy search ─────────────────────────

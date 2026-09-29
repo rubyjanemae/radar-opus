@@ -25,3 +25,29 @@ export function bookmarkFolders(bookmarks: Pick<Bookmark, 'folder'>[], extra: st
   const set = new Set([...bookmarks.map(b => b.folder), ...extra])
   return [...set].sort((a, b) => (a === 'General' ? -1 : b === 'General' ? 1 : a.localeCompare(b)))
 }
+
+/**
+ * Order in which breadcrumb items fold away when the path does not fit. Items are
+ * [repertory title, chapter, …levels, leaf]. The repertory title goes first, then the middle
+ * levels left to right, then the chapter; the last two items (parent and leaf) never fold.
+ */
+export function crumbCollapseOrder(items: number): number[] {
+  if (items <= 1) return []
+  const keep = Math.max(1, items - 2) // indexes >= keep stay
+  const out = [0]
+  for (let x = 2; x < keep; x++) out.push(x)
+  if (keep > 1) out.push(1)
+  return out
+}
+
+/** Maximal runs of consecutive hidden indexes in [0, items). */
+export function hiddenRuns(items: number, hidden: Set<number>): number[][] {
+  const runs: number[][] = []
+  let cur: number[] = []
+  for (let x = 0; x < items; x++) {
+    if (hidden.has(x)) cur.push(x)
+    else if (cur.length) { runs.push(cur); cur = [] }
+  }
+  if (cur.length) runs.push(cur)
+  return runs
+}

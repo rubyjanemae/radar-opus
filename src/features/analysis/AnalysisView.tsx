@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import {
   Ban, ChartBarStacked, ChessKnight, ChevronDown, Download, Eye, EyeOff, Filter, GitCompare, Grid3x3,
-  Highlighter, LayoutGrid, LoaderCircle, Printer, Search, TriangleAlert, Weight, X,
+  Highlighter, LayoutGrid, LoaderCircle, Pin, Printer, Search, TriangleAlert, Weight, X,
 } from 'lucide-react'
-import { runCommand } from '../../commands/registry'
+import { getCommand, runCommand } from '../../commands/registry'
 import { STRATEGIES, strategyInfo } from '../../engine/analysis'
 import type { AnalysisResult, AnalysisRow } from '../../engine/analysis'
 import { actions } from '../../state/store'
@@ -27,7 +27,7 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
   const { consultation, result, load, catalog, source } = live
   const view: AnalysisViewMode = tab.view ?? 'grid'
   const [symptom, setSymptom] = useState<number | null>(null)
-  const [reveal, setReveal] = useState<{ remedyId: number; nonce: number } | null>(null)
+  const [revealReq, setReveal] = useState<{ remedyId: number; nonce: number } | null>(null)
   const selectedRemedy = tab.remedy ?? null
 
   const selectRemedy = useCallback((id: number | null) => actions.updateTab<AnalysisTab>(tab.id, { remedy: id }), [tab.id])
@@ -35,11 +35,50 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
 
   const options = consultation?.analysis
   const limit = options?.limit ?? 30
-  const rows = result?.rows ?? []
+  // ranked rows within the limit, then pinned remedies (remedy-box jumps beyond the limit)
+  const { rows, pinnedExtra } = useMemo(() => {
+    const base = result?.rows ?? []
+    const pins = tab.pinnedRemedies ?? []
+    if (!result || !pins.length) return { rows: base, pinnedExtra: new Set<number>() }
+    const shown = new Set(base.map(r => r.remedyId))
+    const extra: AnalysisRow[] = []
+    for (const id of pins) {
+      if (shown.has(id)) continue
+      const row = result.all.find(r => r.remedyId === id) ?? result.excludedRows.find(r => r.remedyId === id)
+      if (row) { extra.push(row); shown.add(id) }
+    }
+    return { rows: extra.length ? [...base, ...extra] : base, pinnedExtra: new Set(extra.map(r => r.remedyId)) }
+  }, [result, tab.pinnedRemedies])
   const highlight = useMemo(() => (options?.highlight?.length ? new Set(options.highlight) : null), [options?.highlight])
-  const selectedRow = selectedRemedy != null ? result?.all.find(r => r.remedyId === selectedRemedy) ?? null : null
+  const selectedRow = selectedRemedy != null ? rows.find(r => r.remedyId === selectedRemedy) ?? result?.all.find(r => r.remedyId === selectedRemedy) ?? result?.excludedRows.find(r => r.remedyId === selectedRemedy) ?? null : null
 
   useEffect(() => { if (result && symptom != null && symptom >= result.symptoms.length) setSymptom(null) }, [result, symptom])
+
+  // jump to a remedy: select it, pin it when beyond the limit, scroll to it and focus it
+  const tabRef = useRef(tab)
+  tabRef.current = tab
+  const reveal = useCallback((id: number) => {
+    ops.pinAndSelect(tabRef.current, id)
+    setReveal({ remedyId: id, nonce: Date.now() })
+  }, [])
+  useEffect(() => {
+    const pending = ops.takeReveal(tab.id)
+    if (pending !== undefined) reveal(pending)
+    return ops.onReveal((t, id) => { if (t === tab.id) { ops.takeReveal(t); reveal(id) } })
+  }, [tab.id, reveal])
+
+  // keep keyboard focus in the analysis when the display changes (the old view unmounts)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const prevView = useRef(view)
+  useEffect(() => {
+    if (prevView.current === view) return
+    prevView.current = view
+    const a = document.activeElement
+    if (a && a !== document.body && !rootRef.current?.contains(a)) return
+    const main = rootRef.current?.querySelector('.an-main')
+    const target = main?.querySelector<HTMLElement>('[data-cell][tabindex="0"], .an-bar-row[tabindex="0"], .an-card.selected, .an-card')
+    ;(target ?? rootRef.current)?.focus({ preventScroll: false })
+  }, [view])
 
   const remedyMenu = useCallback((row: AnalysisRow): MenuItem[] => {
     const excluded = options?.excludedRemedies.includes(row.remedyId) ?? false
@@ -50,8 +89,9 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
       { type: 'separator' },
       { label: excluded ? 'Include remedy again' : 'Exclude remedy', run: () => ops.toggleExcluded(row.remedyId, tab.consultationId) },
       { label: 'Compare with top remedies…', run: () => ops.openCompare([row.remedyId, ...rows.filter(r => r.remedyId !== row.remedyId && !r.excluded).slice(0, 3).map(r => r.remedyId)]) },
+      ...(pinnedExtra.has(row.remedyId) ? [{ type: 'separator' } as const, { label: 'Unpin column', run: () => ops.unpin(tabRef.current, row.remedyId) }] : []),
     ]
-  }, [options?.excludedRemedies, rows, selectRemedy, tab.consultationId])
+  }, [options?.excludedRemedies, rows, selectRemedy, tab.consultationId, pinnedExtra])
 
   const symptomMenu = useCallback((i: number): MenuItem[] => {
     const s = result?.symptoms[i]
@@ -125,7 +165,7 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
         selectedRemedy={selectedRemedy} selectedSymptom={symptom} highlight={highlight}
         onSelectRemedy={selectRemedy} onSelectSymptom={setSymptom} onOpenRemedy={openRemedy}
         onOpenSymptom={i => openRubric(result.symptoms[i].symptom.rubrics[0])}
-        remedyMenu={remedyMenu} symptomMenu={symptomMenu} reveal={reveal}
+        remedyMenu={remedyMenu} symptomMenu={symptomMenu} reveal={revealReq} pinned={pinnedExtra}
       />
     )
   } else if (view === 'bars') {
@@ -134,7 +174,7 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
         <div className="an-bars-head"><GradeLegend /><span className="an-muted">Bar length: points per symptom · click a segment to highlight its symptom</span></div>
         <AnalysisBars
           result={result} rows={rows} catalog={catalog} selectedRemedy={selectedRemedy} selectedSymptom={symptom} highlight={highlight}
-          onSelectRemedy={selectRemedy} onSelectSymptom={setSymptom} onOpenRemedy={openRemedy} remedyMenu={remedyMenu} reveal={reveal}
+          onSelectRemedy={selectRemedy} onSelectSymptom={setSymptom} onOpenRemedy={openRemedy} remedyMenu={remedyMenu} reveal={revealReq} pinned={pinnedExtra}
         />
       </div>
     )
@@ -142,8 +182,8 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
     body = (
       <div className="an-cards-wrap">
         <AnalysisCards
-          result={result} rows={rows.slice(0, CARD_CAP)} catalog={catalog} selectedRemedy={selectedRemedy} selectedSymptom={symptom} highlight={highlight}
-          onSelectRemedy={selectRemedy} onOpenRemedy={openRemedy} remedyMenu={remedyMenu} reveal={reveal}
+          result={result} rows={rows.length > CARD_CAP ? [...rows.slice(0, CARD_CAP), ...rows.filter(r => pinnedExtra.has(r.remedyId))] : rows} catalog={catalog} selectedRemedy={selectedRemedy} selectedSymptom={symptom} highlight={highlight}
+          onSelectRemedy={selectRemedy} onOpenRemedy={openRemedy} remedyMenu={remedyMenu} reveal={revealReq} pinned={pinnedExtra}
         />
         {rows.length > CARD_CAP && <div className="an-muted an-cap">Showing the first {CARD_CAP} of {rows.length} remedies as cards. Use the grid or bars for the rest.</div>}
       </div>
@@ -152,13 +192,16 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
 
   return (
     <div
+      ref={rootRef}
       className="an-view"
       data-testid="analysis-view"
+      tabIndex={-1}
       onKeyDown={e => {
         if (e.key === 'Escape' && (selectedRemedy != null || symptom != null)) { selectRemedy(null); setSymptom(null) }
       }}
     >
-      <Toolbar live={live} tab={tab} view={view} limit={limit} onReveal={id => { selectRemedy(id); setReveal({ remedyId: id, nonce: Date.now() }) }} />
+      <Toolbar live={live} tab={tab} view={view} limit={limit} onReveal={reveal} />
+      <PillBar live={live} tab={tab} pinned={[...pinnedExtra]} limit={limit} />
       {symptom != null && result?.symptoms[symptom] && (
         <div className="an-symbar" role="status">
           <span>Highlighting remedies in <strong>{result.symptoms[symptom].label}</strong> · {result.symptoms[symptom].size} remedies</span>
@@ -203,12 +246,12 @@ function describeEmpty(r: AnalysisResult): string {
 
 function Toolbar({ live, tab, view, limit, onReveal }: { live: LiveAnalysis; tab: AnalysisTab; view: AnalysisViewMode; limit: number; onReveal: (id: number) => void }) {
   const { consultation, result, catalog } = live
-  const [menu, setMenu] = useState<{ kind: 'strategy' | 'export'; x: number; y: number } | null>(null)
+  const [menu, setMenu] = useState<{ kind: 'strategy' | 'export' | 'filter'; x: number; y: number } | null>(null)
   if (!consultation) return null
   const o = consultation.analysis
   const info = strategyInfo(o.strategy)
   const selected = new Set(o.clipboardIds)
-  const openMenu = (kind: 'strategy' | 'export', e: ReactMouseEvent<HTMLElement>) => {
+  const openMenu = (kind: 'strategy' | 'export' | 'filter', e: ReactMouseEvent<HTMLElement>) => {
     const r = e.currentTarget.getBoundingClientRect()
     setMenu({ kind, x: r.left, y: r.bottom + 2 })
   }
@@ -218,6 +261,12 @@ function Toolbar({ live, tab, view, limit, onReveal }: { live: LiveAnalysis; tab
     { type: 'separator' },
     { command: 'analysis.intensity' },
     { command: 'analysis.showExcluded' },
+  ]
+  const filterItems: MenuItem[] = [
+    ...(getCommand('families.filter') ? [{ command: 'families.filter' }] : []),
+    { command: 'analysis.remedies' },
+    { type: 'separator' },
+    { command: 'analysis.clearFilter' },
   ]
   const exportItems: MenuItem[] = [{ command: 'analysis.exportCsv' }, { command: 'analysis.exportPng' }, { type: 'separator' }, { command: 'analysis.print' }]
   const onChip = (id: string, e: ReactMouseEvent) => {
@@ -258,34 +307,14 @@ function Toolbar({ live, tab, view, limit, onReveal }: { live: LiveAnalysis; tab
       <div className="an-sep" />
       <button className="icon-btn" aria-pressed={o.useIntensity !== false} aria-label="Use symptom intensity" title="Use symptom intensity (×1–×4)" onClick={() => ops.setOptions({ useIntensity: o.useIntensity === false }, consultation.id)}><Weight size={15} /></button>
       <button className="icon-btn" aria-pressed={!!o.showExcluded} aria-label="Show excluded remedies in position" title="Show excluded remedies greyed in their position" onClick={() => ops.setOptions({ showExcluded: !o.showExcluded }, consultation.id)}>{o.showExcluded ? <Eye size={15} /> : <EyeOff size={15} />}</button>
-      <button className="icon-btn" aria-label="Filter remedies" title="Limit, exclude or highlight remedies" onClick={() => runCommand('analysis.filter')}><Filter size={15} /></button>
-      {o.remedyFilter && (
-        <span className="an-pill" title={`${o.remedyFilter.length} remedies`}>
-          <Filter size={11} />Limited: {o.filterLabel ?? `${o.remedyFilter.length} remedies`}
-          <button aria-label="Remove remedy limit" onClick={() => ops.setOptions({ remedyFilter: null, filterLabel: null }, consultation.id)}><X size={11} /></button>
-        </span>
-      )}
-      {!!o.highlight?.length && (
-        <span className="an-pill fam">
-          <Highlighter size={11} />{o.highlightLabel ?? `${o.highlight.length} highlighted`}
-          <button aria-label="Remove highlight" onClick={() => ops.setOptions({ highlight: null, highlightLabel: null }, consultation.id)}><X size={11} /></button>
-        </span>
-      )}
-      {o.excludedRemedies.length > 0 && (
-        <span className="an-pill" title={o.excludedRemedies.map(id => catalog.remedy(id).abbrev).join(', ')}>
-          <Ban size={11} />{o.excludedRemedies.length} excluded
-          <button aria-label="Include all excluded remedies" onClick={() => ops.setOptions({ excludedRemedies: [] }, consultation.id)}><X size={11} /></button>
-        </span>
-      )}
-      {o.minCoverage > 0 && (
-        <span className="an-pill">≥ {o.minCoverage} symptoms
-          <button aria-label="Remove minimum coverage" onClick={() => ops.setOptions({ minCoverage: 0 }, consultation.id)}><X size={11} /></button>
-        </span>
-      )}
+      <div className={`an-split${ops.hasFilter(o) ? ' on' : ''}`}>
+        <button className="icon-btn" aria-label="Filter remedies" title={ops.familyFilterDialog() ? 'Family filter: limit or highlight families' : 'Limit, exclude or highlight remedies'} onClick={() => runCommand('analysis.filter')}><Filter size={15} /></button>
+        <button className="icon-btn an-split-more" aria-label="Filter options" aria-haspopup="menu" title="Filter options" onClick={e => openMenu('filter', e)}><ChevronDown size={11} /></button>
+      </div>
       <RemedyBox result={result} catalog={catalog} onPick={onReveal} />
       <div className="an-spacer" />
       <span className="an-count" aria-live="polite">
-        {result ? <><strong>{result.total.toLocaleString()}</strong> remedies</> : '…'}
+        {result ? <><strong>{result.total.toLocaleString()}</strong><span className="an-count-word"> remedies</span></> : '…'}
       </span>
       <select className="an-select" aria-label="Remedies shown" value={limit} onChange={e => ops.setOptions({ limit: Number(e.target.value) }, consultation.id)}>
         {ops.LIMITS.map(n => <option key={n} value={n}>Top {limitLabel(n)}</option>)}
@@ -293,8 +322,8 @@ function Toolbar({ live, tab, view, limit, onReveal }: { live: LiveAnalysis; tab
       </select>
       <div className="an-seg" role="radiogroup" aria-label="Display">
         {([['grid', Grid3x3, 'Grid'], ['bars', ChartBarStacked, 'Bars'], ['cards', LayoutGrid, 'Cards']] as const).map(([v, Icon, label]) => (
-          <button key={v} role="radio" aria-checked={view === v} className={view === v ? 'on' : ''} title={`${label} (${label[0]})`} onClick={() => actions.updateTab<AnalysisTab>(tab.id, { view: v })}>
-            <Icon size={14} /><span>{label}</span>
+          <button key={v} role="radio" aria-checked={view === v} className={view === v ? 'on' : ''} aria-label={label} title={`${label} (${label[0]})`} onClick={() => actions.updateTab<AnalysisTab>(tab.id, { view: v })}>
+            <Icon size={14} /><span className="an-seg-label">{label}</span>
           </button>
         ))}
       </div>
@@ -303,10 +332,10 @@ function Toolbar({ live, tab, view, limit, onReveal }: { live: LiveAnalysis; tab
       <button className="icon-btn" aria-label="Print analysis" title="Print (Ctrl+P)" onClick={() => runCommand('analysis.print')}><Printer size={15} /></button>
       {menu && (
         <MenuList
-          items={menu.kind === 'strategy' ? strategyItems : exportItems}
+          items={menu.kind === 'strategy' ? strategyItems : menu.kind === 'filter' ? filterItems : exportItems}
           x={menu.x}
           y={menu.y}
-          label={menu.kind === 'strategy' ? 'Analysis method' : 'Export'}
+          label={menu.kind === 'strategy' ? 'Analysis method' : menu.kind === 'filter' ? 'Filters' : 'Export'}
           onClose={() => setMenu(null)}
         />
       )}
@@ -314,7 +343,51 @@ function Toolbar({ live, tab, view, limit, onReveal }: { live: LiveAnalysis; tab
   )
 }
 
-/** Type-to-jump box listing only the remedies in this analysis. */
+/** Active filters and pinned columns, below the toolbar so the toolbar keeps a stable height. */
+function PillBar({ live, tab, pinned, limit }: { live: LiveAnalysis; tab: AnalysisTab; pinned: number[]; limit: number }) {
+  const { consultation, catalog } = live
+  if (!consultation) return null
+  const o = consultation.analysis
+  const any = o.remedyFilter || o.highlight?.length || o.excludedRemedies.length || o.minCoverage > 0 || pinned.length
+  if (!any) return null
+  const set = (patch: Parameters<typeof ops.setOptions>[0]) => ops.setOptions(patch, consultation.id)
+  return (
+    <div className="an-pillbar" role="group" aria-label="Active filters">
+      {o.remedyFilter && (
+        <span className="an-pill" title={`${o.remedyFilter.length} remedies`}>
+          <Filter size={11} /><span className="an-ellipsis">Limited: {o.filterLabel ?? `${o.remedyFilter.length} remedies`}</span>
+          <button aria-label="Remove remedy limit" onClick={() => set({ remedyFilter: null, filterLabel: null })}><X size={11} /></button>
+        </span>
+      )}
+      {!!o.highlight?.length && (
+        <span className="an-pill fam" title={`${o.highlight.length} remedies highlighted`}>
+          <Highlighter size={11} /><span className="an-ellipsis">{o.highlightLabel ?? `${o.highlight.length} highlighted`}</span>
+          <button aria-label="Remove highlight" onClick={() => set({ highlight: null, highlightLabel: null })}><X size={11} /></button>
+        </span>
+      )}
+      {o.excludedRemedies.length > 0 && (
+        <span className="an-pill" title={o.excludedRemedies.map(id => catalog.remedy(id).abbrev).join(', ')}>
+          <Ban size={11} />{o.excludedRemedies.length} excluded
+          <button aria-label="Include all excluded remedies" onClick={() => set({ excludedRemedies: [] })}><X size={11} /></button>
+        </span>
+      )}
+      {o.minCoverage > 0 && (
+        <span className="an-pill">≥ {o.minCoverage} symptoms
+          <button aria-label="Remove minimum coverage" onClick={() => set({ minCoverage: 0 })}><X size={11} /></button>
+        </span>
+      )}
+      {pinned.map(id => (
+        <span key={id} className="an-pill pin" title={`${catalog.remedy(id).name} ranks beyond the top ${limit}; shown as an extra column`}>
+          <Pin size={11} />{catalog.remedy(id).abbrev}
+          <button aria-label={`Unpin ${catalog.remedy(id).abbrev}`} onClick={() => ops.unpin(tab, id)}><X size={11} /></button>
+        </span>
+      ))}
+      {ops.hasFilter(o) && <button className="btn btn-sm btn-ghost an-pill-clear" onClick={() => runCommand('analysis.clearFilter')}>Clear filters</button>}
+    </div>
+  )
+}
+
+/** Type-to-jump box listing every remedy of this analysis (also beyond the limit and excluded ones). */
 function RemedyBox({ result, catalog, onPick }: { result: AnalysisResult | null; catalog: LiveAnalysis['catalog']; onPick: (id: number) => void }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
@@ -324,7 +397,7 @@ function RemedyBox({ result, catalog, onPick }: { result: AnalysisResult | null;
     const s = q.trim().toLowerCase()
     if (!s || !result) return []
     const starts: AnalysisRow[] = [], contains: AnalysisRow[] = []
-    for (const r of result.all) {
+    for (const r of result.all.length === result.total ? [...result.all, ...result.excludedRows] : result.all) {
       const rem = catalog.remedy(r.remedyId)
       const a = rem.abbrev.toLowerCase(), n = rem.name.toLowerCase()
       if (a.startsWith(s) || n.startsWith(s)) starts.push(r)

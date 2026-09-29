@@ -26,8 +26,11 @@ export function register(catalog: Catalog) {
     })),
     { id: 'analysis.intensity', title: 'Use symptom intensity', category: 'Analysis', keywords: 'weight', enabled: hasTarget, checked: () => ops.targetOptions()?.useIntensity !== false, run: ops.toggleIntensity },
     { id: 'analysis.showExcluded', title: 'Show excluded remedies in position', category: 'Analysis', keywords: 'greyed eliminated', enabled: hasTarget, checked: () => !!ops.targetOptions()?.showExcluded, run: ops.toggleShowExcluded },
-    { id: 'analysis.filter', title: 'Filter remedies…', category: 'Analysis', keywords: 'family limit highlight exclude kingdom', enabled: hasTarget, run: ops.openFilter },
-    { id: 'analysis.clearFilter', title: 'Remove remedy filters', category: 'Analysis', keywords: 'family limit highlight', enabled: () => ops.hasFilter(), run: ops.clearFilter },
+    // Alias kept for the brief and the toolbar: the family filter when that feature is present
+    // (listed as families.filter), else the remedy picker below. Hidden so the palette has one entry.
+    { id: 'analysis.filter', title: 'Filter analysis…', category: 'Analysis', hidden: true, enabled: hasTarget, run: ops.openFilter },
+    { id: 'analysis.remedies', title: 'Include / exclude remedies…', category: 'Analysis', keywords: 'filter limit exclude highlight minimum coverage symptoms already given', enabled: hasTarget, run: ops.openRemedyFilter },
+    { id: 'analysis.clearFilter', title: 'Remove all remedy filters', category: 'Analysis', keywords: 'family limit highlight exclude minimum coverage clear reset', enabled: () => ops.hasFilter(), run: ops.clearFilter },
     { id: 'analysis.compare', title: 'Compare remedies…', category: 'Analysis', keywords: 'extract side by side', enabled: hasTarget, run: () => ops.openCompare() },
     { id: 'analysis.print', title: 'Print analysis…', category: 'Analysis', keys: ['Mod+P'], allowInInput: true, enabled: inAnalysis, run: ops.printAnalysis },
     { id: 'analysis.exportCsv', title: 'Export analysis as CSV', category: 'Analysis', keywords: 'spreadsheet excel download', enabled: hasTarget, run: ops.exportCsv },

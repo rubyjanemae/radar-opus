@@ -76,3 +76,14 @@ export function resolveRemedy(catalog: Catalog, token: string): number | null {
   const best = findRemedies(catalog, token, 1)[0]
   return best && best.score >= 55 ? best.remedy.id : null
 }
+
+/** Is the query meant as a remedy? An exact abbreviation or name, or an abbreviation prefix of 4+ letters. */
+export function remedyIntent(q: string, matches: RemedyMatch[]): boolean {
+  const top = matches[0]
+  if (!top) return false
+  const t = fold(q.replace(/^#/, '').trim()).replace(/\.$/, '')
+  if (q.startsWith('#')) return true
+  const abbrev = fold(top.remedy.abbrev)
+  if (abbrev === t || fold(top.remedy.name) === t) return true
+  return t.length >= 4 && abbrev.startsWith(t)
+}

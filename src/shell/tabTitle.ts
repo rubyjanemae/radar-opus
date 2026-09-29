@@ -1,6 +1,7 @@
 import type { Catalog } from '../data/catalog'
 import type { AppState } from '../state/store'
 import type { Tab } from '../state/workspace'
+import { patientName } from '../features/patients/logic'
 
 export function tabTitle(tab: Tab, catalog: Catalog, s: Pick<AppState, 'patients' | 'consultations'>): { title: string; subtitle?: string } {
   switch (tab.kind) {
@@ -15,7 +16,7 @@ export function tabTitle(tab: Tab, catalog: Catalog, s: Pick<AppState, 'patients
     case 'analysis': {
       const c = s.consultations[tab.consultationId]
       const p = c ? s.patients[c.patientId] : null
-      return { title: 'Analysis', subtitle: p ? `${p.lastName} · ${c!.title}` : 'Missing case' }
+      return { title: 'Analysis', subtitle: p ? `${p.lastName.trim() || p.firstName.trim() || 'Unnamed patient'} · ${c!.title}` : 'Missing case' }
     }
     case 'materia-medica':
       return { title: 'Materia Medica', subtitle: tab.remedyId != null ? catalog.remedy(tab.remedyId).name : undefined }
@@ -25,7 +26,7 @@ export function tabTitle(tab: Tab, catalog: Catalog, s: Pick<AppState, 'patients
       return { title: 'Patients' }
     case 'patient': {
       const p = s.patients[tab.patientId]
-      return { title: p ? `${p.lastName}, ${p.firstName}` : 'Deleted patient' }
+      return { title: p ? patientName(p) : 'Deleted patient' }
     }
     case 'search':
       if (tab.mode === 'remedy') return tab.remedyId != null ? { title: catalog.remedy(tab.remedyId).abbrev, subtitle: 'Remedy search' } : { title: 'Remedy search' }

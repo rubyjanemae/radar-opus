@@ -117,7 +117,7 @@ export function CompareDialog({ consultationId, initial, onClose }: { consultati
                 <tbody>
                   {scored.map(({ s, i }) => (
                     <tr key={i}>
-                      <td className="an-cmp-label" title={s.label}>{s.symptom.weight > 1 && <span className="an-weight">×{s.symptom.weight}</span>} {s.label}</td>
+                      <td className="an-cmp-label" title={s.label}><span className={`an-weight w${s.symptom.weight}`} title={`Intensity ×${s.symptom.weight}`}>×{s.symptom.weight}</span>{s.label}</td>
                       {list.map(id => {
                         const g = rowOf.get(id)?.grades[i] ?? s.grades.get(id) ?? 0
                         return <td key={id} className="num">{g ? <><GradeMark g={g} /> <span className={`g${g}`}>{g}</span></> : <span className="an-absent" aria-label="absent">–</span>}</td>

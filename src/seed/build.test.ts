@@ -69,6 +69,14 @@ describe('demo practice over the real Publicum repertory', () => {
     expect(demo.missing).toEqual([])
   })
 
+  it('gives archetype patients notes and follow-ups a response to the previous remedy', () => {
+    const demo = buildDemoPractice({ rep, remedyId, now })
+    for (const id of Object.values(demo.archetypes)) expect(demo.patients[id].notes.length).toBeGreaterThan(40)
+    const fus = Object.values(demo.consultations).filter(c => c.kind === 'follow-up' || c.kind === 'phone')
+    expect(fus.length).toBeGreaterThan(10)
+    for (const c of fus) expect(c.response?.score).toBeTypeOf('number')
+  })
+
   it('dates lie within the past three years and never in the future', () => {
     const demo = buildDemoPractice({ rep, remedyId, now })
     for (const c of Object.values(demo.consultations)) {

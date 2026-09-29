@@ -1,6 +1,6 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
-import { Bookmark, ChevronDown, ClipboardPlus, Pointer, Search, StickyNote, TriangleAlert, X } from 'lucide-react'
+import { Bookmark, CaseSensitive, ChevronDown, ClipboardPlus, Ellipsis, Hash, History, Pointer, Search, StickyNote, TriangleAlert, WholeWord, X } from 'lucide-react'
 import { useCatalog, useRepertory } from '../../data/CatalogContext'
 import type { Catalog } from '../../data/catalog'
 import type { Repertory } from '../../data/repertory'
@@ -11,9 +11,10 @@ import { useContextMenu } from '../../ui/Menu'
 import type { MenuItem } from '../../ui/Menu'
 import { formatKeys, runCommand } from '../../commands/registry'
 import { indexAt, useVariableVirtual } from './virtual'
+import { crumbCollapseOrder, hiddenRuns } from './logic'
 import { bookAbbrev, describeTake, matchChapters, parseTake } from './take'
 import type { TakeOptions } from './take'
-import { clipboardMembership, ensureClipboard, openFind, takeRefs } from './ops'
+import { clipboardMembership, ensureClipboard, openFind, recordRecent, takeRefs } from './ops'
 import { cycleDisplay } from './commands'
 import './repertory.css'
 
@@ -51,7 +52,7 @@ export function RepertoryView({ tab }: { tab: RepertoryTab }) {
 function BookSkeleton({ title }: { title: string }) {
   return (
     <div className="rv rv-loading" aria-busy="true" aria-label={`Loading ${title}`}>
-      <div className="rv-head"><span className="rv-loading-label">Loading {title}…</span></div>
+      <div className="rv-head"><span className="rv-head-in rv-loading-label">Loading {title}…</span></div>
       <div className="rv-skel">
         {Array.from({ length: 14 }, (_, i) => <div key={i} className="skeleton" style={{ width: `${40 + ((i * 37) % 55)}%`, marginLeft: (i % 4) * 16 }} />)}
       </div>
@@ -132,6 +133,12 @@ const RubricRow = memo(function RubricRow({ rep, catalog, i, k, top, current, sh
   )
 })
 
+const DISPLAY_MODES = [
+  { mode: 'count', label: 'Count', title: 'Remedy count only', Icon: Hash },
+  { mode: 'remedies', label: 'Abbrev', title: 'Remedy abbreviations', Icon: CaseSensitive },
+  { mode: 'names', label: 'Names', title: 'Full remedy names', Icon: WholeWord },
+] as const
+
 const GRADE_LABEL = ['', 'grade 1 (plain)', 'grade 2 (italic)', 'grade 3 (bold)', 'grade 4 (bold capitals)']
 
 function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
@@ -185,10 +192,11 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
     return h
   }, [start, count, showRemedies, names, minGrade, lineH, fs, rep, catalog, notes])
 
-  const resetKey = `${tab.repertory}:${start}:${showRemedies}:${names}:${minGrade}:${lineH}`
-  const v = useVariableVirtual(scrollRef, count, estimate, resetKey)
+  const contentKey = `${tab.repertory}:${start}:${count}`
+  const resetKey = `${contentKey}:${showRemedies}:${names}:${minGrade}:${lineH}`
+  const v = useVariableVirtual(scrollRef, count, estimate, resetKey, { focus: rubric - start, contentKey })
 
-  // keep the current rubric in view
+  // keep the current rubric in view; once on screen it stays pinned while row heights settle
   const lastRubric = useRef<number | null>(null)
   useEffect(() => {
     const k = rubric - start
@@ -199,8 +207,24 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
     const visible = v.offsets[k] >= el.scrollTop && v.offsets[k + 1] <= el.scrollTop + el.clientHeight
     if (prev == null) v.scrollToIndex(k, 'center')
     else if (!visible) v.scrollToIndex(k, Math.abs(rubric - prev) <= 2 ? 'auto' : 'center')
+    else v.anchor(k)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rubric, start, resetKey])
+
+  // Recent list: a rubric reached by a jump is recorded at once, one the reader dwells on after a second
+  const lastBack = useRef(tab.back)
+  useEffect(() => {
+    const jumped = lastBack.current !== tab.back
+    lastBack.current = tab.back
+    const ref = rep.ref(rubric)
+    if (jumped) { recordRecent(ref, tab.id); return }
+    const t = setTimeout(() => recordRecent(ref, tab.id), 1000)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rubric, rep])
+
+  // the take bar takes room at the bottom of the book: keep the rubric being taken in view
+  useEffect(() => { if (takeBar != null) v.scrollToIndex(rubric - start) }, [takeBar != null]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // focus the book when the tab opens
   useEffect(() => { if (!useApp.getState().dialog) scrollRef.current?.focus({ preventScroll: true }) }, [])
@@ -316,7 +340,6 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
     setTip(null)
   }
 
-  const lineage = rep.lineage(rubric)
   const highlightCount = useMemo(() => {
     if (highlight == null) return 0
     let n = 0
@@ -346,34 +369,24 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
   return (
     <div className="rv" ref={rootRef} onKeyDown={onKeyDown}>
       <div className="rv-head">
-        <nav className="rv-crumbs" aria-label="Symptom path">
-          <button className="rv-crumb rv-crumb-rep" title="Repertories table of contents (Ctrl+1)" onClick={() => runCommand('repertory.toc')}>{info.title}</button>
-          {lineage.map((r, x) => (
-            <span key={r} className="rv-crumb-wrap">
-              <span className="rv-sep" aria-hidden="true">›</span>
-              <button
-                className={`rv-crumb${x === lineage.length - 1 ? ' rv-crumb-last' : ''}`}
-                title="Find from here (F3)"
-                onClick={() => actions.openDialog('repertory.find', { repertory: tab.repertory, from: r })}
-              >{rep.text(r)}</button>
-            </span>
-          ))}
-        </nav>
+        <div className="rv-head-in">
+        <Crumbs rep={rep} rubric={rubric} onMenu={(el, items) => cm.openAt(el, items)} />
         <div className="rv-tools">
           <button className="icon-btn" title={`Find rubric (${formatKeys('F2')})`} aria-label="Find rubric" onClick={() => openFind(false)}><Search size={14} /></button>
           <div className="rv-seg" role="radiogroup" aria-label="Rubric display (Space cycles)">
-            {(['count', 'remedies', 'names'] as const).map(m => (
-              <button key={m} role="radio" aria-checked={displayMode === m} className={displayMode === m ? 'on' : ''} onClick={() => setDisplay(m)} title="Space cycles the display">
-                {m === 'count' ? 'Count' : m === 'remedies' ? 'Abbrev' : 'Names'}
+            {DISPLAY_MODES.map(({ mode, label, title, Icon }) => (
+              <button key={mode} role="radio" aria-checked={displayMode === mode} aria-label={label} className={displayMode === mode ? 'on' : ''} onClick={() => setDisplay(mode)} title={`${title} (Space cycles)`}>
+                <Icon size={13} className="rv-seg-icon" aria-hidden="true" /><span className="rv-seg-label">{label}</span>
               </button>
             ))}
           </div>
-          <select className="select rv-grade" aria-label="Minimum grade shown" value={minGrade} onChange={e => actions.setSettings({ minGradeShown: Number(e.target.value) as 1 | 2 | 3 })}>
+          <select className="select rv-grade" aria-label="Minimum grade shown" title="Minimum grade shown" value={minGrade} onChange={e => actions.setSettings({ minGradeShown: Number(e.target.value) as 1 | 2 | 3 })}>
             <option value={1}>All grades</option>
             <option value={2}>Grade 2+</option>
             <option value={3}>Grade 3+</option>
           </select>
           <TakeButton onMenu={(el, items) => cm.openAt(el, items)} />
+        </div>
         </div>
       </div>
       {highlight != null && (
@@ -403,6 +416,14 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
         <div className={`rv-canvas${settings.density === 'comfortable' ? ' rv-comfy' : ''}`} style={{ height: v.total }}>{rows}</div>
       </div>
       </div>
+      {takeBar != null && (
+        <TakeBar
+          initial={takeBar}
+          path={rep.lineage(rubric).map(r => rep.text(r))}
+          onClose={() => { setTakeBar(null); scrollRef.current?.focus({ preventScroll: true }) }}
+          onTake={o => { takeRefs([refOf(rubric)], o) }}
+        />
+      )}
       {tip && (
         <div className="rv-tip" role="tooltip" style={{ left: tip.x, top: tip.y + 4 }}>
           <b>{catalog.remedy(tip.id).name}</b>
@@ -410,17 +431,10 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
           <span className="rv-tip-hint">Click to highlight · double-click to open</span>
         </div>
       )}
-      {takeBar != null && (
-        <TakeBar
-          initial={takeBar}
-          rubricLabel={rep.path(rubric)}
-          onClose={() => { setTakeBar(null); scrollRef.current?.focus({ preventScroll: true }) }}
-          onTake={o => { takeRefs([refOf(rubric)], o) }}
-        />
-      )}
       {chooser != null && (
         <ChapterChooser
           rep={rep}
+          recent={tab.recent ?? []}
           initial={chooser}
           onClose={() => { setChooser(null); scrollRef.current?.focus({ preventScroll: true }) }}
           onPick={c => { setChooser(null); select(c, true); scrollRef.current?.focus({ preventScroll: true }) }}
@@ -451,14 +465,14 @@ function TakeButton({ onMenu }: { onMenu: (el: HTMLElement, items: MenuItem[]) =
   return (
     <div className="rv-take" ref={ref}>
       <button className="btn btn-sm rv-take-main" onClick={() => runCommand('rubric.add')} title="Take rubric into the active clipboard (+ or Insert)">
-        <ClipboardPlus size={13} /> Take
+        <ClipboardPlus size={13} /><span className="rv-take-label">Take</span>
       </button>
       <button className="btn btn-sm rv-take-more" aria-label="Take options" aria-haspopup="menu" onClick={() => ref.current && onMenu(ref.current, items)}><ChevronDown size={13} /></button>
     </div>
   )
 }
 
-function TakeBar({ initial, rubricLabel, onClose, onTake }: { initial: string; rubricLabel: string; onClose: () => void; onTake: (o: TakeOptions) => void }) {
+function TakeBar({ initial, path, onClose, onTake }: { initial: string; path: string[]; onClose: () => void; onTake: (o: TakeOptions) => void }) {
   const [value, setValue] = useState(initial)
   const parsed = parseTake(value)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -466,8 +480,12 @@ function TakeBar({ initial, rubricLabel, onClose, onTake }: { initial: string; r
     const el = inputRef.current
     if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) }
   }, [])
+  const leaf = path[path.length - 1] ?? ''
+  const parents = path.slice(0, -1)
+  const status = parsed.ok ? describeTake(parsed.options) : parsed.error
   return (
     <div className="rv-takebar" role="dialog" aria-label="Take rubric">
+      <div className="rv-takebar-in">
       <ClipboardPlus size={14} className="rv-takebar-icon" />
       <input
         ref={inputRef}
@@ -487,18 +505,28 @@ function TakeBar({ initial, rubricLabel, onClose, onTake }: { initial: string; r
           } else if (e.key === 'Backspace' && value.length <= 1) { e.preventDefault(); onClose() }
         }}
       />
-      <span className={`rv-takebar-status${parsed.ok ? '' : ' err'}`}>{parsed.ok ? describeTake(parsed.options) : parsed.error}</span>
-      <span className="rv-takebar-rubric" title={rubricLabel}>{rubricLabel}</span>
-      <span className="rv-takebar-help"><b>+2</b> intensity · <b>&gt;3</b> clipboard · <b>!</b> elim. · <b>x</b> excl. · <b>a</b> group · <b>/s</b> sub-rubrics · <kbd className="kbd">↵</kbd></span>
+      <span className="rv-takebar-rubric" title={path.join(' › ')}>
+        {parents.length > 0 && <span className="rv-takebar-parents">{parents.join(' › ')} ›&nbsp;</span>}
+        <b className="rv-takebar-leaf">{leaf}</b>
+      </span>
+      <span className={`rv-takebar-status${parsed.ok ? '' : ' err'}`} title={status}>{status}</span>
+      <span className="rv-takebar-help"><b>+2</b> intensity · <b>&gt;3</b> clipboard · <b>!</b> elim. · <b>x</b> excl. · <b>a</b> group · <b>/s</b> sub-rubrics · <kbd className="kbd">↵</kbd> take · <kbd className="kbd">Esc</kbd></span>
+      </div>
     </div>
   )
 }
 
-function ChapterChooser({ rep, initial, onClose, onPick }: { rep: Repertory; initial: string; onClose: () => void; onPick: (i: number) => void }) {
+function ChapterChooser({ rep, recent, initial, onClose, onPick }: { rep: Repertory; recent: readonly number[]; initial: string; onClose: () => void; onPick: (i: number) => void }) {
   const [q, setQ] = useState(initial)
   const [active, setActive] = useState(0)
   const all = useMemo(() => rep.chapters.map(c => ({ id: c, name: rep.text(c) })), [rep])
-  const list = matchChapters(all, q)
+  // chapters of recently read rubrics, most recent first: preferred among equal matches
+  const recentChapters = useMemo(() => {
+    const m = new Map<number, number>()
+    for (const r of recent) { const c = rep.chapterRoot(Math.min(r, rep.size - 1)); if (!m.has(c)) m.set(c, m.size) }
+    return m
+  }, [recent, rep])
+  const list = matchChapters(all, q, c => recentChapters.get(c.id) ?? -1)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   useEffect(() => { const el = inputRef.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } }, [])
@@ -534,7 +562,8 @@ function ChapterChooser({ rep, initial, onClose, onPick }: { rep: Repertory; ini
             onMouseDown={e => { e.preventDefault(); onPick(c.id) }}
             onMouseEnter={() => setActive(x)}
           >
-            <span>{c.name}</span>
+            <span className="rv-chooser-name">{c.name}</span>
+            {recentChapters.has(c.id) && <History size={11} className="rv-chooser-recent" aria-label="recently used" />}
             <span className="rv-chooser-n">{(rep.subtreeEndOf(c.id) - c.id - 1).toLocaleString()}</span>
           </div>
         ))}
@@ -543,18 +572,91 @@ function ChapterChooser({ rep, initial, onClose, onPick }: { rep: Repertory; ini
   )
 }
 
-/** Book running head: the path of the rubric at the top of the page, once its parents have scrolled away. */
+/**
+ * Symptom path. When it does not fit, crumbs fold into "…" menus in priority order (repertory
+ * title, then middle levels, then the chapter); the last two levels always stay whole.
+ */
+function Crumbs({ rep, rubric, onMenu }: { rep: Repertory; rubric: number; onMenu: (el: HTMLElement, items: MenuItem[]) => void }) {
+  const navRef = useRef<HTMLElement>(null)
+  const lineage = rep.lineage(rubric)
+  const [width, setWidth] = useState(0)
+  const key = `${rep.abbrev}:${rubric}:${width}`
+  const [fold, setFold] = useState({ key, n: 0 })
+  const n = fold.key === key ? fold.n : 0
+  const order = crumbCollapseOrder(lineage.length + 1)
+  const hidden = new Set(order.slice(0, n))
+  const settled = n >= order.length
+
+  useLayoutEffect(() => {
+    const nav = navRef.current
+    if (!nav) return
+    const ro = new ResizeObserver(() => setWidth(Math.round(nav.clientWidth)))
+    ro.observe(nav)
+    return () => ro.disconnect()
+  }, [])
+  useLayoutEffect(() => {
+    const nav = navRef.current
+    if (!nav || n >= order.length) return
+    if (nav.scrollWidth > nav.clientWidth + 1) setFold({ key, n: n + 1 })
+  }, [key, n, order.length])
+
+  // item 0 is the repertory title, item x > 0 is lineage[x - 1]
+  const itemLabel = (x: number) => (x === 0 ? rep.info.title : rep.text(lineage[x - 1]))
+  const openItem = (x: number) => (x === 0 ? runCommand('repertory.toc') : actions.openDialog('repertory.find', { repertory: rep.abbrev, from: lineage[x - 1] }))
+  const runs = hiddenRuns(lineage.length + 1, hidden)
+  const parts: React.ReactNode[] = []
+  for (let x = 0; x <= lineage.length; x++) {
+    const run = runs.find(r => r[0] === x)
+    const sep = x > 0 && <span className="rv-sep" aria-hidden="true">›</span>
+    if (run) {
+      parts.push(
+        <span key={`f${x}`} className="rv-crumb-wrap rv-crumb-fold">
+          {sep}
+          <button
+            className="rv-crumb rv-crumb-more" aria-haspopup="menu" aria-label={`${run.length} more level${run.length === 1 ? '' : 's'}: ${run.map(itemLabel).join(' › ')}`}
+            title={run.map(itemLabel).join(' › ')}
+            onClick={e => onMenu(e.currentTarget, [{ type: 'label', label: 'Go to level' }, ...run.map(y => ({ label: y === 0 ? `${itemLabel(y)} (repertories)` : itemLabel(y), run: () => openItem(y) }))])}
+          ><Ellipsis size={13} /></button>
+        </span>,
+      )
+      x = run[run.length - 1]
+      continue
+    }
+    if (hidden.has(x)) continue
+    const last = x === lineage.length
+    parts.push(
+      <span key={x} className={`rv-crumb-wrap${last ? ' rv-crumb-wrap-last' : ''}`}>
+        {sep}
+        <button
+          className={`rv-crumb${x === 0 ? ' rv-crumb-rep' : ''}${last ? ' rv-crumb-last' : ''}`}
+          title={x === 0 ? 'Repertories table of contents (Ctrl+1)' : `${itemLabel(x)}: find from here (F3)`}
+          onClick={() => openItem(x)}
+        >{itemLabel(x)}</button>
+      </span>,
+    )
+  }
+  return <nav className={`rv-crumbs${settled ? ' rv-crumbs-fit' : ''}`} ref={navRef} aria-label="Symptom path">{parts}</nav>
+}
+
+/**
+ * Book running head: where the top of the page is. Shows the parents of the rubric at the top
+ * once they have scrolled away, and "(continued)" when that rubric itself started above the page
+ * (a chapter heading's or main rubric's long remedy block).
+ */
 function RunningHead({ rep, offsets, start, count, top, onGo }: { rep: Repertory; offsets: Float64Array; start: number; count: number; top: number; onGo: (i: number) => void }) {
   if (count <= 0 || top <= 0) return null
   const k = indexAt(offsets, count, top + 4)
   const i = start + k
-  const line = rep.lineage(i).slice(0, -1)
-  if (rep.depth(i) < 2 || line.length < 2) return null
+  const continued = top - offsets[k] > 20
+  const line = continued ? rep.lineage(i) : rep.lineage(i).slice(0, -1)
+  if (!continued && (rep.depth(i) < 2 || line.length < 2)) return null
+  if (!line.length) return null
   return (
     <div className="rv-runhead" aria-hidden="true">
       {line.map((r, x) => (
         <span key={r}>{x > 0 && '› '}<button tabIndex={-1} onClick={() => onGo(r)}>{rep.text(r)}</button></span>
       ))}
+      {continued && <span className="rv-runhead-cont">(continued)</span>}
     </div>
   )
 }

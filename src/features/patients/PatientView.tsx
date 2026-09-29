@@ -1,5 +1,5 @@
 import { useMemo, useRef } from 'react'
-import { CalendarPlus, Download, FileText, MoreHorizontal, UserX } from 'lucide-react'
+import { CalendarPlus, Download, MoreHorizontal, UserX } from 'lucide-react'
 import { useCatalog } from '../../data/CatalogContext'
 import { analyze } from '../../engine/analysis'
 import { actions, useApp } from '../../state/store'
@@ -10,7 +10,7 @@ import type { MenuItem } from '../../ui/Menu'
 import { repertoriesOf, useRepertoriesLoaded } from '../analysis/useAnalysis'
 import { sourceFor } from '../analysis/source'
 import { ConsultationEditor } from './ConsultationEditor'
-import { consultationsOf, formatAge, formatDate, initials, KIND_LABEL, patientName, relativeDate, SEX_LABEL, symptomCount } from './logic'
+import { consultationsOf, formatAge, formatDate, formatScoreSigned, ghhosLabel, initials, KIND_LABEL, patientName, relativeDate, SEX_LABEL, symptomCount } from './logic'
 import { PatientDetails } from './PatientDetails'
 import * as ops from './ops'
 import './patients.css'
@@ -58,9 +58,8 @@ export function PatientView({ tab }: { tab: PatientTab }) {
           </div>
         </div>
         <div className="pt-head-actions">
-          <button className="btn btn-primary" onClick={() => ops.newConsultation(patient.id)}><CalendarPlus size={14} />New consultation</button>
-          <button className="btn" onClick={() => void ops.exportCase(patient.id)} title="Export case file (JSON)"><Download size={14} />Export</button>
-          <button className="btn" disabled={!shown} onClick={() => shown && ops.openReport(shown.id)}><FileText size={14} />Report</button>
+          <button className="btn btn-primary" onClick={() => ops.newConsultation(patient.id)} aria-label="New consultation" title="New consultation"><CalendarPlus size={14} /><span className="btn-label">New consultation</span></button>
+          <button className="btn" onClick={() => void ops.exportCase(patient.id)} aria-label="Export" title="Export case file (JSON)"><Download size={14} /><span className="btn-label">Export</span></button>
           <button className="icon-btn" aria-label="More patient actions" title="More" onClick={e => cm.openAt(e.currentTarget, more)}><MoreHorizontal size={16} /></button>
         </div>
       </header>
@@ -137,8 +136,8 @@ function Timeline({ tab, list, selectedId, onMenu, onMenuAt }: {
       aria-activedescendant={selectedId ? `pt-c-${selectedId}` : undefined}
       onKeyDown={e => {
         const c = list[index]
-        if (e.key === 'ArrowDown') { e.preventDefault(); select(index + 1) }
-        else if (e.key === 'ArrowUp') { e.preventDefault(); select(index - 1) }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowRight') { e.preventDefault(); select(index + 1) }
+        else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') { e.preventDefault(); select(index - 1) }
         else if (e.key === 'Home') { e.preventDefault(); select(0) }
         else if (e.key === 'End') { e.preventDefault(); select(list.length - 1) }
         else if (e.key === 'Enter' && c) { e.preventDefault(); (document.querySelector('.pt-editor textarea, .pt-editor input') as HTMLElement | null)?.focus() }
@@ -156,7 +155,7 @@ function Timeline({ tab, list, selectedId, onMenu, onMenuAt }: {
         const top = tops.get(c.id)
         const year = c.date.slice(0, 4)
         return (
-          <div key={c.id}>
+          <div key={c.id} className="pt-tl-group">
             {(i === 0 || list[i - 1].date.slice(0, 4) !== year) && <div className="pt-tl-year">{year}</div>}
             <div
               id={`pt-c-${c.id}`} data-cid={c.id} role="option" aria-selected={c.id === selectedId}
@@ -173,6 +172,7 @@ function Timeline({ tab, list, selectedId, onMenu, onMenuAt }: {
               <div className="pt-tl-title">{c.title || 'Consultation'}</div>
               <div className="pt-tl-meta">
                 <span title="Symptoms on the clipboards">{n} symptom{n === 1 ? '' : 's'}</span>
+                {c.response?.score != null && <span className={`pt-tl-resp ${c.response.score > 0 ? 'pos' : c.response.score < 0 ? 'neg' : 'zero'}`} title={`Response to the previous remedy: ${ghhosLabel(c.response.score)}`}>{formatScoreSigned(c.response.score)}</span>}
                 {c.prescriptions.length > 0 && <span className="pt-tl-rx" title="Prescribed">{c.prescriptions.map(p => `${catalog.remedy(p.remedyId).abbrev} ${p.potency}`).join(', ')}</span>}
               </div>
               {top && top.length > 0 && <div className="pt-tl-top" title="Top remedies of the analysis">↳ {top.join(' · ')}</div>}

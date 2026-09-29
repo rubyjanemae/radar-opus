@@ -37,7 +37,9 @@ export type StrategyId =
   | 'sum-symptoms'
   | 'weighted'
   | 'small-rubrics'
-  /** Small rubrics + small remedies (id kept for saved cases). */
+  /** Small remedies only: DI × f(r) (spec `smallRemedies`). */
+  | 'remedy-size'
+  /** Small rubrics + small remedies (spec `smallBoth`; id kept for saved cases). */
   | 'small-remedies'
   | 'kent'
   | 'boenninghausen'
@@ -64,4 +66,28 @@ export interface AnalysisOptions {
   filterLabel?: string | null
   /** Human label for `highlight`. */
   highlightLabel?: string | null
+  /** Family group ids `remedyFilter` was built from (families feature), so its dialog can reopen the selection. */
+  filterGroups?: string[] | null
+  /** Family group ids `highlight` was built from. */
+  highlightGroups?: string[] | null
+  /** Strategy parameters (scoring-spec §6); missing values use DEFAULT_PARAMS. */
+  params?: StrategyParamsPatch
+}
+
+/** Strategy parameters, scoring-spec §6. */
+export interface StrategyParams {
+  /** f_s = factor when n_s ≤ threshold, else 1. */
+  smallRubrics: { threshold: number; factor: number }
+  /** f(r) = clamp((mRef / m_r)^alpha, fMin, fMax). */
+  smallRemedies: { mRef: number; alpha: number; fMin: number; fMax: number }
+  /** κ per symptom category (Kent preset). */
+  kent: { weights: { srp: number; mental: number; general: number; particular: number } }
+}
+
+export type StrategyParamsPatch = { [K in keyof StrategyParams]?: Partial<StrategyParams[K]> }
+
+export const DEFAULT_PARAMS: StrategyParams = {
+  smallRubrics: { threshold: 10, factor: 2 },
+  smallRemedies: { mRef: 1000, alpha: 0.5, fMin: 0.5, fMax: 4 },
+  kent: { weights: { srp: 4, mental: 3, general: 2, particular: 1 } },
 }

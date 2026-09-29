@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import { BarChart3, ChevronDown, ClipboardList, MoreHorizontal, Plus, StickyNote, UserPlus, Users, AlertTriangle } from 'lucide-react'
 import { useCatalog } from '../../data/CatalogContext'
@@ -36,8 +36,10 @@ export function ClipboardPanel() {
       {consultation && clipboard ? (
         <>
           <ChipStrip consultation={consultation} active={clipboard} openMenu={cm.open} openMenuAt={cm.openAt} />
-          <SymptomList clipboard={clipboard} consultation={consultation} openMenu={cm.open} openMenuAt={cm.openAt} />
-          <Footer clipboard={clipboard} />
+          <div className="cbp-tabpanel" role="tabpanel" id={LIST_PANEL_ID} aria-labelledby={`cbp-tab-${clipboard.id}`}>
+            <SymptomList clipboard={clipboard} consultation={consultation} openMenu={cm.open} openMenuAt={cm.openAt} />
+          </div>
+          <Footer clipboard={clipboard} consultation={consultation} />
         </>
       ) : <NoCase />}
       {cm.element}
@@ -52,6 +54,9 @@ function patientName(p: { firstName: string; lastName: string } | undefined) {
   return [p.lastName, p.firstName].filter(Boolean).join(', ') || 'Unnamed patient'
 }
 
+const RECENT_PATIENTS = 5
+const PATIENT_CONSULTATIONS = 4
+
 function CaseHeader({ consultation }: { consultation: Consultation | null }) {
   const patients = useApp(s => s.patients)
   const consultations = useApp(s => s.consultations)
@@ -59,6 +64,7 @@ function CaseHeader({ consultation }: { consultation: Consultation | null }) {
   const btn = useRef<HTMLButtonElement>(null)
   const patient = consultation ? patients[consultation.patientId] : undefined
 
+  // Actions first (always reachable), then the current patient's consultations, then a few recent patients.
   const items = useMemo((): MenuItem[] => {
     const byPatient = new Map<string, Consultation[]>()
     for (const c of Object.values(consultations)) {
@@ -66,25 +72,35 @@ function CaseHeader({ consultation }: { consultation: Consultation | null }) {
       list.push(c)
       byPatient.set(c.patientId, list)
     }
-    const groups = [...byPatient.entries()]
-      .map(([pid, list]) => ({ pid, list: list.sort((a, b) => b.date.localeCompare(a.date) || b.updatedAt - a.updatedAt), last: Math.max(...list.map(c => c.updatedAt)) }))
-      .sort((a, b) => (a.pid === consultation?.patientId ? -1 : b.pid === consultation?.patientId ? 1 : b.last - a.last))
-      .slice(0, 12)
-    const out: MenuItem[] = []
-    for (const g of groups) {
-      out.push({ type: 'label', label: patientName(patients[g.pid]) })
-      for (const c of g.list.slice(0, 6)) out.push({ label: `${c.title || 'Consultation'} · ${c.date}`, checked: c.id === consultation?.id, run: () => actions.setActiveConsultation(c.id) })
-    }
-    if (out.length) out.push({ type: 'separator' })
-    out.push({ label: 'New case…', run: ops.newCase })
+    const newest = (list: Consultation[]) => [...list].sort((a, b) => b.date.localeCompare(a.date) || b.updatedAt - a.updatedAt)
+    const out: MenuItem[] = [{ label: 'New case…', run: ops.newCase }]
     if (consultation) {
       out.push({ label: 'New consultation for this patient', run: () => actions.createConsultation(consultation.patientId, { title: 'Follow-up', kind: 'follow-up' }) })
       out.push({ label: 'Open patient file', run: () => actions.openTab({ kind: 'patient', patientId: consultation.patientId }) })
-      out.push({ type: 'separator' })
       out.push({ label: 'Close case', run: () => actions.setActiveConsultation(null) })
+      const own = newest(byPatient.get(consultation.patientId) ?? [])
+      if (own.length > 1) {
+        out.push({ type: 'separator' }, { type: 'label', label: `${patientName(patient)}: consultations` })
+        const shown = own.slice(0, PATIENT_CONSULTATIONS)
+        if (!shown.some(c => c.id === consultation.id)) shown[shown.length - 1] = consultation
+        for (const c of shown) out.push({ label: `${c.title || 'Consultation'} · ${c.date}`, checked: c.id === consultation.id, run: () => actions.setActiveConsultation(c.id) })
+      }
+    }
+    const others = [...byPatient.entries()]
+      .filter(([pid]) => pid !== consultation?.patientId)
+      .map(([pid, list]) => ({ pid, latest: newest(list)[0], last: Math.max(...list.map(c => c.updatedAt)) }))
+      .sort((a, b) => b.last - a.last)
+    if (others.length) {
+      out.push({ type: 'separator' }, { type: 'label', label: 'Recent patients' })
+      for (const g of others.slice(0, RECENT_PATIENTS)) {
+        out.push({ label: `${patientName(patients[g.pid])} · ${g.latest.date}`, run: () => actions.setActiveConsultation(g.latest.id) })
+      }
+    }
+    if (getCommand('patients.open')) {
+      out.push({ type: 'separator' }, { label: others.length > RECENT_PATIENTS ? `All patients (${byPatient.size})…` : 'All patients…', command: 'patients.open' })
     }
     return out
-  }, [consultations, patients, consultation])
+  }, [consultations, patients, consultation, patient])
 
   const open = () => {
     const r = btn.current?.getBoundingClientRect()
@@ -95,6 +111,7 @@ function CaseHeader({ consultation }: { consultation: Consultation | null }) {
     <div className="cbp-case">
       <button
         ref={btn} className="cbp-case-btn" aria-haspopup="menu" aria-expanded={!!menu} aria-label="Switch case"
+        title={consultation ? `${patientName(patient)}: ${consultation.title || 'Consultation'}, ${consultation.date}` : 'No active case'}
         onClick={open}
         onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); open() } }}
       >
@@ -137,7 +154,7 @@ function clipboardMenu(cb: Clipboard, consultation: Consultation): MenuItem[] {
   const activeId = selectActiveClipboard(useApp.getState())?.id
   const inAnalysis = consultation.analysis.clipboardIds.includes(cb.id)
   return [
-    { label: 'Set as default', checked: cb.id === activeId, run: () => actions.setActiveClipboard(cb.id) },
+    { label: 'Set as default', keys: 'Alt+Click', checked: cb.id === activeId, run: () => actions.setActiveClipboard(cb.id) },
     { label: 'Include in analysis', checked: inAnalysis, run: () => ops.toggleInAnalysis(cb.id) },
     { type: 'separator' },
     { label: 'Rename…', run: () => ops.startRename(cb.id) },
@@ -146,6 +163,7 @@ function clipboardMenu(cb: Clipboard, consultation: Consultation): MenuItem[] {
     { type: 'separator' },
     { label: 'New clipboard', disabled: count >= MAX_CLIPBOARDS, run: ops.newClipboard },
     { label: 'Clear clipboard', danger: true, disabled: !cb.symptoms.length, run: () => ops.clearClipboard(cb.id) },
+    { command: 'clipboard.clearAll', danger: true },
     { label: 'Delete clipboard', danger: true, disabled: count <= 1, run: () => ops.deleteClipboard(cb.id) },
   ]
 }
@@ -158,11 +176,16 @@ function dragKind(e: DragEvent): 'symptoms' | 'rubrics' | null {
 }
 const copyModifier = (e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean }) => e.altKey || e.ctrlKey || e.metaKey
 
+/** Above this many clipboards the inactive chips show only number, colour and count (name in the tooltip). */
+const COMPACT_CHIPS = 4
+export const LIST_PANEL_ID = 'cbp-symptoms'
+
 function ChipStrip({ consultation, active, openMenu, openMenuAt }: { consultation: Consultation; active: Clipboard; openMenu: OpenMenu; openMenuAt: OpenMenuAt }) {
   const renamingId = ops.usePanelUi(s => s.renamingId)
   const [dropId, setDropId] = useState<string | null>(null)
   const refs = useRef(new Map<string, HTMLButtonElement>())
   const more = useRef<HTMLButtonElement>(null)
+  const compact = consultation.clipboards.length > COMPACT_CHIPS
 
   const onDrop = (e: DragEvent, cb: Clipboard) => {
     e.preventDefault()
@@ -185,63 +208,72 @@ function ChipStrip({ consultation, active, openMenu, openMenuAt }: { consultatio
   }
 
   return (
-    <div className="cbp-chips" role="tablist" aria-label="Clipboards">
-      {consultation.clipboards.map((cb, i) => {
-        const isActive = cb.id === active.id
-        const inAnalysis = consultation.analysis.clipboardIds.includes(cb.id)
-        const shortcut = i < 9 ? ` · ${formatKeys(`Alt+${i + 1}`)}` : ''
-        return (
-          <button
-            key={cb.id}
-            ref={el => { if (el) refs.current.set(cb.id, el); else refs.current.delete(cb.id) }}
-            role="tab"
-            aria-selected={isActive}
-            tabIndex={isActive ? 0 : -1}
-            className={`cbp-chip${isActive ? ' active' : ''}${dropId === cb.id ? ' drop' : ''}${inAnalysis ? '' : ' off'}`}
-            style={{ ['--chip' as string]: cb.color }}
-            title={`${cb.name}: ${cb.symptoms.length} symptom${cb.symptoms.length === 1 ? '' : 's'}${inAnalysis ? '' : ' (not in analysis)'}${shortcut}\nDouble-click to rename, Ctrl+click to toggle in analysis`}
-            onClick={e => {
-              if (e.ctrlKey || e.metaKey) { ops.toggleInAnalysis(cb.id); return }
-              if (!isActive) { actions.setActiveClipboard(cb.id); ops.setPanelUi({ cursorId: null, anchorId: null }) }
-            }}
-            onDoubleClick={() => ops.startRename(cb.id)}
-            onContextMenu={e => openMenu(e, clipboardMenu(cb, consultation))}
-            onKeyDown={e => {
-              const list = consultation.clipboards
-              if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    <div className={`cbp-chips${compact ? ' compact' : ''}`}>
+      <div className="cbp-chip-wrap" role="tablist" aria-label="Clipboards">
+        {consultation.clipboards.map((cb, i) => {
+          const isActive = cb.id === active.id
+          const inAnalysis = consultation.analysis.clipboardIds.includes(cb.id)
+          const shortcut = i < 9 ? ` · ${formatKeys(`Alt+${i + 1}`)}` : ''
+          const n = cb.symptoms.length
+          const showName = !compact || isActive || renamingId === cb.id
+          return (
+            <button
+              key={cb.id}
+              ref={el => { if (el) refs.current.set(cb.id, el); else refs.current.delete(cb.id) }}
+              role="tab"
+              id={`cbp-tab-${cb.id}`}
+              aria-selected={isActive}
+              aria-controls={isActive ? LIST_PANEL_ID : undefined}
+              aria-label={`${i + 1}. ${cb.name}, ${n} symptom${n === 1 ? '' : 's'}${inAnalysis ? '' : ', not in analysis'}`}
+              tabIndex={isActive ? 0 : -1}
+              className={`cbp-chip${isActive ? ' active' : ''}${dropId === cb.id ? ' drop' : ''}${inAnalysis ? '' : ' off'}${showName ? '' : ' mini'}`}
+              style={{ ['--chip' as string]: cb.color }}
+              title={`${cb.name}: ${n} symptom${n === 1 ? '' : 's'}${inAnalysis ? '' : ' (not in analysis)'}${shortcut}\nDouble-click to rename · Ctrl+click: include in analysis · Alt+click: set as default`}
+              onClick={e => {
+                if (e.ctrlKey || e.metaKey) { ops.toggleInAnalysis(cb.id); return }
+                if (!isActive) { actions.setActiveClipboard(cb.id); ops.setPanelUi({ cursorId: null, anchorId: null }) }
+                // Alt+click (RadarOpus: set as default) is the same as a plain click here: the active clipboard is the default
+              }}
+              onDoubleClick={() => ops.startRename(cb.id)}
+              onContextMenu={e => openMenu(e, clipboardMenu(cb, consultation))}
+              onKeyDown={e => {
+                const list = consultation.clipboards
+                if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                  e.preventDefault()
+                  const next = list[(i + (e.key === 'ArrowRight' ? 1 : -1) + list.length) % list.length]
+                  actions.setActiveClipboard(next.id)
+                  refs.current.get(next.id)?.focus()
+                } else if (e.key === 'F2' || (e.key === 'Enter' && isActive && e.altKey)) {
+                  e.preventDefault(); ops.startRename(cb.id)
+                } else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+                  e.preventDefault(); openMenuAt(e.currentTarget, clipboardMenu(cb, consultation))
+                } else if (e.key === 'ArrowDown') {
+                  e.preventDefault(); ops.focusPanel()
+                }
+              }}
+              onDragOver={e => {
+                const k = dragKind(e)
+                if (!k) return
                 e.preventDefault()
-                const next = list[(i + (e.key === 'ArrowRight' ? 1 : -1) + list.length) % list.length]
-                actions.setActiveClipboard(next.id)
-                refs.current.get(next.id)?.focus()
-              } else if (e.key === 'F2' || (e.key === 'Enter' && isActive && e.altKey)) {
-                e.preventDefault(); ops.startRename(cb.id)
-              } else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
-                e.preventDefault(); openMenuAt(e.currentTarget, clipboardMenu(cb, consultation))
-              } else if (e.key === 'ArrowDown') {
-                e.preventDefault(); ops.focusPanel()
-              }
-            }}
-            onDragOver={e => {
-              const k = dragKind(e)
-              if (!k) return
-              e.preventDefault()
-              e.dataTransfer.dropEffect = k === 'rubrics' || copyModifier(e) ? 'copy' : 'move'
-              if (dropId !== cb.id) setDropId(cb.id)
-            }}
-            onDragLeave={() => setDropId(d => (d === cb.id ? null : d))}
-            onDrop={e => onDrop(e, cb)}
-          >
-            <span className="cbp-chip-num">{i + 1}</span>
-            {renamingId === cb.id ? <RenameInput cb={cb} /> : <span className="cbp-chip-name">{cb.name}</span>}
-            <span className="cbp-chip-count" aria-label={`${cb.symptoms.length} symptoms`}>{cb.symptoms.length}</span>
-          </button>
-        )
-      })}
-      <button className="icon-btn cbp-chip-add" title="New clipboard" aria-label="New clipboard" disabled={consultation.clipboards.length >= MAX_CLIPBOARDS} onClick={ops.newClipboard}><Plus size={14} /></button>
-      <span className="cbp-grow" />
-      <button ref={more} className="icon-btn" title="Clipboard actions" aria-label="Clipboard actions" aria-haspopup="menu" onClick={() => more.current && openMenuAt(more.current, clipboardMenu(active, consultation))}>
-        <MoreHorizontal size={15} />
-      </button>
+                e.dataTransfer.dropEffect = k === 'rubrics' || copyModifier(e) ? 'copy' : 'move'
+                if (dropId !== cb.id) setDropId(cb.id)
+              }}
+              onDragLeave={() => setDropId(d => (d === cb.id ? null : d))}
+              onDrop={e => onDrop(e, cb)}
+            >
+              <span className="cbp-chip-num">{i + 1}</span>
+              {renamingId === cb.id ? <RenameInput cb={cb} /> : showName && <span className="cbp-chip-name">{cb.name}</span>}
+              <span className="cbp-chip-count" aria-hidden="true">{n}</span>
+            </button>
+          )
+        })}
+      </div>
+      <div className="cbp-chip-actions">
+        <button className="icon-btn cbp-chip-add" title="New clipboard" aria-label="New clipboard" disabled={consultation.clipboards.length >= MAX_CLIPBOARDS} onClick={ops.newClipboard}><Plus size={14} /></button>
+        <button ref={more} className="icon-btn" title="Clipboard actions" aria-label="Clipboard actions" aria-haspopup="menu" onClick={() => more.current && openMenuAt(more.current, clipboardMenu(active, consultation))}>
+          <MoreHorizontal size={15} />
+        </button>
+      </div>
     </div>
   )
 }
@@ -285,12 +317,12 @@ function symptomMenu(consultation: Consultation, clipboard: Clipboard): MenuItem
     ? others.map(c => ({ label: `${consultation.clipboards.indexOf(c) + 1}. ${c.name}`, run: () => ops.transferSelected(c.id, copy) }))
     : [{ label: 'No other clipboards', disabled: true }]
   return [
-    { label: 'Change intensity', submenu: [0, 1, 2, 3, 4].map(w => ({ command: `symptom.weight.${w}` })) },
+    { label: 'Change intensity', submenu: [0, 1, 2, 3, 4].map(w => ({ command: `symptom.weight.${w}`, label: w === 0 ? '0 – ignore' : w === 4 ? '4 – strongest' : String(w) })) },
     { label: 'Qualification', submenu: [{ command: 'symptom.eliminatory' }, { command: 'symptom.exclusive' }, { command: 'symptom.causal' }] },
     {
       label: 'Group', submenu: [
-        ...letters.map(l => ({ label: `Group ${l}`, keys: 'G', checked: sel.length > 0 && sel.every(s => s.group === l), run: () => ops.setGroup(l) })),
-        { label: 'Other letter…', run: ops.startGroupPrompt },
+        ...letters.map(l => ({ label: `Group ${l}`, checked: sel.length > 0 && sel.every(s => s.group === l), run: () => ops.setGroup(l) })),
+        { command: 'symptom.group', label: 'Other letter…' },
         { type: 'separator' as const },
         { command: 'symptom.ungroup', label: 'No group' },
       ],
@@ -324,7 +356,7 @@ function SymptomList({ clipboard, consultation, openMenu, openMenuAt }: { clipbo
   const order = useMemo(() => symptoms.map(s => s.id), [symptoms])
   const selected = useMemo(() => new Set(selectedIds), [selectedIds])
   const reps = useMemo(() => symptoms.flatMap(s => s.rubrics.map(r => parseRubricRef(r).repertory)), [symptoms])
-  const { failed } = useRepertoriesReady(catalog, reps)
+  const { ready, failed } = useRepertoriesReady(catalog, reps)
   const cursorIndex = cursorId ? order.indexOf(cursorId) : -1
 
   // keep keyboard focus on the cursor row
@@ -466,6 +498,33 @@ function SymptomList({ clipboard, consultation, openMenu, openMenuAt }: { clipbo
     ops.setPanelUi({ cursorId: added[0], anchorId: added[0] })
   }
 
+  // Rows are memoised: they get one stable handler object whose methods always call the latest closures.
+  const latest = useRef<RowHandlers>(null as unknown as RowHandlers)
+  latest.current = {
+    click: (e, s) => onRowClick(e, s.id),
+    doubleClick: s => ops.openRubric(s.rubrics[0]),
+    contextMenu: (e, s) => {
+      if (!selected.has(s.id)) { actions.setSelectedSymptoms([s.id]); ops.setPanelUi({ cursorId: s.id, anchorId: s.id }) }
+      else ops.setPanelUi({ cursorId: s.id })
+      openMenu(e, symptomMenu(consultation, clipboard))
+    },
+    focus: s => { if (ops.usePanelUi.getState().cursorId !== s.id) ops.setPanelUi({ cursorId: s.id }) },
+    dragStart: (e, s) => onDragStart(e, s),
+    dragOver: (e, s) => onDragOverRow(e, s.id),
+    dragEnd: () => setDrop(null),
+    weight: (s, w) => actions.updateSymptom(clipboard.id, s.id, { weight: w }),
+  }
+  const rowHandlers = useMemo((): RowHandlers => ({
+    click: (e, s) => latest.current.click(e, s),
+    doubleClick: s => latest.current.doubleClick(s),
+    contextMenu: (e, s) => latest.current.contextMenu(e, s),
+    focus: s => latest.current.focus(s),
+    dragStart: (e, s) => latest.current.dragStart(e, s),
+    dragOver: (e, s) => latest.current.dragOver(e, s),
+    dragEnd: () => latest.current.dragEnd(),
+    weight: (s, w) => latest.current.weight(s, w),
+  }), [])
+
   return (
     <div
       ref={listRef}
@@ -488,6 +547,7 @@ function SymptomList({ clipboard, consultation, openMenu, openMenuAt }: { clipbo
         <SymptomRow
           key={s.id}
           catalog={catalog}
+          ready={ready}
           symptom={s}
           index={i}
           defaultRep={defaultRep}
@@ -496,18 +556,7 @@ function SymptomList({ clipboard, consultation, openMenu, openMenuAt }: { clipbo
           tabbable={cursorIndex >= 0 ? s.id === cursorId : i === 0}
           dropBefore={drop?.id === s.id && !drop.after}
           dropAfter={drop?.id === s.id && drop.after}
-          onClick={e => onRowClick(e, s.id)}
-          onDoubleClick={() => ops.openRubric(s.rubrics[0])}
-          onContextMenu={e => {
-            if (!selected.has(s.id)) { actions.setSelectedSymptoms([s.id]); ops.setPanelUi({ cursorId: s.id, anchorId: s.id }) }
-            else ops.setPanelUi({ cursorId: s.id })
-            openMenu(e, symptomMenu(consultation, clipboard))
-          }}
-          onFocus={() => { if (cursorId !== s.id) ops.setPanelUi({ cursorId: s.id }) }}
-          onDragStart={e => onDragStart(e, s)}
-          onDragOver={e => onDragOverRow(e, s.id)}
-          onDragEnd={() => setDrop(null)}
-          onWeight={w => actions.updateSymptom(clipboard.id, s.id, { weight: w })}
+          h={rowHandlers}
         />
       ))}
     </div>
@@ -529,8 +578,21 @@ function EmptyClipboard({ name }: { name: string }) {
   )
 }
 
+interface RowHandlers {
+  click: (e: ReactMouseEvent, s: Symptom) => void
+  doubleClick: (s: Symptom) => void
+  contextMenu: (e: ReactMouseEvent, s: Symptom) => void
+  focus: (s: Symptom) => void
+  dragStart: (e: DragEvent, s: Symptom) => void
+  dragOver: (e: DragEvent, s: Symptom) => void
+  dragEnd: () => void
+  weight: (s: Symptom, w: Weight) => void
+}
+
 interface RowProps {
   catalog: Catalog
+  /** Number of loaded repertories: labels are recomputed when one arrives. */
+  ready: number
   symptom: Symptom
   index: number
   defaultRep: string
@@ -539,48 +601,44 @@ interface RowProps {
   tabbable: boolean
   dropBefore: boolean
   dropAfter: boolean
-  onClick: (e: ReactMouseEvent) => void
-  onDoubleClick: () => void
-  onContextMenu: (e: ReactMouseEvent) => void
-  onFocus: () => void
-  onDragStart: (e: DragEvent) => void
-  onDragOver: (e: DragEvent) => void
-  onDragEnd: () => void
-  onWeight: (w: Weight) => void
+  h: RowHandlers
 }
 
-function SymptomRow(p: RowProps) {
+/** Memoised: moving the cursor re-renders only the rows whose selection/cursor state changed. */
+const SymptomRow = memo(function SymptomRow(p: RowProps) {
   const s = p.symptom
   const combined = s.rubrics.length > 1
-  const labels = s.rubrics.map(r => rubricLabel(p.catalog, r))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const labels = useMemo(() => s.rubrics.map(r => rubricLabel(p.catalog, r)), [p.catalog, s.rubrics, p.ready])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const size = useMemo(() => ops.symptomSize(s), [s.rubrics, s.combine, p.ready])
   const head = labels[0]
-  const size = ops.symptomSize(s)
   const reps = [...new Set(labels.map(l => l.repertory))].filter(r => r !== p.defaultRep)
   const op = s.combine === 'union' ? '∪' : '∩'
   const full = combined ? labels.map(l => l.full).join(` ${op} `) : head.full
   const flags = [s.eliminatory && 'eliminative', s.exclusive && 'excluding', s.causal && 'causal', s.group && `group ${s.group}`].filter(Boolean).join(', ')
+  const h = p.h
 
   return (
     <div
       role="option"
       aria-selected={p.selected}
-      aria-label={`${p.index + 1}. ${full}, intensity ${s.weight}${flags ? `, ${flags}` : ''}`}
+      aria-label={`${p.index + 1}. ${full}, intensity ${s.weight}${s.weight === 0 ? ' (ignored)' : ''}${flags ? `, ${flags}` : ''}${size !== null ? `, ${size} remedies` : ''}${s.note ? `, note: ${s.note}` : ''}`}
       data-sid={s.id}
       tabIndex={p.tabbable ? 0 : -1}
       className={`cbp-row${p.selected ? ' sel' : ''}${p.cursor ? ' cursor' : ''}${s.weight === 0 ? ' ignored' : ''}${p.dropBefore ? ' drop-before' : ''}${p.dropAfter ? ' drop-after' : ''}`}
       draggable
-      onClick={p.onClick}
-      onDoubleClick={p.onDoubleClick}
-      onContextMenu={p.onContextMenu}
-      onFocus={p.onFocus}
-      onDragStart={p.onDragStart}
-      onDragOver={p.onDragOver}
-      onDragEnd={p.onDragEnd}
-      title={full + (s.note ? `\n\nNote: ${s.note}` : '')}
+      onClick={e => h.click(e, s)}
+      onDoubleClick={() => h.doubleClick(s)}
+      onContextMenu={e => h.contextMenu(e, s)}
+      onFocus={() => h.focus(s)}
+      onDragStart={e => h.dragStart(e, s)}
+      onDragOver={e => h.dragOver(e, s)}
+      onDragEnd={h.dragEnd}
     >
       <span className="cbp-idx">{p.index + 1}</span>
-      <Intensity weight={s.weight} onChange={p.onWeight} />
-      <div className="cbp-text">
+      <Intensity weight={s.weight} onChange={w => h.weight(s, w)} />
+      <div className="cbp-text" title={full}>
         {combined ? (
           <>
             <div className="cbp-combined-head">
@@ -604,12 +662,17 @@ function SymptomRow(p: RowProps) {
         {s.exclusive && <span className="cbp-flag f-x" title="Excluding: remedies in this symptom are removed from the result">X</span>}
         {s.causal && <span className="cbp-flag f-c" title="Causal symptom (causation / never well since)">C</span>}
         {s.group && <span className="cbp-flag f-g" title={`Group ${s.group}: calculated together with the other symptoms of this group`}>{s.group}</span>}
-        {s.note && <span className="cbp-note" title={s.note} aria-label={`Note: ${s.note}`}><StickyNote size={12} /></span>}
+        {s.note && (
+          <span className="cbp-note" aria-hidden="true">
+            <StickyNote size={12} />
+            <span className="cbp-note-tip" role="tooltip">{s.note}</span>
+          </span>
+        )}
         <span className="cbp-size" title={size === null ? 'Loading…' : `${size} remedies`}>{size ?? '…'}</span>
       </div>
     </div>
   )
-}
+})
 
 function RubricText({ l }: { l: ReturnType<typeof rubricLabel> }) {
   if (!l.loaded) return <span className="cbp-loading">{l.full}</span>
@@ -619,7 +682,7 @@ function RubricText({ l }: { l: ReturnType<typeof rubricLabel> }) {
 /** Compact 0–4 intensity control: four ascending bars; click a bar to set, click the only lit bar again for 0. */
 function Intensity({ weight, onChange }: { weight: Weight; onChange: (w: Weight) => void }) {
   return (
-    <span className={`cbp-int w${weight}`} role="group" aria-label={`Intensity ${weight}`} title={`Intensity ${weight}${weight === 0 ? ' (ignored in analysis)' : ''} · keys 0–4`}>
+    <span className={`cbp-int w${weight}`} aria-hidden="true" data-weight={weight} title={`Intensity ${weight}${weight === 0 ? ' (ignored in analysis)' : ''} · click a bar or press 0–4`}>
       {([1, 2, 3, 4] as const).map(n => (
         <span
           key={n}
@@ -635,8 +698,14 @@ function Intensity({ weight, onChange }: { weight: Weight; onChange: (w: Weight)
 
 // ───────────────────────── footer ─────────────────────────
 
-function Footer({ clipboard }: { clipboard: Clipboard }) {
-  const selected = useApp(s => s.selectedSymptomIds.filter(id => clipboard.symptoms.some(x => x.id === id)).length)
+function Footer({ clipboard, consultation }: { clipboard: Clipboard; consultation: Consultation }) {
+  const selectedIds = useApp(s => s.selectedSymptomIds)
+  const selected = useMemo(() => { const ids = new Set(selectedIds); return clipboard.symptoms.reduce((n, x) => n + (ids.has(x.id) ? 1 : 0), 0) }, [selectedIds, clipboard.symptoms])
+  const inAnalysis = consultation.clipboards.filter(cb => consultation.analysis.clipboardIds.includes(cb.id))
+  const nothingToAnalyse = !inAnalysis.some(cb => cb.symptoms.some(x => x.weight > 0))
+  const why = !inAnalysis.length ? 'No clipboard is included in the analysis (Ctrl+click a clipboard tab to include it)'
+    : inAnalysis.every(cb => !cb.symptoms.length) ? 'The clipboards in the analysis have no symptoms yet: take rubrics first'
+    : 'Every symptom in the analysed clipboards has intensity 0 (ignored)'
   const groupPending = ops.usePanelUi(s => s.groupPending)
   const stats = clipboardStats(clipboard.symptoms)
   const analyse = getCommand('analysis.open')
@@ -652,7 +721,7 @@ function Footer({ clipboard }: { clipboard: Clipboard }) {
         </span>
       )}
       <span className="cbp-grow" />
-      <button className="btn btn-sm btn-primary" disabled={!analyse || !isEnabled(analyse)} onClick={() => runCommand('analysis.open')} title="Analyse the case (F8)">
+      <button className="btn btn-sm btn-primary" aria-disabled={nothingToAnalyse || undefined} disabled={!analyse || !isEnabled(analyse)} onClick={() => { if (!nothingToAnalyse) runCommand('analysis.open') }} title={nothingToAnalyse ? why : 'Analyse the case (F8)'}>
         <BarChart3 size={13} />Analyse <span className="cbp-key">F8</span>
       </button>
     </footer>

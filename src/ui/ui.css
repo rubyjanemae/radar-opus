@@ -7,8 +7,8 @@
 .btn:hover:not(:disabled) { background: var(--bg-hover); }
 .btn:active:not(:disabled) { background: var(--bg-active); }
 .btn:disabled { opacity: .5; }
-.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn-primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
+.btn-primary { background: var(--accent-fill, var(--accent)); border-color: var(--accent-fill, var(--accent)); color: var(--on-accent, #fff); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-fill-2, var(--accent-2)); border-color: var(--accent-fill-2, var(--accent-2)); }
 .btn-danger { color: var(--danger); }
 .btn-ghost { border-color: transparent; background: transparent; }
 .btn-sm { height: 22px; padding: 0 7px; font-size: var(--fs-xs); }
@@ -35,6 +35,7 @@
   position: fixed; z-index: 1000; min-width: 220px; max-width: 360px; padding: 4px;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 7px; box-shadow: var(--shadow-2);
   font-size: var(--fs-sm); outline: none; animation: pop .09s ease-out;
+  max-height: calc(100vh - 8px); overflow-y: auto; overscroll-behavior: contain;
 }
 @keyframes pop { from { opacity: 0; transform: translateY(-3px) scale(.99); } }
 .menu-item {

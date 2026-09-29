@@ -25,6 +25,15 @@ export function RubricPath({ parts, hit, skip = 0 }: { parts: string[]; hit: ((n
   )
 }
 
+/** Mouse-enter handler: show the full text as a tooltip only when the element is truncated. */
+export function titleIfTruncated(full: string | (() => string)) {
+  return (e: React.MouseEvent<HTMLElement>) => {
+    const el = e.currentTarget
+    if (el.scrollWidth > el.clientWidth + 1) el.title = typeof full === 'function' ? full() : full
+    else el.removeAttribute('title')
+  }
+}
+
 /** Autocomplete for a remedy by abbreviation or name. */
 export function RemedyPicker({ value, onChange, autoFocus, id }: { value: number | null; onChange: (id: number | null) => void; autoFocus?: boolean; id?: string }) {
   const catalog = useCatalog()
@@ -67,6 +76,11 @@ export function RemedyPicker({ value, onChange, autoFocus, id }: { value: number
           else if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); setOpen(false) }
         }}
       />
+      {open && q.trim() && matches.length === 0 && (
+        <div className="srch-rp-pop" role="status" aria-live="polite">
+          <div className="srch-rp-none">No remedy matches “{q.trim()}”</div>
+        </div>
+      )}
       {open && matches.length > 0 && (
         <div className="srch-rp-pop" role="listbox" id={listId} aria-label="Remedies">
           {matches.map((m, i) => (
@@ -77,7 +91,7 @@ export function RemedyPicker({ value, onChange, autoFocus, id }: { value: number
               aria-selected={i === active}
               className={`srch-rp-opt${i === active ? ' active' : ''}`}
               onMouseDown={e => { e.preventDefault(); pick(m.remedy.id) }}
-              onMouseEnter={() => setActive(i)}
+              onMouseMove={() => { if (i !== active) setActive(i) }}
             >
               <b>{m.remedy.abbrev}</b>
               <span>{m.remedy.name}</span>

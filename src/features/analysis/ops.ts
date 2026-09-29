@@ -47,6 +47,23 @@ export function setOptions(patch: Partial<AnalysisOptions>, consultationId = tar
   if (consultationId) actions.setAnalysis(consultationId, patch)
 }
 
+/* Reveal requests: a remedy to select, pin (when beyond the limit), scroll to and focus in an analysis tab. */
+const pendingReveal = new Map<string, number>()
+const revealListeners = new Set<(tabId: string, remedyId: number) => void>()
+export function requestReveal(tabId: string, remedyId: number) {
+  pendingReveal.set(tabId, remedyId)
+  revealListeners.forEach(fn => fn(tabId, remedyId))
+}
+export function takeReveal(tabId: string): number | undefined {
+  const r = pendingReveal.get(tabId)
+  pendingReveal.delete(tabId)
+  return r
+}
+export function onReveal(fn: (tabId: string, remedyId: number) => void) {
+  revealListeners.add(fn)
+  return () => { revealListeners.delete(fn) }
+}
+
 export function openAnalysis(remedy?: number) {
   const id = targetConsultationId()
   if (!id) {
@@ -56,8 +73,18 @@ export function openAnalysis(remedy?: number) {
   actions.openTab({ kind: 'analysis', consultationId: id })
   if (remedy !== undefined) {
     const t = activeAnalysisTab()
-    if (t) actions.updateTab<AnalysisTab>(t.id, { remedy })
+    if (t) requestReveal(t.id, remedy)
   }
+}
+
+/** Remedy box / external jumps: select the remedy and append it as a pinned column when it is not shown. */
+export function pinAndSelect(tab: AnalysisTab, remedyId: number) {
+  const pinned = [...(tab.pinnedRemedies ?? []).filter(x => x !== remedyId), remedyId].slice(-5)
+  actions.updateTab<AnalysisTab>(tab.id, { remedy: remedyId, pinnedRemedies: pinned })
+}
+
+export function unpin(tab: AnalysisTab, remedyId?: number) {
+  actions.updateTab<AnalysisTab>(tab.id, { pinnedRemedies: remedyId === undefined ? null : (tab.pinnedRemedies ?? []).filter(x => x !== remedyId) })
 }
 
 export function setStrategy(strategy: StrategyId) { setOptions({ strategy }) }
@@ -81,11 +108,22 @@ export function hasFilter(o: AnalysisOptions | null = targetOptions()): boolean 
   return !!o && (o.remedyFilter !== null || o.excludedRemedies.length > 0 || (o.highlight?.length ?? 0) > 0 || o.minCoverage > 0)
 }
 
+/** Family filter dialog kind, when the families feature registered one. */
+export function familyFilterDialog(): string | null {
+  return FAMILY_FILTER_DIALOGS.find(k => getDialog(k)) ?? null
+}
+
+/** analysis.filter: the family filter when available, else the remedy picker. */
 export function openFilter() {
   const id = targetConsultationId()
   if (!id) return
-  const family = FAMILY_FILTER_DIALOGS.find(k => getDialog(k))
-  actions.openDialog(family ?? REMEDY_FILTER_DIALOG, { consultationId: id })
+  actions.openDialog(familyFilterDialog() ?? REMEDY_FILTER_DIALOG, { consultationId: id })
+}
+
+/** analysis.remedies: the analysis's own include / exclude / highlight picker with minimum coverage. */
+export function openRemedyFilter() {
+  const id = targetConsultationId()
+  if (id) actions.openDialog(REMEDY_FILTER_DIALOG, { consultationId: id })
 }
 
 export function clearFilter() {
