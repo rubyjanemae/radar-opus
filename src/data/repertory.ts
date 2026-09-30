@@ -13,7 +13,10 @@ export class Repertory {
   private readonly firstChild: Int32Array
   private readonly nextSibling: Int32Array
   private readonly childCount: Int32Array
+  private readonly syntheticSet: ReadonlySet<number>
   private lowerPaths: string[] | null = null
+  private lowerPathsPartial: string[] | null = null
+  private lowerPathsNext = 0
 
   constructor(info: RepertoryInfo, file: RepertoryFile) {
     this.info = info
@@ -25,6 +28,7 @@ export class Repertory {
     this.firstChild = new Int32Array(n).fill(-1)
     this.nextSibling = new Int32Array(n).fill(-1)
     this.childCount = new Int32Array(n)
+    this.syntheticSet = new Set(file.synthetic ?? [])
     const lastChild = new Int32Array(n).fill(-1)
     for (let i = 0; i < n; i++) {
       const p = file.parent[i]
@@ -53,6 +57,10 @@ export class Repertory {
   subtreeEndOf(i: number) { return this.subtreeEnd[i] }
   childCountOf(i: number) { return this.childCount[i] }
   remedyCount(i: number) { return this.file.offsets[i + 1] - this.file.offsets[i] }
+  /** A heading the build created for a missing intermediate path (groups sub-rubrics, lists no remedies). */
+  isSynthetic(i: number) { return this.syntheticSet.has(i) }
+  /** Rubrics of the source (synthetic headings excluded), as listed in the repertory info. */
+  get sourceRubricCount() { return this.info.rubricCount }
 
   children(i: number): number[] {
     const out: number[] = []
@@ -79,6 +87,14 @@ export class Repertory {
     return out
   }
 
+  /**
+   * The raw remedy columns: rubric i owns data[offsets[i] .. offsets[i+1]), each value
+   * remedyId * 4 + (grade - 1). For tight loops over the whole book (indexes); read-only.
+   */
+  rawEntries(): { readonly offsets: ArrayLike<number>; readonly data: ArrayLike<number> } {
+    return { offsets: this.file.offsets, data: this.file.data }
+  }
+
   /** Iterate raw entries without allocation. */
   forEachRemedy(i: number, fn: (remedyId: number, grade: Grade) => void) {
     const { offsets, data } = this.file
@@ -91,16 +107,36 @@ export class Repertory {
     return 0
   }
 
-  /** Lower-cased full paths, built lazily for search. */
+  /**
+   * Lower-cased full paths ("mind, fear, death, of"), the QuickFind index. Built in idle time
+   * after load (see Catalog), or synchronously on first use if the idle build has not finished.
+   */
   lowerPath(i: number): string {
-    if (!this.lowerPaths) {
-      const lp: string[] = new Array(this.size)
-      for (let k = 0; k < this.size; k++) {
-        const p = this.file.parent[k]
-        lp[k] = (p >= 0 ? lp[p] + ', ' : '') + this.file.text[k].toLowerCase()
+    if (!this.lowerPaths) this.buildLowerPaths()
+    return this.lowerPaths![i]
+  }
+
+  get lowerPathsReady(): boolean { return this.lowerPaths !== null }
+
+  /**
+   * Build the lower-cased paths, at most until `deadline()` says stop; returns true when done.
+   * Parents precede their children, so a partial build resumes where it stopped.
+   */
+  buildLowerPaths(deadline?: () => boolean): boolean {
+    if (this.lowerPaths) return true
+    const lp = (this.lowerPathsPartial ??= new Array<string>(this.size))
+    const { parent, text } = this.file
+    let k = this.lowerPathsNext
+    while (k < this.size) {
+      const end = Math.min(this.size, k + 2048)
+      for (; k < end; k++) {
+        const p = parent[k]
+        lp[k] = (p >= 0 ? lp[p] + ', ' : '') + text[k].toLowerCase()
       }
-      this.lowerPaths = lp
+      if (k < this.size && deadline?.()) { this.lowerPathsNext = k; return false }
     }
-    return this.lowerPaths[i]
+    this.lowerPaths = lp
+    this.lowerPathsPartial = null
+    return true
   }
 }

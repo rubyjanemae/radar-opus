@@ -1,5 +1,5 @@
-import { useMemo, useRef } from 'react'
-import { CalendarPlus, Download, MoreHorizontal, UserX } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { CalendarPlus, ChevronLeft, ChevronRight, Download, MoreHorizontal, UserX } from 'lucide-react'
 import { useCatalog } from '../../data/CatalogContext'
 import { analyze } from '../../engine/analysis'
 import { actions, useApp } from '../../state/store'
@@ -10,7 +10,7 @@ import type { MenuItem } from '../../ui/Menu'
 import { repertoriesOf, useRepertoriesLoaded } from '../analysis/useAnalysis'
 import { sourceFor } from '../analysis/source'
 import { ConsultationEditor } from './ConsultationEditor'
-import { consultationsOf, formatAge, formatDate, formatScoreSigned, ghhosLabel, initials, KIND_LABEL, patientName, relativeDate, SEX_LABEL, symptomCount } from './logic'
+import { analysisFilterNotes, consultationsOf, formatAge, formatDate, formatScoreSigned, ghhosLabel, initials, KIND_LABEL, patientName, relativeDate, SEX_LABEL, symptomCount } from './logic'
 import { PatientDetails } from './PatientDetails'
 import * as ops from './ops'
 import './patients.css'
@@ -28,7 +28,7 @@ export function PatientView({ tab }: { tab: PatientTab }) {
         <strong>This patient no longer exists</strong>
         <span>It was deleted or the workspace was restored from a backup.</span>
         <div className="pt-empty-actions">
-          <button className="btn" onClick={ops.openPatients}>Patients list</button>
+          <button className="btn" onClick={() => ops.openPatients()}>Patients list</button>
           <button className="btn" onClick={() => actions.closeTab(tab.id)}>Close tab</button>
         </div>
       </div>
@@ -109,6 +109,7 @@ function Timeline({ tab, list, selectedId, onMenu, onMenuAt }: {
 }) {
   const catalog = useCatalog()
   const activeId = useApp(s => s.activeConsultationId)
+  const minGrade = useApp(s => s.settings.minGradeShown ?? 1)
   const ref = useRef<HTMLDivElement>(null)
   const reps = useMemo(() => repertoriesOf(list.flatMap(c => c.clipboards)), [list])
   const load = useRepertoriesLoaded(catalog, reps)
@@ -117,11 +118,33 @@ function Timeline({ tab, list, selectedId, onMenu, onMenuAt }: {
     const m = new Map<string, string[]>()
     for (const c of list) {
       if (!symptomCount(c)) continue
-      const res = analyze(src, c.clipboards, { ...c.analysis, limit: 3 })
+      const res = analyze(src, c.clipboards, { ...c.analysis, limit: 3 }, { minGrade })
       m.set(c.id, res.rows.filter(r => !r.excluded).slice(0, 3).map(r => catalog.remedy(r.remedyId).abbrev))
     }
     return m
-  }, [list, catalog, load.version]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [list, catalog, minGrade, load.version]) // eslint-disable-line react-hooks/exhaustive-deps
+  const filterNote = (c: Consultation) => { const n = analysisFilterNotes(c.analysis, id => catalog.remedy(id).abbrev); return n.length ? `: ${n.join(', ')}` : '' }
+  // narrow panes lay the timeline out as a horizontal strip: show where more cards are hidden
+  const [more, setMore] = useState({ left: false, right: false })
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const update = () => {
+      const left = el.scrollLeft > 1, right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+      setMore(m => (m.left === left && m.right === right ? m : { left, right }))
+    }
+    update()
+    el.addEventListener('scroll', update, { passive: true })
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => { el.removeEventListener('scroll', update); ro.disconnect() }
+  }, [list.length])
+  const page = (d: 1 | -1) => {
+    const el = ref.current
+    if (!el) return
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    el.scrollBy({ left: d * el.clientWidth * 0.8, behavior: reduce ? 'auto' : 'smooth' })
+  }
   const index = list.findIndex(c => c.id === selectedId)
   const select = (i: number) => {
     const c = list[Math.max(0, Math.min(list.length - 1, i))]
@@ -131,6 +154,9 @@ function Timeline({ tab, list, selectedId, onMenu, onMenuAt }: {
   }
 
   return (
+    <div className={`pt-tl-wrap${more.left ? ' more-left' : ''}${more.right ? ' more-right' : ''}`}>
+    {more.left && <button className="icon-btn pt-tl-page prev" tabIndex={-1} aria-label="Show earlier cards" title="Scroll back" onClick={() => page(-1)}><ChevronLeft size={16} /></button>}
+    {more.right && <button className="icon-btn pt-tl-page next" tabIndex={-1} aria-label="Show more consultations" title={`More consultations (${list.length} in all)`} onClick={() => page(1)}><ChevronRight size={16} /></button>}
     <div
       ref={ref} className="pt-timeline" role="listbox" aria-label="Consultations" tabIndex={0}
       aria-activedescendant={selectedId ? `pt-c-${selectedId}` : undefined}
@@ -175,12 +201,13 @@ function Timeline({ tab, list, selectedId, onMenu, onMenuAt }: {
                 {c.response?.score != null && <span className={`pt-tl-resp ${c.response.score > 0 ? 'pos' : c.response.score < 0 ? 'neg' : 'zero'}`} title={`Response to the previous remedy: ${ghhosLabel(c.response.score)}`}>{formatScoreSigned(c.response.score)}</span>}
                 {c.prescriptions.length > 0 && <span className="pt-tl-rx" title="Prescribed">{c.prescriptions.map(p => `${catalog.remedy(p.remedyId).abbrev} ${p.potency}`).join(', ')}</span>}
               </div>
-              {top && top.length > 0 && <div className="pt-tl-top" title="Top remedies of the analysis">↳ {top.join(' · ')}</div>}
+              {top && top.length > 0 && <div className="pt-tl-top" title={`Top remedies of the analysis${filterNote(c)}`}>↳ {top.join(' · ')}{filterNote(c) && <span className="pt-dim"> (filtered)</span>}</div>}
               <div className="pt-tl-rel">{relativeDate(c.date)}</div>
             </div>
           </div>
         )
       })}
+    </div>
     </div>
   )
 }

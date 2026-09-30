@@ -5,7 +5,7 @@ import { openApp } from './helpers'
 const view = (page: Page) => page.getByTestId('families-view')
 const tree = (page: Page) => view(page).getByRole('tree', { name: 'Remedy families' })
 const search = (page: Page) => view(page).getByLabel('Find families and remedies')
-const RUBRICS = [191, 3774, 7914, 28632, 4559, 73029, 70850, 5739, 25321].map(i => `publicum:${i}`)
+const RUBRICS = [191, 3746, 7862, 28493, 4529, 72742, 70571, 5699, 25192].map(i => `publicum:${i}`)
 
 async function newCase(page: Page) {
   const panel = page.getByTestId('clipboard-panel')
@@ -108,6 +108,8 @@ test('limit and highlight the analysis from the view, and clear them', async ({ 
   await openFamilies(page)
   await view(page).getByRole('button', { name: 'Highlight in analysis', exact: true }).click()
   await expect(view(page).locator('.fam-pill.hl')).toContainText('Highlighting Solanaceae')
+  // the analysis is open in another tab: the toast shows it (not "Open analysis")
+  await expect(page.locator('.toast').last()).toContainText('Show analysis')
   await view(page).getByRole('button', { name: 'Remove family limit' }).click()
   await view(page).getByRole('button', { name: 'Remove family highlight' }).click()
   await expect(view(page).locator('.fam-pill')).toHaveCount(0)
@@ -342,4 +344,42 @@ test('a load error shows a compact retry block', async ({ page }) => {
   fail = false
   await alert.getByRole('button', { name: 'Retry' }).click()
   await expect(tree(page)).toBeVisible()
+})
+
+test('Ctrl+5 puts focus in the view, so Ctrl+F finds in families', async ({ page }) => {
+  await page.keyboard.press('Control+5')
+  await expect(view(page)).toBeVisible()
+  await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('.fam-view'))).toBe(true)
+  await page.keyboard.press('Control+f')
+  await expect(view(page).getByRole('textbox', { name: 'Find families and remedies' })).toBeFocused()
+})
+
+test('search goes to the best hit: the family before its order, with the level shown', async ({ page }) => {
+  await page.keyboard.press('Control+5')
+  const find = view(page).getByRole('textbox', { name: 'Find families and remedies' })
+  await find.fill('solan')
+  await expect(view(page).locator('.fam-row.match .fam-level')).toHaveText(['Order', 'Family'])
+  await find.press('ArrowDown')
+  await expect(view(page).locator('.fam-row.on .fam-name')).toHaveText('Solanaceae')
+})
+
+test('family filter dialog: ArrowDown selects the first row; nothing to remove is disabled', async ({ page }) => {
+  await newCase(page)
+  await openFamilies(page)
+  await selectFamily(page, 'Solanaceae')
+  await view(page).getByRole('button', { name: 'Family filter…' }).click()
+  const dlg = page.getByRole('dialog', { name: 'Family filter' })
+  for (const name of ['Remove limit', 'Remove highlight']) {
+    const b = dlg.getByRole('button', { name })
+    await expect(b).toBeDisabled()
+    await expect(b).toHaveCSS('cursor', 'not-allowed')
+    await expect(b).toHaveCSS('opacity', '0.45')
+  }
+  const find = dlg.getByLabel('Find family')
+  await find.focus()
+  await find.press('ArrowDown')
+  const tree = dlg.locator('.fam-tree')
+  await expect(tree).toBeFocused()
+  const firstRow = tree.getByRole('treeitem').first()
+  await expect(firstRow).toHaveAttribute('id', (await tree.getAttribute('aria-activedescendant'))!)
 })

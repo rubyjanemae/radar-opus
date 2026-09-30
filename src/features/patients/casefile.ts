@@ -1,5 +1,6 @@
 import type { RubricRef } from '../../data/types'
 import type { Weight } from '../../engine/model'
+import { mergeParams, normalizeStrategy } from '../../engine/analysis'
 import { DEFAULT_ANALYSIS } from '../../state/store'
 import { uid } from '../../state/ids'
 import type { Consultation, Patient } from '../../state/patients'
@@ -20,6 +21,8 @@ export interface CaseFile {
   rubrics: Record<RubricRef, string>
   /** Remedy abbreviation for every referenced remedy id (same reason). */
   remedies: Record<string, string>
+  /** Problems parseCaseFile repaired (not written on export), reported after an import. */
+  warnings?: string[]
 }
 
 export interface CaseFileContext {
@@ -72,6 +75,7 @@ export function parseCaseFile(text: string): CaseFile {
   }
   if (!patient.firstName.trim() && !patient.lastName.trim()) throw new CaseFileError('The patient in this file has no name.')
   const list = Array.isArray(raw.consultations) ? raw.consultations : []
+  const unknownStrategies = new Set<string>()
   const consultations: Consultation[] = list.filter(isObj).map((c, i) => {
     const clipboards = (Array.isArray(c.clipboards) ? c.clipboards : []).filter(isObj).map((cb, k) => ({
       id: str(cb.id, `cb${k}`), name: str(cb.name, `Clipboard ${k + 1}`), color: str(cb.color, '#2f6fdb'),
@@ -85,15 +89,22 @@ export function parseCaseFile(text: string): CaseFile {
       })).filter(s => s.rubrics.length),
     }))
     const a = isObj(c.analysis) ? c.analysis : {}
+    const strategy = normalizeStrategy(a.strategy ?? DEFAULT_ANALYSIS.strategy)
+    if (a.strategy !== undefined && strategy !== a.strategy) unknownStrategies.add(String(a.strategy))
     const kind = c.kind === 'first' || c.kind === 'follow-up' || c.kind === 'acute' || c.kind === 'phone' ? c.kind : 'follow-up'
     return {
       id: str(c.id, `c${i}`), patientId: patient.id, date: str(c.date, new Date().toISOString().slice(0, 10)), title: str(c.title, 'Consultation'), kind,
       complaint: str(c.complaint), notes: str(c.notes), assessment: str(c.assessment), clipboards,
       analysis: {
         ...DEFAULT_ANALYSIS, ...(a as object),
+        strategy,
+        minCoverage: Math.max(0, Math.round(num(a.minCoverage, DEFAULT_ANALYSIS.minCoverage))),
+        limit: Math.max(1, Math.round(num(a.limit, DEFAULT_ANALYSIS.limit))),
+        ...(a.params !== undefined ? { params: mergeParams(a.params) } : {}),
         clipboardIds: Array.isArray(a.clipboardIds) ? a.clipboardIds.filter((x): x is string => typeof x === 'string') : clipboards.map(cb => cb.id),
         excludedRemedies: Array.isArray(a.excludedRemedies) ? a.excludedRemedies.filter((x): x is number => typeof x === 'number') : [],
         remedyFilter: Array.isArray(a.remedyFilter) ? a.remedyFilter.filter((x): x is number => typeof x === 'number') : null,
+        highlight: Array.isArray(a.highlight) ? a.highlight.filter((x): x is number => typeof x === 'number') : null,
       },
       prescriptions: (Array.isArray(c.prescriptions) ? c.prescriptions : []).filter(isObj).filter(rx => typeof rx.remedyId === 'number').map(rx => ({
         id: str(rx.id, 'rx'), remedyId: rx.remedyId as number, potency: str(rx.potency), dosage: str(rx.dosage), date: str(rx.date), note: str(rx.note),
@@ -106,7 +117,14 @@ export function parseCaseFile(text: string): CaseFile {
   if (isObj(raw.rubrics)) for (const [k, v] of Object.entries(raw.rubrics)) if (typeof v === 'string') rubrics[k] = v
   const remedies: Record<string, string> = {}
   if (isObj(raw.remedies)) for (const [k, v] of Object.entries(raw.remedies)) if (typeof v === 'string') remedies[k] = v
-  return { format: CASE_FORMAT, version: CASE_VERSION, exportedAt: str(raw.exportedAt), app: str(raw.app), patient, consultations, rubrics, remedies }
+  const warnings: string[] = []
+  if (unknownStrategies.size) {
+    warnings.push(`unknown analysis strategy ${[...unknownStrategies].map(x => `"${x}"`).join(', ')} replaced by the default`)
+  }
+  return {
+    format: CASE_FORMAT, version: CASE_VERSION, exportedAt: str(raw.exportedAt), app: str(raw.app), patient, consultations, rubrics, remedies,
+    ...(warnings.length ? { warnings } : {}),
+  }
 }
 
 export interface ImportContext {
@@ -118,26 +136,60 @@ export interface ImportContext {
   remedyByAbbrev: (abbrev: string) => number | undefined
   remedyAbbrev: (id: number) => string
   existing: Patient[]
+  /** Consultations already on file (merge skips the ones the case file already brought in). */
+  existingConsultations?: Consultation[]
 }
 
+/**
+ * How an import treats a patient that is already on file:
+ * - `new`: a separate record (fresh ids), the existing patient stays as it is;
+ * - `replace`: the existing record takes the file's personal data and consultations (its old consultations go);
+ * - `merge`: the existing record keeps its data and gains the file's consultations it does not have yet.
+ */
+export type ImportMode = 'new' | 'replace' | 'merge'
+
 export interface ImportResult {
+  mode: ImportMode
   patient: Patient
+  /** Consultations to insert. */
   consultations: Consultation[]
+  /** Consultations of the existing patient that a replace removes. */
+  replaces: string[]
+  /** Consultations a merge skipped because the patient already has them. */
+  skipped: number
   /** Refs whose path changed and were re-resolved. */
   remapped: number
   /** Refs that could not be verified (repertory missing or path no longer found). */
   unresolved: number
-  /** A patient with the same name and birth date already existed. */
+  /** The patient on file that matches the case file (same id, or same name and birth date). */
   duplicateOf: Patient | null
 }
 
+const fold = (s: string) => s.trim().toLowerCase()
+
+/** The patient on file that a case file describes: the same record (id), or the same person (name and birth date). */
+export function findExistingPatient(file: Pick<CaseFile, 'patient'>, existing: Patient[]): { patient: Patient; by: 'id' | 'person' } | null {
+  const same = existing.find(p => p.id === file.patient.id)
+  if (same) return { patient: same, by: 'id' }
+  const person = existing.find(p =>
+    fold(p.firstName) === fold(file.patient.firstName) && fold(p.lastName) === fold(file.patient.lastName) &&
+    (p.birthDate ?? '') === (file.patient.birthDate ?? ''))
+  return person ? { patient: person, by: 'person' } : null
+}
+
+/** Whether a consultation from a case file is already among `have` (same record, or same visit recorded at the same moment). */
+function alreadyHave(c: Consultation, have: Consultation[]): boolean {
+  return have.some(h => h.id === c.id || (h.date === c.date && h.createdAt === c.createdAt && fold(h.title) === fold(c.title)))
+}
+
 /**
- * Turn a parsed case file into new records: every id is fresh (patient, consultations,
- * clipboards, symptoms, prescriptions), so importing never overwrites existing data.
- * Rubric refs are checked against the recorded paths and re-resolved when the repertory
- * data moved; remedy ids are checked against recorded abbreviations.
+ * Turn a parsed case file into records. Every consultation, clipboard, symptom and prescription
+ * gets a fresh id. The patient is a new record (`new`), or the existing one for `replace` and
+ * `merge`. Rubric refs are checked against the recorded paths and re-resolved when the
+ * repertory data moved; remedy ids (prescriptions, exclusions, family limit and highlight) are
+ * checked against the recorded abbreviations.
  */
-export function importCaseFile(file: CaseFile, ctx: ImportContext, now = Date.now()): ImportResult {
+export function importCaseFile(file: CaseFile, ctx: ImportContext, now = Date.now(), mode: ImportMode = 'new'): ImportResult {
   let remapped = 0, unresolved = 0
   const refMap = new Map<string, string>()
   const mapRef = (ref: RubricRef): RubricRef => {
@@ -162,21 +214,27 @@ export function importCaseFile(file: CaseFile, ctx: ImportContext, now = Date.no
     if (!ab || ctx.remedyAbbrev(id).toLowerCase() === ab.toLowerCase()) return id
     return ctx.remedyByAbbrev(ab) ?? id
   }
-  const duplicateOf = ctx.existing.find(p =>
-    p.firstName.trim().toLowerCase() === file.patient.firstName.trim().toLowerCase() &&
-    p.lastName.trim().toLowerCase() === file.patient.lastName.trim().toLowerCase() &&
-    (p.birthDate ?? '') === (file.patient.birthDate ?? '')) ?? null
-  const patient: Patient = {
-    ...file.patient, id: uid('p'), tags: [...new Set([...file.patient.tags, 'imported'])],
-    lastName: duplicateOf ? `${file.patient.lastName} (imported)` : file.patient.lastName, updatedAt: now,
+  const match = findExistingPatient(file, ctx.existing)
+  const duplicateOf = match?.patient ?? null
+  const target = mode !== 'new' ? duplicateOf : null
+  if (mode !== 'new' && !target) mode = 'new'
+
+  let patient: Patient
+  if (target && mode === 'replace') {
+    patient = { ...file.patient, id: target.id, createdAt: target.createdAt, tags: [...file.patient.tags], updatedAt: now }
+  } else if (target) {
+    patient = target
+  } else {
+    patient = { ...file.patient, id: uid('p'), tags: [...new Set([...file.patient.tags, 'imported'])], updatedAt: now }
   }
-  const consultations = file.consultations.map(c => {
-    const copy = copyConsultation(c, patient.id, mapRef)
-    copy.prescriptions = copy.prescriptions.map(rx => ({ ...rx, remedyId: mapRemedy(rx.remedyId) }))
-    copy.analysis.excludedRemedies = copy.analysis.excludedRemedies.map(mapRemedy)
-    return copy
-  })
-  return { patient, consultations, remapped, unresolved, duplicateOf }
+  const have = target ? (ctx.existingConsultations ?? []).filter(c => c.patientId === target.id) : []
+  let skipped = 0
+  const source = mode === 'merge' ? file.consultations.filter(c => (alreadyHave(c, have) ? (skipped++, false) : true)) : file.consultations
+  const consultations = source.map(c => copyConsultation(c, patient.id, { remapRef: mapRef, remapRemedy: mapRemedy, keepAddedAt: true }))
+  return {
+    mode, patient, consultations, replaces: mode === 'replace' ? have.map(c => c.id) : [], skipped,
+    remapped, unresolved, duplicateOf,
+  }
 }
 
 function responseScore(v: unknown): number | null {

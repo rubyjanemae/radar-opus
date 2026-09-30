@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import { BarChart3, ChevronDown, ClipboardList, MoreHorizontal, Plus, StickyNote, UserPlus, Users, AlertTriangle } from 'lucide-react'
-import { useCatalog } from '../../data/CatalogContext'
+import { useCatalog, useRepertories } from '../../data/CatalogContext'
 import type { Catalog } from '../../data/catalog'
 import { formatKeys, getCommand, isEnabled, onCommandsChanged, runCommand } from '../../commands/registry'
 import type { Clipboard, Symptom, Weight } from '../../engine/model'
@@ -9,9 +9,15 @@ import type { Consultation } from '../../state/patients'
 import { actions, useApp, selectActiveConsultation, selectActiveClipboard, CLIPBOARD_COLORS, MAX_CLIPBOARDS } from '../../state/store'
 import { MenuList, useContextMenu } from '../../ui/Menu'
 import type { MenuItem } from '../../ui/Menu'
-import { RUBRIC_MIME, SORT_LABELS, SYMPTOM_MIME, clickSelect, clipboardStats, moveIdsBefore, parseRubricDrop, parseRubricRef } from './logic'
+import { parseRef } from '../../data/catalog'
+import { onColor } from '../../shell/color'
+import { formatDate, patientName } from '../patients/logic'
+import { DEFAULT_TAKE } from '../repertory/take'
+import { takeRefs } from '../repertory/ops'
+import { RUBRIC_MIME, SORT_LABELS, SYMPTOM_MIME, clickSelect, clipboardStats, moveIdsBefore, parseRubricDrop } from './logic'
 import type { SortMode, SymptomDragPayload } from './logic'
-import { rubricLabel, useRepertoriesReady } from './labels'
+import { rubricLabel, symptomLabel } from './labels'
+import type { RubricLabel } from './labels'
 import * as ops from './ops'
 import './clipboard.css'
 
@@ -49,10 +55,7 @@ export function ClipboardPanel() {
 
 // ───────────────────────── case header ─────────────────────────
 
-function patientName(p: { firstName: string; lastName: string } | undefined) {
-  if (!p) return 'Unknown patient'
-  return [p.lastName, p.firstName].filter(Boolean).join(', ') || 'Unnamed patient'
-}
+const UNKNOWN_PATIENT = 'Unknown patient'
 
 const RECENT_PATIENTS = 5
 const PATIENT_CONSULTATIONS = 4
@@ -63,6 +66,7 @@ function CaseHeader({ consultation }: { consultation: Consultation | null }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const btn = useRef<HTMLButtonElement>(null)
   const patient = consultation ? patients[consultation.patientId] : undefined
+  const name = patient ? patientName(patient) : UNKNOWN_PATIENT
 
   // Actions first (always reachable), then the current patient's consultations, then a few recent patients.
   const items = useMemo((): MenuItem[] => {
@@ -80,10 +84,10 @@ function CaseHeader({ consultation }: { consultation: Consultation | null }) {
       out.push({ label: 'Close case', run: () => actions.setActiveConsultation(null) })
       const own = newest(byPatient.get(consultation.patientId) ?? [])
       if (own.length > 1) {
-        out.push({ type: 'separator' }, { type: 'label', label: `${patientName(patient)}: consultations` })
+        out.push({ type: 'separator' }, { type: 'label', label: `${name}: consultations` })
         const shown = own.slice(0, PATIENT_CONSULTATIONS)
         if (!shown.some(c => c.id === consultation.id)) shown[shown.length - 1] = consultation
-        for (const c of shown) out.push({ label: `${c.title || 'Consultation'} · ${c.date}`, checked: c.id === consultation.id, run: () => actions.setActiveConsultation(c.id) })
+        for (const c of shown) out.push({ label: `${c.title || 'Consultation'} · ${formatDate(c.date)}`, checked: c.id === consultation.id, run: () => actions.setActiveConsultation(c.id) })
       }
     }
     const others = [...byPatient.entries()]
@@ -93,14 +97,15 @@ function CaseHeader({ consultation }: { consultation: Consultation | null }) {
     if (others.length) {
       out.push({ type: 'separator' }, { type: 'label', label: 'Recent patients' })
       for (const g of others.slice(0, RECENT_PATIENTS)) {
-        out.push({ label: `${patientName(patients[g.pid])} · ${g.latest.date}`, run: () => actions.setActiveConsultation(g.latest.id) })
+        const p = patients[g.pid]
+        out.push({ label: `${p ? patientName(p) : UNKNOWN_PATIENT} · ${formatDate(g.latest.date)}`, run: () => actions.setActiveConsultation(g.latest.id) })
       }
     }
     if (getCommand('patients.open')) {
       out.push({ type: 'separator' }, { label: others.length > RECENT_PATIENTS ? `All patients (${byPatient.size})…` : 'All patients…', command: 'patients.open' })
     }
     return out
-  }, [consultations, patients, consultation, patient])
+  }, [consultations, patients, consultation, name])
 
   const open = () => {
     const r = btn.current?.getBoundingClientRect()
@@ -111,14 +116,14 @@ function CaseHeader({ consultation }: { consultation: Consultation | null }) {
     <div className="cbp-case">
       <button
         ref={btn} className="cbp-case-btn" aria-haspopup="menu" aria-expanded={!!menu} aria-label="Switch case"
-        title={consultation ? `${patientName(patient)}: ${consultation.title || 'Consultation'}, ${consultation.date}` : 'No active case'}
+        title={consultation ? `${name}: ${consultation.title || 'Consultation'}, ${formatDate(consultation.date)}` : 'No active case'}
         onClick={open}
         onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); open() } }}
       >
         {consultation ? (
           <>
-            <span className="cbp-case-patient">{patientName(patient)}</span>
-            <span className="cbp-case-cons">{consultation.title || 'Consultation'} · {consultation.date}</span>
+            <span className="cbp-case-patient">{name}</span>
+            <span className="cbp-case-cons">{consultation.title || 'Consultation'} · {formatDate(consultation.date)}</span>
           </>
         ) : <span className="cbp-case-none">No active case</span>}
         <ChevronDown size={14} className="cbp-case-caret" />
@@ -164,7 +169,7 @@ function clipboardMenu(cb: Clipboard, consultation: Consultation): MenuItem[] {
     { label: 'New clipboard', disabled: count >= MAX_CLIPBOARDS, run: ops.newClipboard },
     { label: 'Clear clipboard', danger: true, disabled: !cb.symptoms.length, run: () => ops.clearClipboard(cb.id) },
     { command: 'clipboard.clearAll', danger: true },
-    { label: 'Delete clipboard', danger: true, disabled: count <= 1, run: () => ops.deleteClipboard(cb.id) },
+    { label: 'Delete clipboard', danger: true, disabled: count <= 1, run: () => { void ops.deleteClipboard(cb.id) } },
   ]
 }
 
@@ -175,6 +180,8 @@ function dragKind(e: DragEvent): 'symptoms' | 'rubrics' | null {
   return null
 }
 const copyModifier = (e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean }) => e.altKey || e.ctrlKey || e.metaKey
+
+const NOT_IN_ANALYSIS_TIP = 'Not included in the analysis (click it in the analysis toolbar to include)'
 
 /** Above this many clipboards the inactive chips show only number, colour and count (name in the tooltip). */
 const COMPACT_CHIPS = 4
@@ -201,10 +208,8 @@ function ChipStrip({ consultation, active, openMenu, openMenuAt }: { consultatio
       return
     }
     const refsIn = parseRubricDrop(e.dataTransfer.getData(RUBRIC_MIME))
-    if (refsIn.length) {
-      const n = actions.addRubrics(refsIn, { clipboardId: cb.id })
-      actions.toast(n ? `Added ${n} rubric${n === 1 ? '' : 's'} to ${cb.name}` : `Already on ${cb.name}`, n ? 'success' : 'info')
-    }
+    // the standard take: toast with Undo, recent rubrics
+    if (refsIn.length) takeRefs(refsIn, { ...DEFAULT_TAKE, clipboard: consultation.clipboards.indexOf(cb) + 1 })
   }
 
   return (
@@ -227,8 +232,8 @@ function ChipStrip({ consultation, active, openMenu, openMenuAt }: { consultatio
               aria-label={`${i + 1}. ${cb.name}, ${n} symptom${n === 1 ? '' : 's'}${inAnalysis ? '' : ', not in analysis'}`}
               tabIndex={isActive ? 0 : -1}
               className={`cbp-chip${isActive ? ' active' : ''}${dropId === cb.id ? ' drop' : ''}${inAnalysis ? '' : ' off'}${showName ? '' : ' mini'}`}
-              style={{ ['--chip' as string]: cb.color }}
-              title={`${cb.name}: ${n} symptom${n === 1 ? '' : 's'}${inAnalysis ? '' : ' (not in analysis)'}${shortcut}\nDouble-click to rename · Ctrl+click: include in analysis · Alt+click: set as default`}
+              style={{ ['--chip' as string]: cb.color, ['--chip-fg' as string]: onColor(cb.color) }}
+              title={`${cb.name}: ${n} symptom${n === 1 ? '' : 's'}${shortcut}${inAnalysis ? '' : `\n${NOT_IN_ANALYSIS_TIP}`}\nDouble-click to rename · Ctrl+click: include in analysis · Alt+click: set as default`}
               onClick={e => {
                 if (e.ctrlKey || e.metaKey) { ops.toggleInAnalysis(cb.id); return }
                 if (!isActive) { actions.setActiveClipboard(cb.id); ops.setPanelUi({ cursorId: null, anchorId: null }) }
@@ -355,8 +360,9 @@ function SymptomList({ clipboard, consultation, openMenu, openMenuAt }: { clipbo
   const symptoms = clipboard.symptoms
   const order = useMemo(() => symptoms.map(s => s.id), [symptoms])
   const selected = useMemo(() => new Set(selectedIds), [selectedIds])
-  const reps = useMemo(() => symptoms.flatMap(s => s.rubrics.map(r => parseRubricRef(r).repertory)), [symptoms])
-  const { ready, failed } = useRepertoriesReady(catalog, reps)
+  const reps = useMemo(() => symptoms.flatMap(s => s.rubrics.map(r => parseRef(r).repertory)), [symptoms])
+  const { version: ready, failed, retry } = useRepertories(reps)
+  const failedKey = failed.join('|')
   const cursorIndex = cursorId ? order.indexOf(cursorId) : -1
 
   // keep keyboard focus on the cursor row
@@ -368,7 +374,14 @@ function SymptomList({ clipboard, consultation, openMenu, openMenuAt }: { clipbo
     if (!focusSeq) return
     const id = cursorIndex >= 0 ? cursorId : (selectedIds.find(x => order.includes(x)) ?? order[0] ?? null)
     if (id && id !== cursorId) ops.setPanelUi({ cursorId: id, anchorId: anchorId ?? id })
-    requestAnimationFrame(() => focusRow(id))
+    // focus lands a frame later: if it has meanwhile moved somewhere else (a dialog or the command
+    // palette opened in between), leave it there instead of stealing it back
+    const before = document.activeElement
+    requestAnimationFrame(() => {
+      const now = document.activeElement
+      if (now && now !== before && now !== document.body && !listRef.current?.closest(ops.PANEL_SCOPE)?.contains(now)) return
+      focusRow(id)
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusSeq])
   // after reorders, deletions and cursor moves keep the focused row visible
@@ -403,6 +416,8 @@ function SymptomList({ clipboard, consultation, openMenu, openMenuAt }: { clipbo
       if (!['Shift', 'Control', 'Meta', 'Alt'].includes(e.key)) ops.setPanelUi({ groupPending: false })
     }
     if (mod && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) return // move commands
+    // modified paging keys belong to the shell (Alt/Ctrl+PageUp/PageDown switch tabs)
+    if ((mod || e.altKey) && (e.key === 'PageUp' || e.key === 'PageDown' || e.key === 'Home' || e.key === 'End')) return
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); moveCursor(cursorIndex < 0 ? 0 : cursorIndex + 1, e.shiftKey); break
       case 'ArrowUp': e.preventDefault(); moveCursor(cursorIndex < 0 ? 0 : cursorIndex - 1, e.shiftKey); break
@@ -467,7 +482,11 @@ function SymptomList({ clipboard, consultation, openMenu, openMenuAt }: { clipbo
   }
   const onDrop = (e: DragEvent) => {
     e.preventDefault()
-    const target = drop
+    // the insertion point comes from the drop event itself (the last dragover may not have rendered yet)
+    const rowEl = (e.target as HTMLElement).closest?.<HTMLElement>('.cbp-row[data-sid]')
+    const target = rowEl?.dataset.sid && order.includes(rowEl.dataset.sid)
+      ? { id: rowEl.dataset.sid, after: e.clientY > rowEl.getBoundingClientRect().top + rowEl.getBoundingClientRect().height / 2 }
+      : null
     setDrop(null)
     // insertion point: before this id (null = end)
     let beforeId: string | null = null
@@ -488,12 +507,17 @@ function SymptomList({ clipboard, consultation, openMenu, openMenuAt }: { clipbo
     const refs = parseRubricDrop(e.dataTransfer.getData(RUBRIC_MIME))
     if (!refs.length) return
     const before = new Set(order)
-    const n = actions.addRubrics(refs, { clipboardId: clipboard.id })
-    if (!n) { actions.toast('Already on this clipboard', 'info'); return }
-    const after = selectActiveClipboard(useApp.getState())
-    if (!after) return
-    const added = after.symptoms.filter(s => !before.has(s.id)).map(s => s.id)
-    if (beforeId) actions.reorderSymptoms(clipboard.id, moveIdsBefore(after.symptoms.map(s => s.id), added, beforeId))
+    const n = consultation.clipboards.findIndex(c => c.id === clipboard.id) + 1
+    // the standard take (toast with Undo, recents) and the placement at the drop point: one undo step
+    const added = actions.transaction(() => {
+      if (!takeRefs(refs, { ...DEFAULT_TAKE, clipboard: n })) return []
+      const now = useApp.getState().consultations[consultation.id]?.clipboards.find(c => c.id === clipboard.id)
+      if (!now) return []
+      const fresh = now.symptoms.filter(s => !before.has(s.id)).map(s => s.id)
+      if (fresh.length && beforeId) actions.reorderSymptoms(clipboard.id, moveIdsBefore(now.symptoms.map(s => s.id), fresh, beforeId))
+      return fresh
+    }, 'Take rubrics')
+    if (!added.length) return
     actions.setSelectedSymptoms(added)
     ops.setPanelUi({ cursorId: added[0], anchorId: added[0] })
   }
@@ -541,13 +565,18 @@ function SymptomList({ clipboard, consultation, openMenu, openMenuAt }: { clipbo
       onClick={e => { if (e.target === e.currentTarget) actions.setSelectedSymptoms([]) }}
     >
       {failed.length > 0 && (
-        <div className="cbp-warn" role="alert"><AlertTriangle size={13} />Could not load {failed.join(', ')}; those rubrics show without text.</div>
+        <div className="cbp-warn" role="alert">
+          <AlertTriangle size={13} />
+          <span className="cbp-warn-text">Could not load {failed.map(a => catalog.repertoryTitle(a)).join(', ')}; those rubrics show without text.</span>
+          <button className="btn btn-sm" onClick={retry}>Retry</button>
+        </div>
       )}
       {symptoms.length === 0 ? <EmptyClipboard name={clipboard.name} /> : symptoms.map((s, i) => (
         <SymptomRow
           key={s.id}
           catalog={catalog}
           ready={ready}
+          failed={failedKey !== '' && s.rubrics.some(r => failed.includes(parseRef(r).repertory))}
           symptom={s}
           index={i}
           defaultRep={defaultRep}
@@ -593,6 +622,8 @@ interface RowProps {
   catalog: Catalog
   /** Number of loaded repertories: labels are recomputed when one arrives. */
   ready: number
+  /** A repertory of this symptom failed to load. */
+  failed: boolean
   symptom: Symptom
   index: number
   defaultRep: string
@@ -609,13 +640,17 @@ const SymptomRow = memo(function SymptomRow(p: RowProps) {
   const s = p.symptom
   const combined = s.rubrics.length > 1
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const labels = useMemo(() => s.rubrics.map(r => rubricLabel(p.catalog, r)), [p.catalog, s.rubrics, p.ready])
+  const sl = useMemo(() => symptomLabel(p.catalog, s), [p.catalog, s.rubrics, s.combine, s.label, p.ready])
+  const labels = sl.parts
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const size = useMemo(() => ops.symptomSize(s), [s.rubrics, s.combine, p.ready])
   const head = labels[0]
   const reps = [...new Set(labels.map(l => l.repertory))].filter(r => r !== p.defaultRep)
   const op = s.combine === 'union' ? '∪' : '∩'
-  const full = combined ? labels.map(l => l.full).join(` ${op} `) : head.full
+  const text = (l: RubricLabel) => l.loaded ? l.full : l.loading && !p.failed ? `${l.repertoryTitle} (loading)` : `${l.repertoryTitle}, ${l.rest} (unavailable)`
+  // the analysis' label once every rubric is readable; loading / unavailable parts say so instead of showing raw refs
+  const allLoaded = labels.every(l => l.loaded)
+  const full = allLoaded ? sl.full : s.label || labels.map(text).join(` ${op} `)
   const flags = [s.eliminatory && 'eliminative', s.exclusive && 'excluding', s.causal && 'causal', s.group && `group ${s.group}`].filter(Boolean).join(', ')
   const h = p.h
 
@@ -643,39 +678,44 @@ const SymptomRow = memo(function SymptomRow(p: RowProps) {
           <>
             <div className="cbp-combined-head">
               <span className="cbp-op" title={s.combine === 'union' ? 'Combined: union (any rubric)' : 'Combined: intersection (all rubrics)'}>{op}</span>
-              {s.combine === 'union' ? 'Union' : 'Intersection'} of {s.rubrics.length} rubrics
+              <span className="cbp-combined-label">{allLoaded || s.label ? sl.short : `${s.combine === 'union' ? 'Union' : 'Intersection'} of ${s.rubrics.length} rubrics`}</span>
             </div>
             <ul className="cbp-parts">
               {labels.map((l, i) => (
                 <li key={s.rubrics[i]} onDoubleClick={e => { e.stopPropagation(); ops.openRubric(s.rubrics[i]) }}>
                   <span className="cbp-op-sm">{i === 0 ? '' : op}</span>
-                  <RubricText l={l} />
+                  <RubricText l={l} failed={p.failed} />
                 </li>
               ))}
             </ul>
           </>
-        ) : <div className="cbp-path"><RubricText l={head} /></div>}
+        ) : <div className="cbp-path"><RubricText l={head} failed={p.failed} /></div>}
       </div>
       <div className="cbp-meta">
         {reps.map(r => <span key={r} className="cbp-rep" title={`Repertory: ${r}`}>{r}</span>)}
         {s.eliminatory && <span className="cbp-flag f-e" title="Eliminative: only remedies in this symptom stay in the result">E</span>}
         {s.exclusive && <span className="cbp-flag f-x" title="Excluding: remedies in this symptom are removed from the result">X</span>}
         {s.causal && <span className="cbp-flag f-c" title="Causal symptom (causation / never well since)">C</span>}
-        {s.group && <span className="cbp-flag f-g" title={`Group ${s.group}: calculated together with the other symptoms of this group`}>{s.group}</span>}
+        {s.group && <span className="cbp-flag f-g" title={`Group ${s.group.toLowerCase()}: calculated as one symptom with the other symptoms of this group`}>{s.group.toLowerCase()}</span>}
         {s.note && (
           <span className="cbp-note" aria-hidden="true">
             <StickyNote size={12} />
             <span className="cbp-note-tip" role="tooltip">{s.note}</span>
           </span>
         )}
-        <span className="cbp-size" title={size === null ? 'Loading…' : `${size} remedies`}>{size ?? '…'}</span>
+        {size !== null
+          ? <span className="cbp-size" title={`${size} remedies`}>{size}</span>
+          : p.failed
+            ? <span className="cbp-size" title="Repertory unavailable">–</span>
+            : <span className="cbp-size" title="Loading the repertory"><span className="cbp-skel sm" aria-hidden="true" /></span>}
       </div>
     </div>
   )
 })
 
-function RubricText({ l }: { l: ReturnType<typeof rubricLabel> }) {
-  if (!l.loaded) return <span className="cbp-loading">{l.full}</span>
+function RubricText({ l, failed }: { l: RubricLabel; failed: boolean }) {
+  if (!l.loaded && l.loading && !failed) return <span className="cbp-loading" aria-busy="true"><span className="cbp-skel" aria-hidden="true" />Loading {l.repertoryTitle}…</span>
+  if (!l.loaded) return <span className="cbp-loading">{l.repertoryTitle}, {l.rest} (unavailable)</span>
   return <><span className="cbp-chapter">{l.chapter}</span>{l.rest && <span className="cbp-rest">{l.rest}</span>}</>
 }
 
@@ -710,20 +750,24 @@ function Footer({ clipboard, consultation }: { clipboard: Clipboard; consultatio
   const stats = clipboardStats(clipboard.symptoms)
   const analyse = getCommand('analysis.open')
   return (
-    <footer className="cbp-foot">
-      {groupPending ? (
-        <span className="cbp-prompt" role="status">Group: press a letter a–z, <span className="kbd">-</span> to clear, <span className="kbd">Esc</span> to cancel</span>
-      ) : (
-        <span className="cbp-stats" role="status">
-          <b>{stats.total}</b> symptom{stats.total === 1 ? '' : 's'}
-          {stats.total > 0 && stats.active !== stats.total && <> · {stats.active} active</>}
-          {selected > 0 && <> · {selected} selected</>}
+    <div className="cbp-foot">
+      <span className="cbp-status">
+        {/* always mounted, only its text changes, so screen readers announce the prompt when it appears */}
+        <span className="cbp-prompt" role="status" aria-live="polite">
+          {groupPending && <>Group: press a letter a–z, <span className="kbd">-</span> to clear, <span className="kbd">Esc</span> to cancel</>}
         </span>
-      )}
+        {!groupPending && (
+          <span className="cbp-stats">
+            <b>{stats.total}</b> symptom{stats.total === 1 ? '' : 's'}
+            {stats.total > 0 && stats.active !== stats.total && <> · {stats.active} active</>}
+            {selected > 0 && <> · {selected} selected</>}
+          </span>
+        )}
+      </span>
       <span className="cbp-grow" />
       <button className="btn btn-sm btn-primary" aria-disabled={nothingToAnalyse || undefined} disabled={!analyse || !isEnabled(analyse)} onClick={() => { if (!nothingToAnalyse) runCommand('analysis.open') }} title={nothingToAnalyse ? why : 'Analyse the case (F8)'}>
         <BarChart3 size={13} />Analyse <span className="cbp-key">F8</span>
       </button>
-    </footer>
+    </div>
   )
 }

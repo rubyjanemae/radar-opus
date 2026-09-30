@@ -156,8 +156,8 @@ function Loaded({ consultationId, groups, mode: initialMode, onClose, index }: P
       initialFocus=".fam-dlg-search input"
       footer={
         <>
-          <button className="btn btn-ghost" disabled={!hasLimit} onClick={() => { clearFamilyFilter('limit', consultationId); setCarry(null); setSel(x => ({ ...x, limit: new Set() })); actions.toast('Family limit removed', 'success') }}>Remove limit</button>
-          <button className="btn btn-ghost" disabled={!hasHighlight} onClick={() => { clearFamilyFilter('highlight', consultationId); setCarry(null); setSel(x => ({ ...x, highlight: new Set() })); actions.toast('Family highlight removed', 'success') }}>Remove highlight</button>
+          <button className="btn btn-ghost fam-foot-btn" disabled={!hasLimit} title={hasLimit ? undefined : 'No family limit is set'} onClick={() => { clearFamilyFilter('limit', consultationId); setCarry(null); setSel(x => ({ ...x, limit: new Set() })); actions.toast('Family limit removed', 'success') }}>Remove limit</button>
+          <button className="btn btn-ghost fam-foot-btn" disabled={!hasHighlight} title={hasHighlight ? undefined : 'No family highlight is set'} onClick={() => { clearFamilyFilter('highlight', consultationId); setCarry(null); setSel(x => ({ ...x, highlight: new Set() })); actions.toast('Family highlight removed', 'success') }}>Remove highlight</button>
           {remedyFilterCmd && (
             <button className="btn btn-ghost" disabled={!isEnabled(remedyFilterCmd)} onClick={openRemedyFilters} title="Limit, exclude or highlight single remedies and set the minimum symptom coverage">
               <ListFilter size={13} /> Remedy filters…
@@ -165,7 +165,7 @@ function Loaded({ consultationId, groups, mode: initialMode, onClose, index }: P
           )}
           <span className="fam-spacer" />
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={apply} data-testid="fam-apply" disabled={!canApply}
+          <button className="btn btn-primary fam-apply" onClick={apply} data-testid="fam-apply" disabled={!canApply}
             title={canApply ? 'Apply (Ctrl+Enter)' : sel[mode].size ? 'No changes to apply' : 'Check one or more families first'}>
             {primary}
           </button>
@@ -187,7 +187,8 @@ function Loaded({ consultationId, groups, mode: initialMode, onClose, index }: P
             <input className="input" placeholder="Find family or element" aria-label="Find family" value={query} onChange={e => setQuery(e.target.value)}
               onKeyDown={e => {
                 if (e.ctrlKey || e.metaKey) return
-                if (e.key === 'ArrowDown') { e.preventDefault(); toTree() }
+                // ArrowDown: the best match while searching, else the first visible row (a kingdom)
+                if (e.key === 'ArrowDown') { e.preventDefault(); if (query.trim()) toTree(); else { if (rows[0]) setActive(rows[0].id); focusTree() } }
                 else if (e.key === 'Enter') {
                   e.preventDefault()
                   if (query.trim()) toTree()

@@ -1,9 +1,11 @@
 import { create } from 'zustand'
 import type { Catalog } from '../../data/catalog'
+import { parseRef } from '../../data/catalog'
 import type { RubricRef } from '../../data/types'
 import type { Clipboard, Symptom, Weight } from '../../engine/model'
 import { actions, selectActiveClipboard, selectActiveConsultation, selectActiveTab, useApp, MAX_CLIPBOARDS } from '../../state/store'
-import { combinedSize, moveIdsBy, parseRubricRef, sortSymptomIds } from './logic'
+import { askConfirm } from '../../ui/ConfirmDialog'
+import { combinedSize, moveIdsBy, sortSymptomIds } from './logic'
 import type { RubricFacts, SortMode } from './logic'
 
 /**
@@ -47,7 +49,6 @@ export function selectedSymptoms(): Symptom[] {
   const sel = new Set(st().selectedSymptomIds)
   return cb.symptoms.filter(s => sel.has(s.id))
 }
-export const hasSelection = () => selectedIds().length > 0
 
 /** Selection, falling back to the cursor row. */
 function targetIds(): string[] {
@@ -148,7 +149,9 @@ export function split() {
   const cb = activeClipboard()
   if (!cb) return
   const targets = targetIds().filter(id => (cb.symptoms.find(s => s.id === id)?.rubrics.length ?? 0) > 1)
-  for (const id of targets) actions.splitSymptom(cb.id, id)
+  if (!targets.length) return
+  // one undo step for all of them
+  actions.transaction(() => { for (const id of targets) actions.splitSymptom(cb.id, id) }, targets.length === 1 ? 'Split symptom' : `Split ${targets.length} symptoms`)
   actions.setSelectedSymptoms([])
 }
 export function canSplit() {
@@ -184,7 +187,7 @@ export function rubricFacts(ref: RubricRef): RubricFacts | null {
 export async function sortActive(mode: SortMode) {
   const cb = activeClipboard()
   if (!cb || cb.symptoms.length < 2) return
-  if (catalogRef) await Promise.all([...new Set(cb.symptoms.map(s => parseRubricRef(s.rubrics[0]).repertory))].map(r => catalogRef!.loadRepertory(r).catch(() => null)))
+  if (catalogRef) await Promise.all([...new Set(cb.symptoms.map(s => parseRef(s.rubrics[0]).repertory))].map(r => catalogRef!.loadRepertory(r).catch(() => null)))
   const facts = (ref: RubricRef) => {
     const f = rubricFacts(ref)
     if (!f || mode !== 'size') return f
@@ -215,7 +218,7 @@ export function symptomSize(s: Symptom): number | null {
 
 /** Show a rubric in a repertory tab: navigate the active one, reuse another of the same book, or open a new tab. */
 export function openRubric(ref: RubricRef) {
-  const { repertory, index } = parseRubricRef(ref)
+  const { repertory, index } = parseRef(ref)
   const s = st()
   const tab = selectActiveTab(s)
   if (tab?.kind === 'repertory' && tab.repertory === repertory) { actions.navigateRubric(tab.id, index); return }
@@ -235,7 +238,12 @@ export function clipboards(): Clipboard[] { return selectActiveConsultation(st()
 
 export function selectClipboardAt(i: number) {
   const cb = clipboards()[i]
-  if (cb) { actions.setActiveClipboard(cb.id); setPanelUi({ cursorId: null, anchorId: null }) }
+  if (!cb) return
+  // the focused row belongs to the old list and unmounts: keep keyboard focus in the clipboard list
+  const refocus = focusWasInList()
+  actions.setActiveClipboard(cb.id)
+  setPanelUi({ cursorId: null, anchorId: null })
+  if (refocus) requestListFocus()
 }
 export function cycleClipboard(d: number) {
   const list = clipboards()
@@ -268,15 +276,41 @@ export function clearClipboard(id?: string) {
   actions.toast(`${cb.name} cleared`, 'info', { label: 'Undo', run: () => actions.insertSymptoms(cb.id, saved.map((symptom, index) => ({ symptom, index }))) })
 }
 
-export function deleteClipboard(id?: string) {
+/**
+ * Delete a clipboard (the active one by default). One holding symptoms asks first. Keyboard focus
+ * stays in the clipboard pane when the delete started there (on the new active chip).
+ */
+export async function deleteClipboard(id?: string): Promise<boolean> {
+  const list = clipboards()
+  const cb = list.find(x => x.id === (id ?? activeClipboard()?.id))
+  if (!cb || list.length <= 1) return false
+  const refocus = focusWasInPanel()
+  if (cb.symptoms.length) {
+    const n = cb.symptoms.length
+    const ok = await askConfirm({
+      title: 'Delete clipboard',
+      message: `Delete ${cb.name} and its ${n} symptom${n === 1 ? '' : 's'}?`,
+      detail: 'The deletion can be undone from the notification or with Edit › Undo.',
+      confirmLabel: 'Delete clipboard',
+      danger: true,
+    })
+    if (!ok) { if (refocus) focusActiveChip(); return false }
+  }
+  const done = deleteClipboardNow(cb.id)
+  if (refocus) focusActiveChip()
+  return done
+}
+
+function deleteClipboardNow(id: string): boolean {
   const c = selectActiveConsultation(st())
   const list = clipboards()
-  const index = list.findIndex(x => x.id === (id ?? activeClipboard()?.id))
+  const index = list.findIndex(x => x.id === id)
   const cb = list[index]
-  if (!c || !cb || list.length <= 1) return
+  if (!c || !cb || list.length <= 1) return false
   const inAnalysis = c.analysis.clipboardIds.includes(cb.id)
   const wasActive = activeClipboard()?.id === cb.id
   actions.deleteClipboard(cb.id)
+  if (wasActive) setPanelUi({ cursorId: null, anchorId: null })
   actions.toast(`${cb.name} deleted`, 'info', {
     label: 'Undo',
     run: () => {
@@ -288,10 +322,28 @@ export function deleteClipboard(id?: string) {
       if (wasActive && st().activeConsultationId === c.id) actions.setActiveClipboard(cb.id)
     },
   })
+  return true
 }
 
-/** Empty every clipboard of the active case in one undoable step. */
-export function clearAllClipboards() {
+/** Empty every clipboard of the active case in one undoable step, after confirmation. */
+export async function clearAllClipboards(): Promise<boolean> {
+  const list = clipboards().filter(cb => cb.symptoms.length)
+  if (!list.length) return false
+  const refocus = focusWasInPanel()
+  const total = list.reduce((a, cb) => a + cb.symptoms.length, 0)
+  const ok = await askConfirm({
+    title: 'Clear all clipboards',
+    message: `Remove all ${total} symptom${total === 1 ? '' : 's'} from ${list.length === 1 ? list[0].name : `${list.length} clipboards`}?`,
+    detail: 'The clipboards themselves are kept. This can be undone from the notification or with Edit › Undo.',
+    confirmLabel: 'Clear all',
+    danger: true,
+  })
+  if (ok) clearAllNow()
+  if (refocus) requestListFocus()
+  return ok
+}
+
+function clearAllNow() {
   const list = clipboards().filter(cb => cb.symptoms.length)
   if (!list.length) return
   const saved = list.map(cb => ({ id: cb.id, items: cb.symptoms.map((symptom, index) => ({ symptom, index })) }))
@@ -301,7 +353,7 @@ export function clearAllClipboards() {
   setPanelUi({ cursorId: null, anchorId: null })
   actions.toast(`All clipboards cleared (${n} symptom${n === 1 ? '' : 's'})`, 'info', {
     label: 'Undo',
-    run: () => { for (const x of saved) actions.insertSymptoms(x.id, x.items) },
+    run: () => { actions.transaction(() => { for (const x of saved) actions.insertSymptoms(x.id, x.items) }, 'Restore clipboards') },
   })
 }
 export const hasAnySymptoms = () => clipboards().some(cb => cb.symptoms.length > 0)
@@ -319,6 +371,23 @@ function focusWasInPanel(): boolean {
   if (typeof document === 'undefined') return false
   const a = document.activeElement
   return !a || a === document.body || !!a.closest?.(`${PANEL_SCOPE}, .menu-list`)
+}
+
+/** Focus the active clipboard's chip once the pane has re-rendered (and any dialog has handed focus back). */
+function focusActiveChip() {
+  if (typeof document === 'undefined' || !st().layout.showClipboard) return
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (document.querySelector('[role="dialog"]')) return
+    const chip = document.querySelector<HTMLElement>(`${PANEL_SCOPE} .cbp-chip.active`)
+    if (chip) chip.focus()
+    else requestListFocus()
+  }))
+}
+
+/** Whether keyboard focus is on the symptom list (a row or the list itself). */
+function focusWasInList(): boolean {
+  if (typeof document === 'undefined') return false
+  return !!document.activeElement?.closest?.(LIST_SCOPE)
 }
 
 /** Ask the list to focus its cursor row (or itself when empty) without changing the layout. */

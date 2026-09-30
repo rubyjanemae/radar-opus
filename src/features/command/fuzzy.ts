@@ -10,12 +10,33 @@ const isSep = (c: string) => c === ' ' || c === '-' || c === '_' || c === '.' ||
 
 function lowerFold(s: string) { return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '') }
 
-export function fuzzy(query: string, text: string): FuzzyMatch | null {
-  const q = lowerFold(query.trim())
-  if (!q) return { score: 0, positions: [] }
+/** Fold a haystack for matching (lowercase, accents stripped; plain lowercase if folding changes lengths). */
+export function foldHay(text: string): string {
   const t = lowerFold(text)
-  // folding can change lengths for exotic characters; fall back to plain lowercase
-  const hay = t.length === text.length ? t : text.toLowerCase()
+  return t.length === text.length ? t : text.toLowerCase()
+}
+
+/**
+ * A matcher that folds each haystack once and reuses it across keystrokes. The palette builds one
+ * per open, so typing only runs the matching loop, not Unicode normalisation of every title.
+ */
+export function fuzzyIndex(): (query: string, text: string) => FuzzyMatch | null {
+  const hays = new Map<string, string>()
+  let lastQ = '', lastFolded = ''
+  return (query, text) => {
+    if (query !== lastQ) { lastQ = query; lastFolded = lowerFold(query.trim()) }
+    let hay = hays.get(text)
+    if (hay === undefined) { hay = foldHay(text); hays.set(text, hay) }
+    return fuzzyFolded(lastFolded, hay)
+  }
+}
+
+export function fuzzy(query: string, text: string): FuzzyMatch | null {
+  return fuzzyFolded(lowerFold(query.trim()), foldHay(text))
+}
+
+function fuzzyFolded(q: string, hay: string): FuzzyMatch | null {
+  if (!q) return { score: 0, positions: [] }
 
   // contiguous substring beats everything else
   const sub = hay.indexOf(q)

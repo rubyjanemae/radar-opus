@@ -2,6 +2,7 @@ import { memo } from 'react'
 import { useCatalog } from '../data/CatalogContext'
 import { useApp, selectActiveTab, selectActiveConsultation, selectActiveClipboard } from '../state/store'
 import { formatKeys } from '../commands/registry'
+import { useStatusContext } from './statusContext'
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`
 
@@ -12,8 +13,11 @@ export const StatusBar = memo(function StatusBar() {
   const clipboard = useApp(selectActiveClipboard)
   const total = useApp(s => selectActiveConsultation(s)?.clipboards.reduce((n, cb) => n + cb.symptoms.length, 0) ?? null)
   const selected = useApp(s => s.selectedSymptomIds.length)
+  // what the shown document publishes about itself (an analysis: method, symptoms, remedies, limit)
+  const activeTabId = useApp(s => s.activeTabId)
+  const docStatus = useStatusContext(s => (s.owner === activeTabId ? s.text : null))
 
-  let left = 'Ready'
+  let left = docStatus ?? 'Ready'
   if (rubric) {
     const sep = rubric.lastIndexOf(':')
     const rep = catalog.repertory(rubric.slice(0, sep))

@@ -1,6 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { displayKey, execute, formatKeys, getCommand, isEnabled, isReserved } from '../commands/registry'
+import { ariaKeyShortcut, displayKey, execute, formatKeys, getCommand, isEnabled, isReserved } from '../commands/registry'
+import type { Command } from '../commands/registry'
+import { focusDocument } from '../features/workspace/panes'
 
 export type MenuItem =
   | { type: 'separator' }
@@ -9,6 +11,12 @@ export type MenuItem =
       type?: 'item'
       /** Either a registered command id … */
       command?: string
+      /**
+       * … or several commands sharing one entry (and one shortcut): the entry runs, names and shows the
+       * shortcut of the first enabled one, e.g. File › Print… for "Print analysis…" / "Print monograph…".
+       * `label` is the title shown while none is enabled.
+       */
+      commands?: string[]
       /** … or an inline action. */
       label?: string
       run?: () => void
@@ -29,9 +37,16 @@ interface Resolved { label: string; keys?: string; disabled: boolean; checked?: 
 
 /** Label, shortcut and state of a menu entry; the shortcut shown is never one the browser keeps for itself. */
 export function resolveMenuItem(item: MenuEntry): Resolved {
-  const cmd = item.command ? getCommand(item.command) : undefined
+  let cmd: Command | undefined
+  let label = item.label
+  if (item.commands) {
+    const all = item.commands.map(getCommand).filter((c): c is Command => !!c)
+    cmd = all.find(isEnabled)
+    if (cmd) label = cmd.title
+    else cmd = all[0] && { ...all[0], enabled: () => false }
+  } else if (item.command) cmd = getCommand(item.command)
   return {
-    label: item.label ?? cmd?.title ?? item.command ?? '',
+    label: label ?? cmd?.title ?? item.command ?? '',
     keys: item.keys !== undefined ? (isReserved(item.keys) ? undefined : item.keys) : displayKey(cmd?.keys),
     disabled: item.disabled ?? (cmd ? !isEnabled(cmd) : !item.run && !item.submenu),
     checked: item.checked ?? cmd?.checked?.(),
@@ -129,7 +144,7 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
     setActive(enabled[(k + d + enabled.length) % enabled.length])
   }
 
-  return createPortal(
+  const list = (
     <div
       ref={ref}
       className="menu-list"
@@ -179,6 +194,8 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
             aria-checked={r.checked}
             aria-disabled={r.disabled || undefined}
             aria-haspopup={r.submenu ? 'menu' : undefined}
+            aria-expanded={r.submenu ? sub?.index === i : undefined}
+            aria-keyshortcuts={r.keys && !r.submenu ? ariaKeyShortcut(r.keys) : undefined}
             className={`menu-item${i === active ? ' active' : ''}${r.disabled ? ' disabled' : ''}${r.danger ? ' danger' : ''}`}
             onMouseEnter={() => {
               setActive(i)
@@ -187,15 +204,17 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
             }}
             onClick={() => activate(i)}
           >
-            <span className="menu-check">{r.checked ? '✓' : ''}</span>
+            {/* the check state is aria-checked and the shortcut aria-keyshortcuts: neither belongs in the name */}
+            <span className="menu-check" aria-hidden="true">{r.checked ? '✓' : ''}</span>
             <span className="menu-text">{r.label}</span>
-            {r.submenu ? <span className="menu-arrow">›</span> : r.keys ? <span className="menu-keys">{formatKeys(r.keys)}</span> : null}
+            {r.submenu ? <span className="menu-arrow" aria-hidden="true">›</span> : r.keys ? <span className="menu-keys" aria-hidden="true">{formatKeys(r.keys)}</span> : null}
           </div>
         )
       })}
       {sub && (
         <MenuList
           nested
+          label={at(sub.index).label}
           items={at(sub.index).submenu ?? []}
           x={sub.x}
           y={sub.y}
@@ -204,29 +223,62 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
           onClose={() => { setSub(null); ref.current?.focus() }}
         />
       )}
-    </div>,
+    </div>
+  )
+  // A menu portalled into <body> sits outside every landmark: a labelled region holds it (the wrapper
+  // has no box of its own; the list is position: fixed). Menubar dropdowns render inside the menubar.
+  return createPortal(
+    container ? list : <div className="menu-portal" role="region" aria-label={label ?? 'Menu'}>{list}</div>,
     container ?? document.body,
   )
 }
 
-/** Context menu state helper: `const cm = useContextMenu(); <div onContextMenu={e => cm.open(e, items)}/>{cm.element}` */
+/** Where focus goes when a menu closes: the stored element, else the trigger, else the active document. */
+function giveFocusBack(prev: HTMLElement | null, trigger: HTMLElement | null) {
+  for (const el of [prev, trigger]) {
+    if (el && el !== document.body && el.isConnected && !el.closest('[inert]') && el.getClientRects().length) { el.focus({ preventScroll: true }); return }
+  }
+  focusDocument()
+}
+
+const focusLost = () => { const a = document.activeElement; return !a || a === document.body || !a.isConnected }
+
+/**
+ * Context menu state helper: `const cm = useContextMenu(); <div onContextMenu={e => cm.open(e, items)}/>{cm.element}`.
+ * `openAt(button, items)` opens a menu from a button: while it is open the button's `aria-expanded` is
+ * true (when it declares `aria-haspopup`), and when the menu closes by keyboard (Esc, Tab), by choosing an
+ * item, or by a click that leaves focus nowhere, focus returns to where it was or to the button, never to <body>.
+ */
 export function useContextMenu() {
   const [state, setState] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
   const restore = useRef<HTMLElement | null>(null)
+  const trigger = useRef<HTMLElement | null>(null)
+  const setExpanded = (v: boolean) => {
+    const t = trigger.current
+    if (t?.hasAttribute('aria-haspopup')) t.setAttribute('aria-expanded', String(v))
+  }
+  const remember = (el: HTMLElement | null) => {
+    setExpanded(false)
+    const a = document.activeElement as HTMLElement | null
+    restore.current = a && a !== document.body ? a : null
+    trigger.current = el
+  }
   return {
-    open(e: { clientX: number; clientY: number; preventDefault: () => void; stopPropagation?: () => void }, items: MenuItem[]) {
+    open(e: { clientX: number; clientY: number; preventDefault: () => void; stopPropagation?: () => void; currentTarget?: unknown }, items: MenuItem[]) {
       e.preventDefault()
       e.stopPropagation?.()
-      restore.current = document.activeElement as HTMLElement | null
+      remember(e.currentTarget instanceof HTMLElement ? e.currentTarget : null)
       setState({ x: e.clientX, y: e.clientY, items })
     },
-    /** Open at an element (keyboard: Shift+F10 / ContextMenu key). */
+    /** Open at an element (a menu button, or Shift+F10 / the ContextMenu key on a focused item). */
     openAt(el: HTMLElement, items: MenuItem[]) {
       const r = el.getBoundingClientRect()
-      restore.current = document.activeElement as HTMLElement | null
+      remember(el)
+      setExpanded(true)
       setState({ x: r.left + 12, y: r.bottom, items })
     },
-    close() { setState(null) },
+    close() { setExpanded(false); setState(null) },
+    isOpen: state !== null,
     element: state ? (
       <MenuList
         items={state.items}
@@ -235,8 +287,11 @@ export function useContextMenu() {
         label="Context menu"
         onClose={reason => {
           setState(null)
-          // a click elsewhere moves focus itself; keyboard closes and chosen items return it
-          if (reason !== 'outside' && restore.current?.isConnected) restore.current.focus()
+          setExpanded(false)
+          const prev = restore.current, t = trigger.current
+          // a click elsewhere moves focus itself (unless it lands on nothing); keyboard closes and chosen items return it
+          if (reason === 'outside' || reason === 'blur') window.setTimeout(() => { if (focusLost()) giveFocusBack(prev, t) }, 0)
+          else giveFocusBack(prev, t)
         }}
       />
     ) : null,

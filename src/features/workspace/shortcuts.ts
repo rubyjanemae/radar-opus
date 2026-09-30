@@ -16,7 +16,10 @@ export interface ShortcutGroup { category: string; rows: ShortcutRow[] }
 export const CATEGORY_ORDER = ['File', 'Edit', 'View', 'Repertory', 'Search', 'Case', 'Analysis', 'Tools', 'Help']
 
 /** Static reference rows (keys handled inside views rather than by registered commands). */
-export interface ReferenceRow { keys: string[]; title: string; detail?: string }
+export interface ReferenceRow { keys: string[]; title: string; detail?: string; /** Stable React key; defaults to the title plus keys. */ id?: string }
+
+/** A stable key for a reference row: command id (or title) plus its chords. */
+export const referenceRowKey = (r: ReferenceRow) => `${r.id ?? r.title}|${r.keys.join(' ')}`
 export interface ReferenceSection { id: string; title: string; rows: ReferenceRow[] }
 
 export const TAKE_LANGUAGE: ReferenceSection = {
@@ -42,7 +45,7 @@ export const REPERTORY_KEYS: ReferenceSection = {
     { keys: ['↑', '↓'], title: 'Previous or next rubric' },
     { keys: ['→', '↵'], title: 'Open the first sub-rubric' },
     { keys: ['←', '⌫'], title: 'Up to the parent rubric' },
-    { keys: ['A–Z'], title: 'Type letters to jump to a sub-rubric', detail: 'In the navigator tree, typing jumps to the next matching rubric.' },
+    { keys: ['A–Z'], title: 'Type letters to open the chapter chooser', detail: 'In the navigator tree, typing jumps to the next matching rubric.' },
     { keys: ['Space'], title: 'Cycle the display: remedy count, remedies' },
     { keys: ['+', '='], title: 'Open the take bar (see the mini-language)' },
     { keys: [`${formatKeys('Mod')}+↵`], title: 'Take the rubric at intensity 1' },
@@ -56,10 +59,10 @@ export const GENERAL_KEYS: ReferenceSection = {
   id: 'general',
   title: 'Everywhere',
   rows: [
-    { keys: ['F10', 'Alt'], title: 'Focus the menu bar' },
-    { keys: ['Shift+F10', 'Menu'], title: 'Open the context menu of the focused item' },
+    { keys: ['F10', formatKeys('Alt')], title: 'Focus the menu bar' },
+    { keys: [formatKeys('Shift+F10'), 'Menu'], title: 'Open the context menu of the focused item' },
     { keys: ['Esc'], title: 'Close the dialog, menu or overlay' },
-    { keys: ['Tab', 'Shift+Tab'], title: 'Move between controls' },
+    { keys: ['Tab', formatKeys('Shift+Tab')], title: 'Move between controls' },
   ],
 }
 
@@ -96,23 +99,41 @@ export function scopeLabel(c: Pick<Command, 'scope' | 'scopeLabel'>): string | u
  */
 export const BROWSER_DEFAULTS: Record<string, string> = {
   F1: 'browser help', F3: 'find next on page', F5: 'reload the page', F6: 'focus the address bar', F7: 'caret browsing',
-  'Mod+D': 'bookmark this page', 'Mod+Shift+D': 'bookmark all tabs', 'Mod+J': 'downloads', 'Mod+Shift+C': 'inspect element',
+  'Mod+D': 'bookmark this page', 'Mod+Shift+D': 'bookmark all tabs', 'Mod+J': 'downloads', 'Mod+Shift+Y': 'downloads library',
   'Mod+F': 'find on page', 'Mod+P': 'print', 'Mod+K': 'search the web', 'Mod+B': 'bookmarks sidebar', 'Mod+Shift+B': 'bookmarks bar',
   'Mod+E': 'search the web', 'Mod+S': 'save the page', 'Mod+H': 'history', 'Mod+Shift+M': 'switch profile',
   'Mod+,': 'browser settings', 'Mod+=': 'zoom in', 'Mod++': 'zoom in', 'Mod+-': 'zoom out', 'Mod+0': 'reset zoom',
+  ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8].map(n => [`Mod+${n}`, `switch to browser tab ${n}`])), 'Mod+9': 'switch to the last browser tab',
   'Alt+ArrowLeft': 'back', 'Alt+ArrowRight': 'forward', 'Mod+[': 'back', 'Mod+]': 'forward', 'Mod+Shift+F': 'full screen',
 }
 
-/** Reference rows for the browser shortcuts that registered commands override. */
+/**
+ * Reference rows for the browser shortcuts that registered commands override. One row per command
+ * and browser meaning, so alternative chords (Ctrl+= and Ctrl++ for zoom in) share a row.
+ */
 export function overriddenBrowserKeys(cmds: Command[]): ReferenceSection {
   const rows = new Map<string, ReferenceRow>()
+  const byChord = new Map<string, ReferenceRow>()
   for (const c of cmds) {
+    const title = c.title.replace(/…$/, '')
+    const scope = scopeLabel(c)
     for (const k of usableKeys(c.keys)) {
-      const meaning = BROWSER_DEFAULTS[normaliseChord(k)]
+      const chord = normaliseChord(k)
+      const meaning = BROWSER_DEFAULTS[chord]
       if (!meaning) continue
-      const prev = rows.get(k)
-      if (prev) { if (!prev.title.includes(c.title.replace(/…$/, ''))) prev.title += `; ${c.title.replace(/…$/, '')}` }
-      else rows.set(k, { keys: [formatKeys(k)], title: c.title.replace(/…$/, ''), detail: `Instead of the browser's ${meaning}${c.scope ? ` (${scopeLabel(c)})` : ''}.` })
+      const shared = byChord.get(chord)
+      if (shared) {
+        // another command on the same chord (in another view): name both on the one row
+        const named = scope ? `${title} ${scope}` : title
+        if (!shared.title.includes(named)) shared.title += `; ${named}`
+        continue
+      }
+      const sig = `${c.id}|${meaning}`
+      const prev = rows.get(sig)
+      if (prev) { prev.keys.push(formatKeys(k)); byChord.set(chord, prev); continue }
+      const row: ReferenceRow = { id: c.id, keys: [formatKeys(k)], title, detail: `Instead of the browser's ${meaning}${scope ? ` (${scope})` : ''}.` }
+      rows.set(sig, row)
+      byChord.set(chord, row)
     }
   }
   return { id: 'browser', title: 'Browser keys used by Radar Opus', rows: [...rows.values()] }

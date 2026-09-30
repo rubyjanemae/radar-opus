@@ -104,12 +104,17 @@ export function RemedyPicker({ value, onChange, autoFocus, id }: { value: number
   )
 }
 
-/** Small bar for the search summary, stacked by grade (grade also shown by the legend pattern). */
+/** "grade 3 19, grade 2 33, grade 1 29": the grade breakdown in words (highest grade first, empty grades left out). */
+export function gradeBreakdown(byGrade: readonly [number, number, number, number]): string {
+  return [3, 2, 1, 0].filter(g => byGrade[g]).map(g => `grade ${g + 1} ${byGrade[g]}`).join(', ')
+}
+
+/** Small bar for the search summary, stacked by grade. Each segment prints its grade numeral when it is wide enough, and grade 4 is hatched, so grade never rests on colour alone. */
 export function GradeBar({ byGrade, max }: { byGrade: [number, number, number, number]; max: number }) {
   const total = byGrade.reduce((a, b) => a + b, 0)
   return (
     <span className="srch-bar" style={{ width: `${Math.max(2, (total / Math.max(1, max)) * 100)}%` }}>
-      {[3, 2, 1, 0].map(g => byGrade[g] ? <span key={g} className={`srch-bar-seg sb${g + 1}`} style={{ flexGrow: byGrade[g] }} /> : null)}
+      {[3, 2, 1, 0].map(g => byGrade[g] ? <span key={g} className={`srch-bar-seg sb${g + 1}`} style={{ flexGrow: byGrade[g] }}><span className="srch-seg-n" aria-hidden>{g + 1}</span></span> : null)}
     </span>
   )
 }

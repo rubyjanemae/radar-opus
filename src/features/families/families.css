@@ -233,3 +233,8 @@
 .fam-error p { margin: 0 0 4px; color: var(--text-3); font-size: var(--fs-sm); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fam-error .btn { display: inline-flex; align-items: center; gap: 5px; }
 .fam-seg-dot { width: 6px; height: 6px; border-radius: 3px; background: var(--accent); margin-left: 1px; }
+
+/* Family filter footer: disabled actions read as disabled (nothing to remove / nothing to apply) */
+.btn.fam-foot-btn:disabled { opacity: .45; cursor: not-allowed; }
+/* the disabled primary keeps ≥3:1 text contrast in both themes: neutral fill instead of faded accent */
+.btn-primary.fam-apply:disabled { opacity: 1; cursor: not-allowed; background: var(--bg-sunken); border-color: var(--border-strong); color: var(--text-2); }

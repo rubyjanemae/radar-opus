@@ -4,7 +4,7 @@ import { Search, X } from 'lucide-react'
 import { Dialog } from '../../ui/Dialog'
 import { allCommands, formatKeys, getCommand, isEnabled, onCommandsChanged, runCommand } from '../../commands/registry'
 import { actions } from '../../state/store'
-import { REFERENCE_SECTIONS, filterSection, overriddenBrowserKeys, shortcutGroups } from './shortcuts'
+import { REFERENCE_SECTIONS, filterSection, overriddenBrowserKeys, referenceRowKey, shortcutGroups } from './shortcuts'
 import type { ReferenceSection } from './shortcuts'
 import './workspace.css'
 
@@ -12,7 +12,7 @@ function Keys({ keys, raw }: { keys: string[]; raw?: boolean }) {
   return (
     <span className="ws-keys">
       {keys.map((k, i) => (
-        <span key={k} className="ws-keys-alt">
+        <span key={`${i}:${k}`} className="ws-keys-alt">
           {i > 0 && <span className="ws-keys-or">or</span>}
           <kbd className="kbd">{raw ? k : formatKeys(k)}</kbd>
         </span>
@@ -125,7 +125,7 @@ export function ShortcutsDialog({ onClose, query: initialQuery }: { onClose: () 
                       const c = getCommand(r.id)
                       const enabled = !!c && isEnabled(c)
                       return (
-                        <li key={r.id}>
+                        <li key={`${r.id}|${r.keys.join(' ')}`}>
                           <button
                             className={`ws-sc-row${inputFocused && r.id === current ? ' ws-sc-target' : ''}`}
                             data-cmd={r.id}
@@ -169,7 +169,7 @@ function RefSection({ section }: { section: ReferenceSection }) {
       <h3>{section.title}</h3>
       <ul>
         {section.rows.map(r => (
-          <li key={r.title} className="ws-sc-static">
+          <li key={referenceRowKey(r)} className="ws-sc-static">
             <Keys keys={r.keys} raw />
             <span className="ws-sc-title">{r.title}{r.detail && <span className="ws-sc-detail">{r.detail}</span>}</span>
           </li>

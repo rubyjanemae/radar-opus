@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Consultation, Patient } from '../../state/patients'
 import { DEFAULT_ANALYSIS } from '../../state/store'
+import { fastest } from '../../testing/timing'
 import {
   ageOf, comparePotency, consultationsOf, copyConsultation, duplicatePatient, filterRows, followUpFrom, formatAge, formatScoreSigned, ghhosLabel,
-  nextFollowUpIndex, normalizeTag, patientName, patientRows, potencyRank, previousPrescription, relativeDate, sortRows, tagCounts, validatePatient,
+  analysisFilterNotes, formatDate, formatDateTime, nextFollowUpIndex, normalizeTag, patientName, patientRows, rubricHaystack, potencyRank, previousPrescription, relativeDate, sortRows, tagCounts, validatePatient,
 } from './logic'
 
 const NOW = Date.parse('2026-09-29T12:00:00')
@@ -187,5 +188,93 @@ describe('follow-up response', () => {
     expect(previousPrescription(list, fu)?.rx.id).toBe('r1')
     expect(previousPrescription(list, acute2)?.rx.id).toBe('r2')
     expect(previousPrescription(list, first)).toBeNull()
+  })
+})
+
+describe('patient rows at scale', () => {
+  it('memoises rows per patient and consultation objects', () => {
+    const ps = { a: patient('a', { lastName: 'A' }), b: patient('b', { lastName: 'B' }) }
+    const cs = { a1: consultation('a1', 'a', '2026-01-01'), b1: consultation('b1', 'b', '2026-01-01') }
+    const ab = () => 'X'
+    const r1 = patientRows(ps, cs, ab, NOW)
+    const r2 = patientRows({ ...ps }, { ...cs }, ab, NOW)
+    expect(r2[0]).toBe(r1[0])
+    // editing one consultation rebuilds only that patient's row
+    const r3 = patientRows(ps, { ...cs, b1: { ...cs.b1, title: 'changed' } }, ab, NOW)
+    expect(r3[0]).toBe(r1[0])
+    expect(r3[1]).not.toBe(r1[1])
+    // a new day recomputes ages
+    expect(patientRows(ps, cs, ab, NOW + 86_400_000)[0]).not.toBe(r1[0])
+  })
+  it('builds rubric search text lazily, only for queries the rest of the text does not answer', () => {
+    let calls = 0
+    const ps = { a: patient('a', { lastName: 'Adams' }) }
+    const cs = { a1: consultation('a1', 'a', '2026-01-01', { clipboards: [{ id: 'cb', name: 'C', color: '#000', symptoms: [{ id: 's', rubrics: ['publicum:1'], combine: 'union', weight: 1, eliminatory: false, exclusive: false, group: null, causal: false, addedAt: 1 }] }] }) }
+    const rows = patientRows(ps, cs, () => 'X', NOW, { rubricText: () => { calls++; return 'Mind anxiety' } })
+    expect(filterRows(rows, 'adams', [])).toHaveLength(1)
+    expect(calls).toBe(0)
+    expect(filterRows(rows, 'anxiety', [])).toHaveLength(1)
+    expect(filterRows(rows, 'mind', [])).toHaveLength(1)
+    expect(calls).toBe(1)
+    expect(rubricHaystack(rows[0])).toBe('mind anxiety')
+  })
+  it('does not keep rubric text while a repertory is still loading', () => {
+    let loaded = false
+    const ps = { a: patient('a') }
+    const cs = { a1: consultation('a1', 'a', '2026-01-01', { clipboards: [{ id: 'cb', name: 'C', color: '#000', symptoms: [{ id: 's', rubrics: ['kent-de:1'], combine: 'union', weight: 1, eliminatory: false, exclusive: false, group: null, causal: false, addedAt: 1 }] }] }) }
+    const rows = patientRows(ps, cs, () => 'X', NOW, { rubricText: () => (loaded ? 'Gemüt Angst' : null) })
+    expect(filterRows(rows, 'angst', [])).toHaveLength(0)
+    loaded = true
+    expect(filterRows(rows, 'angst', [])).toHaveLength(1)
+  })
+  it('sorts 2,000 patients by precomputed keys quickly', () => {
+    const ps: Record<string, ReturnType<typeof patient>> = {}
+    const cs: Record<string, ReturnType<typeof consultation>> = {}
+    for (let i = 0; i < 2000; i++) {
+      ps[`p${i}`] = patient(`p${i}`, { lastName: `Name${(i * 7919) % 2000}`, firstName: 'Ann', tags: i % 3 ? ['chronic'] : [] })
+      for (let k = 0; k < 3; k++) cs[`c${i}-${k}`] = consultation(`c${i}-${k}`, `p${i}`, `2026-0${1 + k}-1${i % 9}`, { prescriptions: [{ id: `r${i}${k}`, remedyId: i % 50, potency: '30C', dosage: '', date: '2026-01-01', note: '' }] })
+    }
+    const ab = (id: number) => `R${id}`
+    // Budgets on the fastest of a few runs (preemption only adds time). The default budgets are loose
+    // (5x) so a loaded CI machine does not fail them; PERF=1 checks the real targets.
+    const strict = !!(globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.PERF
+    const loose = strict ? 1 : 5
+    // cold: fresh patient records each run, so no row comes from the per-patient memo
+    let fresh = ps
+    const build = fastest(3, () => {
+      const rows = patientRows(fresh, cs, ab, NOW)
+      for (const key of ['name', 'lastVisit', 'lastRx', 'tags', 'age'] as const) sortRows(rows, { key, dir: 1 })
+      return rows
+    }, () => { fresh = Object.fromEntries(Object.entries(ps).map(([k, p]) => [k, { ...p }])) })
+    expect(build.result).toHaveLength(2000)
+    expect(build.ms).toBeLessThan(500 * loose)
+    // rows are memoised per patient: rebuilding with the same records is cheap
+    patientRows(ps, cs, ab, NOW)
+    const again = fastest(3, () => patientRows({ ...ps }, { ...cs }, ab, NOW))
+    expect(again.result).toHaveLength(2000)
+    expect(again.ms).toBeLessThan(100 * loose)
+  })
+})
+
+describe('dates', () => {
+  it('formats calendar dates and moments with the one medium style', () => {
+    const d = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date('2026-09-02T00:00:00'))
+    expect(formatDate('2026-09-02')).toBe(d)
+    expect(formatDate(null)).toBe('')
+    expect(formatDate('not a date')).toBe('not a date')
+    const t = new Date('2026-09-02T14:05:00').getTime()
+    expect(formatDateTime(t)).toBe(new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(t))
+    expect(formatDateTime(null)).toBe('')
+  })
+})
+
+describe('analysis filter notes', () => {
+  it('names the family limit, highlight, exclusions and minimum coverage', () => {
+    const ab = (id: number) => ['Puls', 'Sep', 'Nat-m', 'Sulph'][id] ?? `#${id}`
+    expect(analysisFilterNotes({ remedyFilter: null, excludedRemedies: [], minCoverage: 0 }, ab)).toEqual([])
+    expect(analysisFilterNotes({ remedyFilter: [1, 2], filterLabel: 'Solanaceae', highlight: [0], highlightLabel: null, excludedRemedies: [0, 1, 2, 3], minCoverage: 3 }, ab)).toEqual([
+      'Limited to Solanaceae', 'Highlighting 1 remedy', 'Excluding Puls, Sep, Nat-m and 1 more', 'Minimum coverage 3 symptoms',
+    ])
+    expect(analysisFilterNotes({ remedyFilter: [1, 2], excludedRemedies: [], minCoverage: 1 }, ab)).toEqual(['Limited to 2 remedies', 'Minimum coverage 1 symptom'])
   })
 })

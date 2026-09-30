@@ -1,7 +1,11 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
 import { focusDocument } from '../features/workspace/panes'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { syncModalInert } from './modal'
+
+/** The kind of the dialog DialogHost is rendering (registerDialog); set as `data-dialog` on the dialog. */
+export const DialogKindContext = createContext<string | undefined>(undefined)
 
 interface Props {
   title: string
@@ -19,6 +23,7 @@ export function Dialog({ title, onClose, children, footer, width = 480, initialF
   // captured during the first render, before any child effect can move focus into the dialog
   const [opener] = useState(() => (typeof document !== 'undefined' ? document.activeElement as HTMLElement | null : null))
   const titleId = useId()
+  const kind = useContext(DialogKindContext)
   useEffect(() => {
     const el = ref.current
     const target = (initialFocus && el?.querySelector<HTMLElement>(initialFocus)) || el?.querySelector<HTMLElement>('input, textarea, select, button:not(.dialog-x)')
@@ -26,6 +31,8 @@ export function Dialog({ title, onClose, children, footer, width = 480, initialF
   }, [initialFocus])
   useEffect(() => () => {
     // give focus back to what had it before the dialog opened; if that is gone, to the document
+    // the dialog's DOM is gone by now: lift the app's inert state first so focus can go back into it
+    syncModalInert()
     const a = document.activeElement
     const lost = !a || a === document.body || !a.isConnected || !!ref.current?.contains(a)
     if (!lost) return
@@ -39,6 +46,7 @@ export function Dialog({ title, onClose, children, footer, width = 480, initialF
         ref={ref}
         className="dialog"
         role="dialog"
+        data-dialog={kind}
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
@@ -54,12 +62,13 @@ export function Dialog({ title, onClose, children, footer, width = 480, initialF
           }
         }}
       >
-        <header className="dialog-head">
+        {/* plain divs: a dialog's head and foot are not page-level banner/contentinfo landmarks */}
+        <div className="dialog-head">
           <h2 id={titleId}>{title}</h2>
           <button className="dialog-x icon-btn" aria-label="Close" onClick={onClose}>×</button>
-        </header>
+        </div>
         <div className="dialog-body">{children}</div>
-        {footer && <footer className="dialog-foot">{footer}</footer>}
+        {footer && <div className="dialog-foot">{footer}</div>}
       </div>
     </div>,
     document.body,

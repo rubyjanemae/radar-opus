@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { startTransition, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent, ReactNode } from 'react'
 import { ArrowLeft, BookText, Columns3, Copy, ExternalLink, Filter, FlaskConical, Highlighter, Loader2, MoreHorizontal, Network, Search } from 'lucide-react'
 import { useCatalog, useRepertory } from '../../data/CatalogContext'
@@ -15,28 +15,17 @@ import { useBook } from './book'
 import type { MMBook } from './book'
 import { Paragraph } from './components'
 import type { RemedyLinkHandlers } from './components'
-import { familyVersion, focusIsBusy, onFamilyProvider, openMM, remedyGroups } from './ops'
-import type { RemedyGroup } from './ops'
+import { familyVersion, focusIsBusy, onFamilyProvider, openMM, remedyGroups, remedyMemory, setRemedyMemory, setSelectedRemedyRubric } from './ops'
+import type { RemedyGroup, RemedySection } from './ops'
 import { parseAltNames } from './resolve'
-import { remedyIndex } from './remedyIndex'
+import { useRemedyIndex } from './remedyIndex'
 import type { KeynoteRubric } from './remedyIndex'
 import { plainText, titleCase } from './text'
 import './mm.css'
 import './remedy.css'
 import { useWidth } from './useWidth'
 
-type Section = 'overview' | 'relations' | 'repertory' | 'families' | 'sources'
-
-/** Per tab UI memory (section, repertory, back stack) that survives tab switches. */
-const tabMemory = new Map<string, { section: Section; repertory: string | null; back: number[] }>()
-function memory(tabId: string) {
-  let m = tabMemory.get(tabId)
-  if (!m) tabMemory.set(tabId, (m = { section: 'overview', repertory: null, back: [] }))
-  return m
-}
-
-/** Rubric selected in the keynote list, exposed to rubric.* commands (take, copy). */
-export let selectedRemedyRubric: string | null = null
+type Section = RemedySection
 
 const KEY_ROW = 26
 
@@ -53,17 +42,16 @@ export function RemedyView({ tab }: { tab: RemedyTab }) {
   const catalog = useCatalog()
   const { book, error: mmError } = useBook(catalog)
   const remedy = catalog.remedy(tab.remedyId)
-  const mem = memory(tab.id)
-  const [section, setSectionState] = useState<Section>(mem.section)
+  const [section, setSectionState] = useState<Section>(() => remedyMemory(tab.id).section)
   const bodyRef = useRef<HTMLDivElement>(null)
   const setSection = (s: Section) => {
     if (s !== section && bodyRef.current) bodyRef.current.scrollTop = 0
-    mem.section = s
+    setRemedyMemory(tab.id, { section: s })
     setSectionState(s)
   }
   const groups = useFamilies(tab.remedyId)
   useApp(s => s.activeConsultationId) // re-render when the case changes (compare / limit availability)
-  const [back, setBack] = useState<number[]>(mem.back)
+  const [back, setBack] = useState<number[]>(() => remedyMemory(tab.id).back)
   const cm = useContextMenu()
   const rootRef = useRef<HTMLDivElement>(null)
   const moreRef = useRef<HTMLButtonElement>(null)
@@ -73,9 +61,15 @@ export function RemedyView({ tab }: { tab: RemedyTab }) {
   const known = catalog.remedies.has(tab.remedyId)
   const entry = book?.entries.get(tab.remedyId) ?? null
   const alts = useMemo(() => parseAltNames(remedy.altName), [remedy.altName])
-  const relations = useMemo(() => (book ? book.relationships(tab.remedyId) : []), [book, tab.remedyId])
+  // the header and keynotes paint first; the secondary sections (relationships, repertory profile,
+  // citations) follow in a transition, so opening or switching a remedy never waits for them
+  const [secondaryId, setSecondaryId] = useState<number | null>(null)
+  useEffect(() => { startTransition(() => setSecondaryId(tab.remedyId)) }, [tab.remedyId])
+  const secReady = secondaryId === tab.remedyId
+  const secBook = secReady ? book : null
+  const relations = useMemo(() => (secBook ? secBook.relationships(tab.remedyId) : []), [secBook, tab.remedyId])
   const relCount = relations.reduce((n, g) => n + g.remedies.length, 0)
-  const citations = useMemo(() => book?.citations.get(tab.remedyId) ?? [], [book, tab.remedyId])
+  const citations = useMemo(() => secBook?.citations.get(tab.remedyId) ?? [], [secBook, tab.remedyId])
 
   useEffect(() => { if (section === 'families' && !groups) setSection('overview') }, [groups, section]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -86,7 +80,7 @@ export function RemedyView({ tab }: { tab: RemedyTab }) {
     const existing = useApp.getState().tabs.find(t => t.kind === 'remedy' && t.remedyId === rid)
     if (existing) { actions.activateTab(existing.id); return }
     const nb = [...back.slice(-49), tab.remedyId]
-    mem.back = nb
+    setRemedyMemory(tab.id, { back: nb })
     setBack(nb)
     actions.updateTab<RemedyTab>(tab.id, { remedyId: rid })
   }
@@ -94,7 +88,7 @@ export function RemedyView({ tab }: { tab: RemedyTab }) {
     const prev = back[back.length - 1]
     if (prev === undefined) return
     const nb = back.slice(0, -1)
-    mem.back = nb
+    setRemedyMemory(tab.id, { back: nb })
     setBack(nb)
     actions.updateTab<RemedyTab>(tab.id, { remedyId: prev })
     rootRef.current?.focus({ preventScroll: true })
@@ -220,15 +214,15 @@ export function RemedyView({ tab }: { tab: RemedyTab }) {
 
       <div className="ri-body" role="tabpanel" ref={bodyRef}>
         {section === 'overview' && (
-          <Overview book={book} mmError={mmError} remedyId={tab.remedyId} links={links} citations={citations.length} relCount={relCount}
+          <Overview book={book} secondary={secReady} mmError={mmError} remedyId={tab.remedyId} links={links} citations={citations.length} relCount={relCount}
             groups={groups} onSection={setSection} onRemedy={showRemedy} onMenu={(rid, e) => cm.open(e, remedyMenu(rid))} />
         )}
         {section === 'relations' && (
-          book ? <Relations book={book} remedyId={tab.remedyId} links={links} onRemedy={showRemedy} onMenu={(rid, e) => cm.open(e, remedyMenu(rid))} />
+          secBook ? <Relations book={secBook} remedyId={tab.remedyId} links={links} onRemedy={showRemedy} onMenu={(rid, e) => cm.open(e, remedyMenu(rid))} />
             : <Loading label="Loading Boericke…" />
         )}
-        {section === 'repertory' && <RepertoryProfile tabId={tab.id} remedyId={tab.remedyId} />}
-        {section === 'sources' && <Sources book={book} mmError={mmError} remedyId={tab.remedyId} />}
+        {section === 'repertory' && (secReady ? <RepertoryProfile tabId={tab.id} remedyId={tab.remedyId} /> : <Loading label="Loading repertory profile…" />)}
+        {section === 'sources' && (secReady || mmError ? <Sources book={secBook} mmError={mmError} remedyId={tab.remedyId} /> : <Loading label="Loading sources…" />)}
         {section === 'families' && groups && <Families groups={groups} self={tab.remedyId} onRemedy={showRemedy} onMenu={(rid, e) => cm.open(e, remedyMenu(rid))} onLimit={limitToFamily} />}
       </div>
       {cm.element}
@@ -254,14 +248,14 @@ function Chip({ rid, onRemedy, onMenu, dim, compact }: { rid: number; onRemedy: 
 
 const KEY_SECTIONS = /^(mind|mental|modalities)$/i
 
-function Overview({ book, mmError, remedyId, links, citations, relCount, groups, onSection, onRemedy, onMenu }: {
-  book: MMBook | null; mmError: Error | null; remedyId: number; links: RemedyLinkHandlers; citations: number; relCount: number
+function Overview({ book, secondary, mmError, remedyId, links, citations, relCount, groups, onSection, onRemedy, onMenu }: {
+  book: MMBook | null; secondary: boolean; mmError: Error | null; remedyId: number; links: RemedyLinkHandlers; citations: number; relCount: number
   groups: RemedyGroup[] | null; onSection: (s: Section) => void; onRemedy: (rid: number, e: MouseEvent) => void; onMenu: (rid: number, e: MouseEvent) => void
 }) {
   const catalog = useCatalog()
   const fontScale = useApp(s => s.settings.fontScale)
   const entry = book?.entries.get(remedyId) ?? null
-  const cites = book?.citations.get(remedyId) ?? []
+  const cites = (secondary && book?.citations.get(remedyId)) || []
   const citing = [...new Set(cites.map(c => c.remedyId))]
   const note = useApp(s => s.remedyNotes[remedyId] ?? '')
   return (
@@ -304,13 +298,13 @@ function Overview({ book, mmError, remedyId, links, citations, relCount, groups,
           <dl className="ri-facts">
             <dt>Abbreviation</dt><dd>{catalog.remedy(remedyId).abbrev}</dd>
             <dt>Boericke</dt><dd>{book ? (entry ? `${entry.sections.length} sections` : 'no monograph') : '…'}</dd>
-            <dt>Relationships</dt><dd>{book ? (relCount ? <button className="ri-link" onClick={() => onSection('relations')}>{relCount} remedies</button> : 'none listed') : '…'}</dd>
-            <dt>Cited by</dt><dd>{book ? (citations ? `${citations} section${citations > 1 ? 's' : ''} in ${citing.length} monograph${citing.length > 1 ? 's' : ''}` : 'no other monograph') : '…'}</dd>
+            <dt>Relationships</dt><dd>{book && secondary ? (relCount ? <button className="ri-link" onClick={() => onSection('relations')}>{relCount} remedies</button> : 'none listed') : '…'}</dd>
+            <dt>Cited by</dt><dd>{book && secondary ? (citations ? `${citations} section${citations > 1 ? 's' : ''} in ${citing.length} monograph${citing.length > 1 ? 's' : ''}` : 'no other monograph') : '…'}</dd>
             {groups?.map((g, i) => <FactRow key={i} label={g.system} value={g.open ? <button className="ri-link" onClick={g.open}>{g.label}</button> : g.label} />)}
             <FactRow label="Your note" value={<button className="ri-link" onClick={() => onSection('sources')}>{note ? (note.length > 60 ? `${note.slice(0, 58)}…` : note) : 'add a note'}</button>} />
           </dl>
         </section>
-        <RepertoryCounts remedyId={remedyId} onOpen={() => onSection('repertory')} />
+        {secondary ? <RepertoryCounts remedyId={remedyId} onOpen={() => onSection('repertory')} /> : <section className="ri-card" aria-busy="true"><div className="ri-card-head">Repertories</div><div className="skeleton" style={{ height: 12, margin: '9px 0', width: '70%' }} /></section>}
         {cites.length > 0 && entry && (
           <section className="ri-card">
             <div className="ri-card-head">Cited in Boericke</div>
@@ -339,24 +333,32 @@ function RepertoryCounts({ remedyId, onOpen }: { remedyId: number; onOpen: () =>
       <div className="ri-card-head">Repertories <button className="btn btn-sm btn-ghost" onClick={onOpen}>Profile</button></div>
       <table className="ri-reptable">
         <tbody>
-          {catalog.repertoryInfos.map(info => {
-            const rep = catalog.repertory(info.abbrev)
-            const n = rep ? remedyIndex(rep).rubricCount(remedyId) : null
-            return (
-              <tr key={info.abbrev}>
-                <td title={info.fullTitle}>{info.title}</td>
-                <td className="ri-num">
-                  {n !== null ? `${n.toLocaleString()} rubrics`
-                    : loading === info.abbrev ? <Loader2 size={12} className="spin" />
-                    : <button className="btn btn-sm btn-ghost" onClick={() => { setLoading(info.abbrev); catalog.loadRepertory(info.abbrev).then(() => { setLoading(null); setTick(t => t + 1) }, e => { setLoading(null); actions.toast(e instanceof Error ? e.message : 'Could not load repertory', 'error') }) }}>Count</button>}
-                </td>
-              </tr>
-            )
-          })}
+          {catalog.repertoryInfos.map(info => (
+            <tr key={info.abbrev}>
+              <td title={info.fullTitle}>{info.title}</td>
+              <td className="ri-num">
+                <RubricCount abbrev={info.abbrev} remedyId={remedyId} suffix=" rubrics" loading={loading === info.abbrev}
+                  onLoad={() => { setLoading(info.abbrev); catalog.loadRepertory(info.abbrev).then(() => { setLoading(null); setTick(t => t + 1) }, e => { setLoading(null); actions.toast(e instanceof Error ? e.message : 'Could not load repertory', 'error') }) }} />
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </section>
   )
+}
+
+/**
+ * Rubrics of a remedy in one repertory: a "Count" button while the repertory is not loaded, a
+ * placeholder while its remedy index is being built (in idle time, never during render), then the count.
+ */
+function RubricCount({ abbrev, remedyId, suffix = '', loading, onLoad }: { abbrev: string; remedyId: number; suffix?: string; loading: boolean; onLoad: () => void }) {
+  const catalog = useCatalog()
+  const rep = catalog.repertory(abbrev) ?? null
+  const index = useRemedyIndex(rep)
+  if (!rep) return loading ? <Loader2 size={12} className="spin" aria-label="Loading" /> : <button className="btn btn-sm btn-ghost" onClick={onLoad}>Count</button>
+  if (!index) return <span className="ri-dim ri-counting" aria-label="Counting">…</span>
+  return <>{index.rubricCount(remedyId).toLocaleString()}{suffix}</>
 }
 
 // ───────────────────────── sources & notes ─────────────────────────
@@ -400,22 +402,14 @@ function Sources({ book, mmError, remedyId }: { book: MMBook | null; mmError: Er
         <table className="ri-srctable">
           <thead><tr><th>Repertory</th><th>Author · year</th><th>Licence</th><th className="ri-num">Rubrics</th></tr></thead>
           <tbody>
-            {catalog.repertoryInfos.map(info => {
-              const rep = catalog.repertory(info.abbrev)
-              const n = rep ? remedyIndex(rep).rubricCount(remedyId) : null
-              return (
-                <tr key={info.abbrev}>
-                  <td title={info.fullTitle}><b>{info.title}</b><div className="ri-dim">{info.fullTitle}</div></td>
-                  <td>{[info.author, info.year].filter(Boolean).join(' · ') || '—'}</td>
-                  <td>{info.license || '—'}</td>
-                  <td className="ri-num">
-                    {n !== null ? n.toLocaleString()
-                      : loading === info.abbrev ? <Loader2 size={12} className="spin" />
-                      : <button className="btn btn-sm btn-ghost" onClick={() => load(info.abbrev)}>Count</button>}
-                  </td>
-                </tr>
-              )
-            })}
+            {catalog.repertoryInfos.map(info => (
+              <tr key={info.abbrev}>
+                <td title={info.fullTitle}><b>{info.title}</b><div className="ri-dim">{info.fullTitle}</div></td>
+                <td>{[info.author, info.year].filter(Boolean).join(' · ') || '—'}</td>
+                <td>{info.license || '—'}</td>
+                <td className="ri-num"><RubricCount abbrev={info.abbrev} remedyId={remedyId} loading={loading === info.abbrev} onLoad={() => load(info.abbrev)} /></td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </section>
@@ -512,18 +506,19 @@ const GRADE_LABEL = ['plain', 'italic', 'bold', 'BOLD CAPS']
 
 function RepertoryProfile({ tabId, remedyId }: { tabId: string; remedyId: number }) {
   const catalog = useCatalog()
-  const mem = memory(tabId)
   const defaultRep = useApp(s => s.settings.defaultRepertory)
-  const initial = mem.repertory ?? (catalog.repertoryInfos.some(r => r.abbrev === defaultRep) ? defaultRep : catalog.repertoryInfos[0]?.abbrev ?? '')
+  const initial = remedyMemory(tabId).repertory ?? (catalog.repertoryInfos.some(r => r.abbrev === defaultRep) ? defaultRep : catalog.repertoryInfos[0]?.abbrev ?? '')
   const [abbrev, setAbbrevState] = useState(initial)
-  const setAbbrev = (a: string) => { mem.repertory = a; setAbbrevState(a) }
+  const setAbbrev = (a: string) => { setRemedyMemory(tabId, { repertory: a }); setAbbrevState(a) }
   const { rep, error } = useRepertory(abbrev)
   const [chapter, setChapter] = useState<number | null>(null)
   const [sel, setSel] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
   const cm = useContextMenu()
 
-  const stats = useMemo(() => (rep ? remedyIndex(rep).stats(remedyId) : null), [rep, remedyId])
+  // the index is built in idle time after the repertory loads (or now, off the render path)
+  const index = useRemedyIndex(rep)
+  const stats = useMemo(() => (index ? index.stats(remedyId) : null), [index, remedyId])
   const keynotes = useMemo(() => (stats ? (chapter === null ? stats.keynotes : stats.keynotes.filter(k => rep!.chapterOf(k.rubric) === chapter)) : []), [stats, chapter, rep])
   useEffect(() => { setChapter(null); setSel(0) }, [abbrev, remedyId])
   useEffect(() => { setSel(0) }, [chapter])
@@ -531,8 +526,8 @@ function RepertoryProfile({ tabId, remedyId }: { tabId: string; remedyId: number
 
   const ref = rep && keynotes[sel] ? rep.ref(keynotes[sel].rubric) : null
   useEffect(() => {
-    selectedRemedyRubric = ref
-    return () => { selectedRemedyRubric = null }
+    setSelectedRemedyRubric(ref)
+    return () => setSelectedRemedyRubric(null)
   }, [ref])
 
   const openRubric = (k: KeynoteRubric) => {
@@ -595,7 +590,7 @@ function RepertoryProfile({ tabId, remedyId }: { tabId: string; remedyId: number
                 <div className="ri-tile-label">rubrics · {((stats.rubricCount / rep.size) * 100).toFixed(1)}% of {rep.info.title}</div>
               </div>
               <div className="ri-grades" aria-label="Grade distribution">
-                {([4, 3, 2, 1] as Grade[]).filter(g => g <= remedyIndex(rep).maxGrade).map(g => (
+                {([4, 3, 2, 1] as Grade[]).filter(g => g <= index!.maxGrade).map(g => (
                   <div key={g} className="ri-grade-row" title={`Grade ${g} (${GRADE_LABEL[g - 1]}): ${stats.grades[g - 1].toLocaleString()} rubrics`}>
                     <span className={`ri-grade-name g${g}`}>{g} {GRADE_LABEL[g - 1]}</span>
                     <span className="ri-bar"><span style={{ width: `${(stats.grades[g - 1] / maxGrade) * 100}%` }} /></span>
@@ -624,7 +619,7 @@ function RepertoryProfile({ tabId, remedyId }: { tabId: string; remedyId: number
               <section className="ri-keynotes" aria-label="Keynote rubrics">
                 <div className="ri-card-head">
                   Keynote rubrics <span className="badge">{keynotes.length.toLocaleString()}</span>
-                  <span className="ri-dim">grade {stats.keynoteMinGrade}{stats.keynoteMinGrade < remedyIndex(rep).maxGrade ? '+' : ''}, smallest rubrics first{chapter !== null ? ` · ${rep.text(rep.chapters[chapter])}` : ''}</span>
+                  <span className="ri-dim">grade {stats.keynoteMinGrade}{stats.keynoteMinGrade < index!.maxGrade ? '+' : ''}, smallest rubrics first{chapter !== null ? ` · ${rep.text(rep.chapters[chapter])}` : ''}</span>
                   {chapter !== null && <button className="btn btn-sm btn-ghost" onClick={() => setChapter(null)}>All chapters</button>}
                 </div>
                 {!keynotes.length ? (

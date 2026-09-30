@@ -47,7 +47,7 @@ const OVERRIDES: Record<string, string> = {
   'nux vom': 'nux-v', 'nux mos': 'nux-m', 'nux mosch': 'nux-m', 'rhus t': 'rhus-t', 'rhus rad': 'rhus-r', 'rhus ven': 'rhus-v',
   'cimicif': 'cimic', cimicifuga: 'cimic', cimic: 'cimic', actea: 'cimic', 'actaea rac': 'cimic', 'arg nit': 'arg-n', 'argent nit': 'arg-n',
   castor: 'cast', castoreum: 'cast', turpentine: 'ter', 'potass permang': 'kali-ma', 'kali permang': 'kali-ma', salt: 'nat-m', 'common salt': 'nat-m', 'arg met': 'arg-m', 'aur mur': 'aur-m', 'lac can': 'lac-c', 'lac def': 'lac-d', 'lil tig': 'lil-t', 'sulph iod': 'sul-i',
-  calcar: 'calc', ionesia: 'jon', 'ionesia asoca': 'jon', 'jonesia asoca': 'jon', 'magnetis polus articus': 'm-arct',
+  calcar: 'calc', carb: 'carb-v', cannab: 'cann-s', 'cannab sat': 'cann-s', 'cannab ind': 'cann-i', 'bals peru': 'bals-p', 'balsam peru': 'bals-p', 'kali hyd': 'kali-i', 'kal hyd': 'kali-i', 'kali hydriod': 'kali-i', 'kal hydriod': 'kali-i', ionesia: 'jon', 'ionesia asoca': 'jon', 'jonesia asoca': 'jon', 'magnetis polus articus': 'm-arct',
 }
 
 /** Lower-case, dots/hyphens to spaces, collapsed. */
@@ -67,6 +67,33 @@ export function parseAltNames(alt: string | null): string[] {
     if (v) out.push(v)
   }
   return out
+}
+
+/**
+ * Lower is better. A query that is the start of a name prefers, in order: the name with as many words
+ * as the mention (decisive for multi-word mentions, "Aurum mur"), the remedy with a monograph in the
+ * book (the parent polychrest over an alkaloid or a rarely-proved sibling: "Digit" is Digitalis, not
+ * Digitalinum; "Lilium" is Lilium tigrinum), the remedy whose abbreviation agrees with the mention,
+ * and the shortest abbreviation.
+ */
+function nameScore(words: string[], n: string[], e: Entry, monograph: boolean): number {
+  return (words.length === n.length ? 0 : words.length > 1 ? 100 : 30)
+    + (words[0] === n[0] ? 0 : 20)
+    + (monograph ? 0 : 40)
+    // the abbreviation agreeing with the mention ("Dig" for "Digit") beats a longer namesake ("Digin")
+    + (words[0].startsWith(e.abbrevParts[0]) ? 0 : 10)
+    + e.remedy.abbrev.length
+}
+
+/** Edit distance between `a` and `b` (small words only). */
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j)
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i]
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
+    prev = cur
+  }
+  return prev[b.length]
 }
 
 export class RemedyResolver {
@@ -163,9 +190,7 @@ export class RemedyResolver {
         if (!words.every((w, i) => n[i].startsWith(w))) continue
         // single-word queries must be a solid stem (avoid "Sore" → "Sorghum")
         if (words.length === 1 && words[0].length < 4 && words[0] !== n[0]) continue
-        // the abbreviation agreeing with the mention ("Dig" for "Digit") beats a longer namesake ("Digin")
-        const abbrevAgrees = words[0].startsWith(e.abbrevParts[0]) ? 0 : 10
-        const score = (words.length === n.length ? 0 : 100) + (words[0] === n[0] ? 0 : 20) + abbrevAgrees + e.remedy.abbrev.length
+        const score = nameScore(words, n, e, this.withHeading.has(e.remedy.id))
         if (!best || score < best.score) best = { e, score }
       }
     }
@@ -187,6 +212,14 @@ export class RemedyResolver {
       if (p[0].length < 3) continue
       // "Phosphor" → Phos, but not "Nephritis" → Nep
       if (p.some((x, i) => words[i].length - x.length > 4)) continue
+      // a single word must be a spelling variant of a name ("Cratoeg" → Crataegus, "Xanthox" →
+      // Xantoxylum), not another word that happens to start the same ("Tabes" ≠ Tabacum, "Coccion" ≠
+      // Cocculus); and a four-letter word is not an abbreviation plus one letter ("Peru" ≠ Per)
+      if (p.length === 1) {
+        const w = words[0], extra = w.length - p[0].length
+        if (extra > 0 && w.length < 5) continue
+        if (extra > 0 && !e.names.some(n => editDistance(w, n[0].slice(0, w.length)) <= Math.ceil(extra / 2))) continue
+      }
       if (!bestAb || e.abbrev.length > bestAb.abbrev.length) bestAb = e
     }
     return bestAb?.remedy ?? null

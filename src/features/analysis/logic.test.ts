@@ -28,7 +28,7 @@ describe('export', () => {
     expect(lines[4]).toBe('Rank,,,,,1,(excluded by you)')
     expect(lines[5]).toBe('Score,,,,,3/10,2/2')
     expect(lines[8]).toBe('"MIND - fear, ""night""",Mind,2,E,2,3,1')
-    expect(lines[9]).toBe('[a] L t:2,Mind,1,A C,1,4,')
+    expect(lines[9]).toBe('L t:2,Mind,1,A C,1,4,')
     expect(lines[10]).toBe('L t:6,Mind,0,0,2,1,')
     expect(csv.endsWith('\r\n')).toBe(true)
   })
@@ -61,5 +61,52 @@ describe('compare', () => {
   })
   it('repertories referenced by clipboards', () => {
     expect(repertoriesOf([{ id: 'x', name: '', color: '', symptoms: [sym('kent-de:4'), sym('publicum:9'), { ...sym('a:1'), rubrics: ['publicum:3', 'kent-de:1'] }] }])).toEqual(['kent-de', 'publicum'])
+  })
+})
+
+describe('breakdown labels', () => {
+  it('split the chapter off and abbreviate long chapter names', async () => {
+    const { chapterTag, splitLabel } = await import('./labels')
+    expect(splitLabel('MIND - fear, night')).toEqual({ chapter: 'MIND', path: 'fear, night' })
+    expect(splitLabel('MIND')).toEqual({ chapter: '', path: 'MIND' })
+    expect(chapterTag('GENERALITIES')).toBe('GENER.')
+    expect(chapterTag('MIND')).toBe('MIND')
+    expect(chapterTag('EXTERNAL THROAT')).toBe('EXTER. THROAT')
+  })
+  it('shorten long paths in the middle, keeping the first and the most specific parts', async () => {
+    const { middleEllipsis } = await import('./labels')
+    expect(middleEllipsis('pain, head', 40)).toBe('pain, head')
+    const long = 'pain, forehead, extending to, occiput, and nape, evening, after eating'
+    const short = middleEllipsis(long, 40)
+    expect(short.length).toBeLessThanOrEqual(40)
+    expect(short.startsWith('pain, …, ')).toBe(true)
+    expect(short.endsWith('evening, after eating')).toBe(true)
+    expect(middleEllipsis('x'.repeat(60), 20)).toHaveLength(20)
+  })
+})
+
+describe('column scores', () => {
+  it('fit a 36px column: the full score up to 5 characters, else the primary value', async () => {
+    const { columnScore } = await import('./AnalysisGrid')
+    expect(columnScore('16/29', { score: 16 })).toBe('16/29')
+    expect(columnScore('100/250', { score: 100 })).toBe('100')
+    expect(columnScore('431.8', { score: 431.82 })).toBe('431.8')
+    expect(columnScore('1234.5', { score: 1234.5 })).toBe('1235')
+  })
+})
+
+describe('strategy parameters drawer', () => {
+  it('covers every numeric and boolean StrategyParams field except the unassignable SRP weight', async () => {
+    const { PARAM_GROUPS } = await import('./ParamsDrawer')
+    const { DEFAULT_PARAMS } = await import('../../engine/model')
+    const leaves = (o: object, pre: string[] = []): string[] => Object.entries(o).flatMap(([k, v]) => (typeof v === 'object' ? leaves(v, [...pre, k]) : [[...pre, k].join('.')]))
+    const edited = PARAM_GROUPS.flatMap(g => g.fields.map(f => [g.group, ...f.path].join('.'))).sort()
+    expect(edited).toEqual(leaves(DEFAULT_PARAMS).filter(k => k !== 'kent.weights.srp').sort())
+  })
+  it('custom parameters are detected against the defaults', async () => {
+    const { hasCustomParams } = await import('./ParamsDrawer')
+    expect(hasCustomParams({ params: undefined })).toBe(false)
+    expect(hasCustomParams({ params: { smallRubrics: { threshold: 10 } } })).toBe(false)
+    expect(hasCustomParams({ params: { kent: { mustCoverStrong: true } } })).toBe(true)
   })
 })

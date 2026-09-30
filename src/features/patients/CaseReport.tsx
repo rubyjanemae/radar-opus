@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { combineJoiner } from '../clipboard/labels'
 import { createPortal } from 'react-dom'
 import { Printer, X } from 'lucide-react'
 import { useCatalog } from '../../data/CatalogContext'
@@ -8,7 +9,7 @@ import type { AnalysisResult } from '../../engine/analysis'
 import { useApp } from '../../state/store'
 import type { Consultation, Patient } from '../../state/patients'
 import { useAnalysis } from '../analysis/useAnalysis'
-import { consultationsOf, formatAge, formatDate, formatScoreSigned, ghhosLabel, KIND_LABEL, patientName, SEX_LABEL, symptomCount } from './logic'
+import { analysisFilterNotes, consultationsOf, formatAge, formatDate, formatDateTime, formatScoreSigned, ghhosLabel, KIND_LABEL, patientName, SEX_LABEL, symptomCount } from './logic'
 import './patients.css'
 
 /** Paper styles, shared by the on-screen preview and the print frame (fixed ink-on-paper colours on purpose). */
@@ -40,18 +41,29 @@ export const REPORT_CSS = `
 .pt-report .pt-rp-w { font-weight: 700; white-space: nowrap; }
 .pt-report .pt-rp-flags { font-size: 7.5pt; color: #444; white-space: nowrap; }
 .pt-report .pt-rp-rep { color: #777; font-size: 7.5pt; }
+.pt-report .pt-rp-rubrics { color: #444; font-size: 8pt; }
 .pt-report .pt-rp-path b { font-weight: 700; }
 .pt-report .pt-rp-top td:first-child { font-weight: 700; }
 .pt-report .pt-rp-abbrev { font-weight: 700; }
 .pt-report .pt-rp-bar { display: inline-block; height: 0; border-top: 5pt solid #333; vertical-align: middle; margin-right: 4pt; }
 .pt-report .pt-rp-muted { color: #777; }
+.pt-report .pt-rp-filters { margin: 0 0 4pt; padding: 2pt 5pt; border-left: 2pt solid #333; font-size: 8.5pt; font-weight: 600; color: #222; }
+.pt-report .pt-rp-hl { font-size: 7pt; }
 .pt-report .pt-rp-foot { margin-top: 18pt; padding-top: 5pt; border-top: .5pt solid #bbb; font-size: 7.5pt; color: #777; display: flex; justify-content: space-between; }
 .pt-report .pt-rp-grid .pt-rp-tags > div { display: block; }
 .pt-report .pt-rp-tags > div > span { display: inline-block; border: .5pt solid #888; border-radius: 6pt; padding: 0 5pt; margin-right: 3pt; font-size: 7.5pt; }
 @page { size: A4; margin: 14mm 14mm 16mm; }
 `
 
-export interface ReportSymptom { clipboard: string; weight: number; flags: string; chapter: string; path: string; repertory: string; size: number | null }
+export interface ReportSymptom {
+  clipboard: string; weight: number; flags: string
+  /** The symptom's own label (shown instead of the rubric path, with the rubrics below it). */
+  label: string
+  chapter: string; path: string
+  /** Every rubric in full ("CHAPTER - path"), joined with ∪ / ∩ as the analysis shows a combined symptom. */
+  rubrics: string
+  repertory: string; size: number | null
+}
 
 export function reportSymptoms(c: Consultation, catalog: Catalog): ReportSymptom[] {
   const out: ReportSymptom[] = []
@@ -63,10 +75,13 @@ export function reportSymptoms(c: Consultation, catalog: Catalog): ReportSymptom
         const [root, ...below] = r.rep.lineage(r.index)
         return { chapter: r.rep.text(root), path: below.map(i => r.rep.text(i)).join(', '), repertory: r.rep.info.title, size: r.rep.remedyCount(r.index) }
       })
+      const join = combineJoiner(s)
+      const full = (p: typeof parts[number]) => (p.chapter ? `${p.chapter.toUpperCase()}${p.path ? ` - ${p.path}` : ''}` : p.path)
       const flags = [s.eliminatory && 'eliminative', s.exclusive && 'excluding', s.causal && 'causal', s.group && `group ${s.group.toUpperCase()}`, s.rubrics.length > 1 && (s.combine === 'intersection' ? 'combined (and)' : 'combined (or)')].filter(Boolean).join(', ')
       out.push({
-        clipboard: cb.name, weight: s.weight, flags,
-        chapter: parts[0]?.chapter ?? '', path: parts.map((p, i) => (i ? `${p.chapter}, ` : '') + p.path).join(' + '),
+        clipboard: cb.name, weight: s.weight, flags, label: s.label?.trim() ?? '',
+        chapter: parts[0]?.chapter ?? '', path: parts.map((p, i) => (i ? full(p) : p.path)).join(join),
+        rubrics: parts.map(full).join(join),
         repertory: parts[0]?.repertory ?? '', size: parts.length === 1 ? parts[0].size : null,
       })
     }
@@ -84,6 +99,8 @@ export function CaseReportDoc({ patient, consultation, history, symptoms, result
   const age = formatAge(patient.birthDate)
   const clipNames = new Set(symptoms.map(s => s.clipboard))
   const repNames = new Set(symptoms.map(s => s.repertory))
+  const filterNotes = analysisFilterNotes(consultation.analysis, id => catalog.remedy(id).abbrev)
+  const hl = new Set(consultation.analysis.highlight ?? [])
   return (
     <article className="pt-report">
       <header className="pt-rp-head">
@@ -128,7 +145,7 @@ export function CaseReportDoc({ patient, consultation, history, symptoms, result
                 <td className="num">{i + 1}</td>
                 {clipNames.size > 1 && <td>{s.clipboard}</td>}
                 <td className="pt-rp-w">{s.weight === 0 ? 'ignored' : `×${s.weight}`}</td>
-                <td className="pt-rp-path"><b>{s.chapter.toUpperCase()}</b>{s.path ? ` - ${s.path}` : ''}{s.flags && <div className="pt-rp-flags">{s.flags}</div>}{repNames.size > 1 && <div className="pt-rp-rep">{s.repertory}</div>}</td>
+                <td className="pt-rp-path">{s.label ? <><b>{s.label}</b><div className="pt-rp-rubrics">{s.rubrics}</div></> : <><b>{s.chapter.toUpperCase()}</b>{s.path ? ` - ${s.path}` : ''}</>}{s.flags && <div className="pt-rp-flags">{s.flags}</div>}{repNames.size > 1 && <div className="pt-rp-rep">{s.repertory}</div>}</td>
                 <td className="num">{s.size ?? ''}</td>
               </tr>
             ))}
@@ -141,13 +158,14 @@ export function CaseReportDoc({ patient, consultation, history, symptoms, result
       {result && top.length ? (
         <>
           <p className="pt-rp-muted" style={{ margin: '0 0 4pt' }}>{strategyInfo(result.strategy).name} · {result.scoredCount} scored symptoms · {result.total} remedies ranked{result.useIntensity ? '' : ' · intensity off'}</p>
+          {filterNotes.length > 0 && <p className="pt-rp-filters">Filters: {filterNotes.join(' · ')}{hl.size > 0 && top.some(r => hl.has(r.remedyId)) ? ' (highlighted remedies marked ◆)' : ''}</p>}
           <table className="pt-rp-top">
             <thead><tr><th className="num">Rank</th><th>Remedy</th><th className="num">Score</th><th className="num">Coverage</th><th className="num">Degrees</th><th style={{ width: '28%' }} /></tr></thead>
             <tbody>
               {top.map(r => (
                 <tr key={r.remedyId}>
                   <td className="num">{r.rank}</td>
-                  <td><span className="pt-rp-abbrev">{catalog.remedy(r.remedyId).abbrev}</span> <span className="pt-rp-muted">{catalog.remedy(r.remedyId).name}</span></td>
+                  <td><span className="pt-rp-abbrev">{catalog.remedy(r.remedyId).abbrev}</span>{hl.has(r.remedyId) && <span className="pt-rp-hl"> ◆</span>} <span className="pt-rp-muted">{catalog.remedy(r.remedyId).name}</span></td>
                   <td className="num">{formatScore(result.strategy, r)}</td>
                   <td className="num">{r.coverage}/{result.scoredCount}</td>
                   <td className="num">{r.degrees}</td>
@@ -157,14 +175,17 @@ export function CaseReportDoc({ patient, consultation, history, symptoms, result
             </tbody>
           </table>
         </>
-      ) : <p className="pt-rp-muted">{result ? 'No remedies: add symptoms to analyse this case.' : 'Analysis unavailable.'}</p>}
+      ) : <>
+        {filterNotes.length > 0 && <p className="pt-rp-filters">Filters: {filterNotes.join(' · ')}</p>}
+        <p className="pt-rp-muted">{!result ? 'Analysis unavailable.' : filterNotes.length && symptoms.length ? 'No remedy passes the analysis filters.' : 'No remedies: add symptoms to analyse this case.'}</p>
+      </>}
       </section>
 
       <h2>Prescriptions</h2>
       {consultation.prescriptions.length ? <RxTable rows={consultation.prescriptions.map(p => ({ p }))} catalog={catalog} /> : <p className="pt-rp-muted">No prescription at this consultation.</p>}
       {earlier.length > 0 && <><h3>Earlier prescriptions</h3><RxTable rows={earlier} catalog={catalog} /></>}
 
-      <footer className="pt-rp-foot"><span>{symptomCount(consultation)} symptoms · {history.length} consultation{history.length === 1 ? '' : 's'} on file</span><span>Printed {printedAt.toLocaleString()} · Radar Opus</span></footer>
+      <footer className="pt-rp-foot"><span>{symptomCount(consultation)} symptoms · {history.length} consultation{history.length === 1 ? '' : 's'} on file</span><span>Printed {formatDateTime(printedAt)} · Radar Opus</span></footer>
     </article>
   )
 }
@@ -188,24 +209,43 @@ function RxTable({ rows, catalog }: { rows: { p: Consultation['prescriptions'][n
   )
 }
 
-/** Print an element's markup in an isolated frame (keeps app print styles out of the way). */
-export function printElement(el: HTMLElement, title: string) {
+/**
+ * Print an element's markup in an isolated frame (keeps app print styles out of the way). The frame
+ * is removed after printing (afterprint, or a fallback timer when a browser never sends it) and
+ * `onDone` runs then, so the caller can take focus back from the frame.
+ */
+export function printElement(el: HTMLElement, title: string, onDone?: () => void, fallbackMs = PRINT_FALLBACK_MS) {
   document.querySelector('iframe.pt-print-frame')?.remove()
   const frame = document.createElement('iframe')
   frame.className = 'pt-print-frame'
   frame.setAttribute('aria-hidden', 'true')
+  frame.tabIndex = -1
   frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden'
   const esc = (s: string) => s.replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]!))
   frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>html,body{margin:0;background:#fff}${REPORT_CSS}</style></head><body>${el.outerHTML}</body></html>`
+  let done = false
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const finish = () => {
+    if (done) return
+    done = true
+    if (timer) clearTimeout(timer)
+    frame.remove()
+    onDone?.()
+  }
   frame.onload = () => {
     const w = frame.contentWindow
-    if (!w) return
-    w.addEventListener('afterprint', () => setTimeout(() => frame.remove(), 0))
+    if (!w) { finish(); return }
+    w.addEventListener('afterprint', () => setTimeout(finish, 0))
     w.focus()
     w.print()
+    // print() returns once the dialog closes in most browsers; if afterprint never comes, clean up anyway
+    timer = setTimeout(finish, fallbackMs)
   }
   document.body.appendChild(frame)
 }
+
+/** How long after print() returns the frame is removed when no afterprint event arrived. */
+export const PRINT_FALLBACK_MS = 2000
 
 export function CaseReportDialog({ onClose, consultationId }: { onClose: () => void; consultationId: string }) {
   const catalog = useCatalog()
@@ -215,6 +255,7 @@ export function CaseReportDialog({ onClose, consultationId }: { onClose: () => v
   const { result, load } = useAnalysis(consultationId)
   const paper = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
+  const printBtn = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null
     scroller.current?.focus()
@@ -224,8 +265,10 @@ export function CaseReportDialog({ onClose, consultationId }: { onClose: () => v
   if (!consultation || !patient) return null
   const history = consultationsOf(all, patient.id)
   const symptoms = reportSymptoms(consultation, catalog)
-  const title = `Case report: ${patientName(patient)}, ${consultation.date}`
-  const doPrint = () => { const el = paper.current?.querySelector<HTMLElement>('.pt-report'); if (el) printElement(el, title) }
+  const title = `Case report: ${patientName(patient)}, ${formatDate(consultation.date)}`
+  // after printing, focus returns to the report (Print, else the paper) so Esc still closes it
+  const refocus = () => { const b = printBtn.current; (b && !b.disabled ? b : scroller.current)?.focus({ preventScroll: true }) }
+  const doPrint = () => { const el = paper.current?.querySelector<HTMLElement>('.pt-report'); if (el) printElement(el, title, refocus) }
   return createPortal(
     <div
       className="pt-report-overlay" role="dialog" aria-modal="true" aria-label="Case report"
@@ -257,7 +300,7 @@ export function CaseReportDialog({ onClose, consultationId }: { onClose: () => v
         <span className="pt-report-sub">{patientName(patient)} · {consultation.title || 'Consultation'} · {formatDate(consultation.date)}</span>
         <span className="grow" />
         {load.status === 'loading' && <span className="pt-report-sub">Loading repertories…</span>}
-        <button className="btn btn-primary" title="Print (Ctrl+P)" onClick={doPrint} disabled={load.status === 'loading'}><Printer size={14} />Print…</button>
+        <button ref={printBtn} className="btn btn-primary" title="Print (Ctrl+P)" onClick={doPrint} disabled={load.status === 'loading'}><Printer size={14} />Print…</button>
         <button className="icon-btn" aria-label="Close report" title="Close (Esc)" onClick={onClose}><X size={16} /></button>
       </div>
       <div className="pt-report-scroll" ref={scroller} tabIndex={0} role="region" aria-label="Report preview (arrow keys, Page Up/Down, Home and End scroll)">

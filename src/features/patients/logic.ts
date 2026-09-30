@@ -1,4 +1,4 @@
-import type { Clipboard } from '../../engine/model'
+import type { AnalysisOptions, Clipboard } from '../../engine/model'
 import type { RubricRef } from '../../data/types'
 import { uid } from '../../state/ids'
 import type { Consultation, Patient, Prescription } from '../../state/patients'
@@ -115,14 +115,14 @@ export function symptomCount(c: Pick<Consultation, 'clipboards'>): number {
   return c.clipboards.reduce((n, cb) => n + cb.symptoms.length, 0)
 }
 
-/** Clone clipboards with fresh ids; returns the clones and the old → new clipboard id map. */
-export function cloneClipboards(cbs: Clipboard[]): { clipboards: Clipboard[]; ids: Map<string, string> } {
+/** Clone clipboards with fresh ids; returns the clones and the old → new clipboard id map. `keepAddedAt` keeps when each symptom was taken. */
+export function cloneClipboards(cbs: Clipboard[], keepAddedAt = false): { clipboards: Clipboard[]; ids: Map<string, string> } {
   const ids = new Map<string, string>()
   const now = Date.now()
   const clipboards = cbs.map(cb => {
     const id = uid('cb')
     ids.set(cb.id, id)
-    return { ...cb, id, symptoms: cb.symptoms.map((s, k) => ({ ...s, id: uid('s'), rubrics: [...s.rubrics], addedAt: now + k })) }
+    return { ...cb, id, symptoms: cb.symptoms.map((s, k) => ({ ...s, id: uid('s'), rubrics: [...s.rubrics], addedAt: keepAddedAt ? s.addedAt : now + k })) }
   })
   return { clipboards, ids }
 }
@@ -145,19 +145,32 @@ export function nextFollowUpIndex(list: Consultation[]): number {
   return list.filter(c => c.kind === 'follow-up' || c.kind === 'phone').length + 1
 }
 
+export interface CopyOptions {
+  /** Rewrite rubric refs (case-file import re-resolves moved rubrics). */
+  remapRef?: (r: RubricRef) => RubricRef
+  /** Rewrite remedy ids everywhere they occur: prescriptions, exclusions, family limit and highlight. */
+  remapRemedy?: (id: number) => number
+  /** Keep each symptom's addedAt (import, duplicate) instead of stamping the copy time. */
+  keepAddedAt?: boolean
+}
+
 /** Copy a consultation (all ids fresh) onto another patient id. */
-export function copyConsultation(c: Consultation, patientId: string, remapRef: (r: RubricRef) => RubricRef = r => r): Consultation {
-  const { clipboards, ids } = cloneClipboards(c.clipboards)
+export function copyConsultation(c: Consultation, patientId: string, opts: CopyOptions | ((r: RubricRef) => RubricRef) = {}): Consultation {
+  const o: CopyOptions = typeof opts === 'function' ? { remapRef: opts } : opts
+  const remapRef = o.remapRef ?? (r => r)
+  const remedy = o.remapRemedy ?? (id => id)
+  const { clipboards, ids } = cloneClipboards(c.clipboards, o.keepAddedAt)
   for (const cb of clipboards) for (const s of cb.symptoms) s.rubrics = s.rubrics.map(remapRef)
   return {
     ...c, id: uid('c'), patientId, clipboards,
     analysis: {
       ...c.analysis,
       clipboardIds: c.analysis.clipboardIds.map(id => ids.get(id)).filter((x): x is string => !!x),
-      excludedRemedies: [...(c.analysis.excludedRemedies ?? [])],
-      remedyFilter: c.analysis.remedyFilter ? [...c.analysis.remedyFilter] : null,
+      excludedRemedies: (c.analysis.excludedRemedies ?? []).map(remedy),
+      remedyFilter: c.analysis.remedyFilter ? c.analysis.remedyFilter.map(remedy) : null,
+      ...(c.analysis.highlight !== undefined ? { highlight: c.analysis.highlight ? c.analysis.highlight.map(remedy) : null } : {}),
     },
-    prescriptions: c.prescriptions.map(p => ({ ...p, id: uid('rx') })),
+    prescriptions: c.prescriptions.map(p => ({ ...p, id: uid('rx'), remedyId: remedy(p.remedyId) })),
   }
 }
 
@@ -178,8 +191,16 @@ export interface PatientRow {
   consultations: number
   lastVisit: string | null
   lastRx: Prescription | null
-  /** Lower-cased text searched by the filter box. */
+  /** Lower-cased text searched by the filter box (everything except rubric labels, which are built lazily). */
   haystack: string
+  /** Precomputed sort keys (lower-cased, accents folded). */
+  keys: { name: string; tags: string; sex: string; rx: string }
+  /** Rubrics on the patient's clipboards, for the lazily built rubric search text. */
+  rubricRefs: RubricRef[]
+  /** Rubric-label search text, built on the first query that needs it (undefined until then). */
+  rubricHaystack?: string
+  /** Source of the rubric labels (from the RowText passed to patientRows). */
+  rubricText?: (ref: RubricRef) => string | null
 }
 
 /** Optional text sources for the search haystack (remedy names, rubric labels). */
@@ -188,7 +209,59 @@ export interface RowText {
   rubricText?: (ref: RubricRef) => string | null
 }
 
-/** One row per patient with the derived columns of the patients table. */
+/** Lower-cased, accent-folded key for fast string comparisons. */
+export function foldKey(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}
+
+interface RowCacheEntry {
+  consultations: Consultation[]
+  day: number
+  abbrev: (id: number) => string
+  text: RowText
+  row: PatientRow
+}
+/**
+ * Per-patient row memo: records are immutable (every edit replaces the object), so a row stays
+ * valid while its patient object, its consultation objects, the day (age) and the text sources
+ * are the same. With thousands of patients an edit rebuilds one row, not all of them.
+ */
+const rowCache = new WeakMap<Patient, RowCacheEntry>()
+
+function sameList<T>(a: readonly T[], b: readonly T[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
+function buildRow(p: Patient, cs: Consultation[], remedyAbbrev: (id: number) => string, now: number, text: RowText): PatientRow {
+  let lastVisit: string | null = null
+  let lastRx: Prescription | null = null
+  for (const c of cs) {
+    if (!lastVisit || c.date > lastVisit) lastVisit = c.date
+    for (const rx of c.prescriptions) if (!lastRx || rx.date > lastRx.date) lastRx = rx
+  }
+  const name = patientName(p)
+  const parts: string[] = [p.firstName, p.lastName, p.email, p.phone, p.occupation, p.address, p.notes, ...p.tags]
+  const remedies = new Set<number>()
+  const rubrics = new Set<RubricRef>()
+  for (const c of cs) {
+    parts.push(c.title, c.complaint, c.notes, c.assessment, c.response?.note ?? '')
+    for (const rx of c.prescriptions) { remedies.add(rx.remedyId); parts.push(rx.potency, rx.dosage, rx.note) }
+    if (text.rubricText) for (const cb of c.clipboards) for (const s of cb.symptoms) for (const r of s.rubrics) rubrics.add(r)
+  }
+  for (const id of remedies) parts.push(remedyAbbrev(id), text.remedyName?.(id) ?? '')
+  const tags = p.tags.join(', ')
+  return {
+    patient: p, name, age: ageOf(p.birthDate, now), ageLabel: formatAge(p.birthDate, now), consultations: cs.length, lastVisit, lastRx,
+    haystack: parts.join(' ').toLowerCase(),
+    keys: { name: foldKey(name), tags: foldKey(tags), sex: p.sex ?? '', rx: lastRx ? foldKey(remedyAbbrev(lastRx.remedyId)) : '' },
+    rubricRefs: [...rubrics],
+    rubricText: text.rubricText,
+  }
+}
+
+/** One row per patient with the derived columns of the patients table (memoised per patient). */
 export function patientRows(patients: Record<string, Patient>, consultations: Record<string, Consultation>, remedyAbbrev: (id: number) => string, now = Date.now(), text: RowText = {}): PatientRow[] {
   const byPatient = new Map<string, Consultation[]>()
   for (const c of Object.values(consultations)) {
@@ -196,55 +269,65 @@ export function patientRows(patients: Record<string, Patient>, consultations: Re
     if (l) l.push(c)
     else byPatient.set(c.patientId, [c])
   }
+  const day = Math.floor(now / DAY)
+  const none: Consultation[] = []
   return Object.values(patients).map(p => {
-    const cs = byPatient.get(p.id) ?? []
-    let lastVisit: string | null = null
-    let lastRx: Prescription | null = null
-    for (const c of cs) {
-      if (!lastVisit || c.date > lastVisit) lastVisit = c.date
-      for (const rx of c.prescriptions) if (!lastRx || rx.date > lastRx.date) lastRx = rx
-    }
-    const name = patientName(p)
-    const parts: string[] = [p.firstName, p.lastName, p.email, p.phone, p.occupation, p.address, p.notes, ...p.tags]
-    const remedies = new Set<number>()
-    const rubrics = new Set<RubricRef>()
-    for (const c of cs) {
-      parts.push(c.title, c.complaint, c.notes, c.assessment, c.response?.note ?? '')
-      for (const rx of c.prescriptions) { remedies.add(rx.remedyId); parts.push(rx.potency, rx.dosage, rx.note) }
-      if (text.rubricText) for (const cb of c.clipboards) for (const s of cb.symptoms) for (const r of s.rubrics) rubrics.add(r)
-    }
-    for (const id of remedies) parts.push(remedyAbbrev(id), text.remedyName?.(id) ?? '')
-    for (const r of rubrics) parts.push(text.rubricText!(r) ?? '')
-    const haystack = parts.join(' ').toLowerCase()
-    return { patient: p, name, age: ageOf(p.birthDate, now), ageLabel: formatAge(p.birthDate, now), consultations: cs.length, lastVisit, lastRx, haystack }
+    const cs = byPatient.get(p.id) ?? none
+    const hit = rowCache.get(p)
+    if (hit && hit.day === day && hit.abbrev === remedyAbbrev && hit.text.remedyName === text.remedyName && hit.text.rubricText === text.rubricText && sameList(hit.consultations, cs)) return hit.row
+    const row = buildRow(p, cs, remedyAbbrev, now, text)
+    rowCache.set(p, { consultations: cs, day, abbrev: remedyAbbrev, text, row })
+    return row
   })
+}
+
+/** Rubric-label search text of a row, built on first use; kept once every label resolved (repertories loaded). */
+export function rubricHaystack(row: PatientRow): string {
+  if (row.rubricHaystack !== undefined) return row.rubricHaystack
+  const src = row.rubricText
+  if (!src || !row.rubricRefs.length) return (row.rubricHaystack = '')
+  let complete = true
+  const parts: string[] = []
+  for (const r of row.rubricRefs) {
+    const t = src(r)
+    if (t === null) complete = false
+    else parts.push(t)
+  }
+  const out = parts.join(' ').toLowerCase()
+  if (complete) row.rubricHaystack = out
+  return out
 }
 
 export type SortKey = 'name' | 'age' | 'sex' | 'tags' | 'lastVisit' | 'consultations' | 'lastRx'
 export interface Sort { key: SortKey; dir: 1 | -1 }
 
-export function sortRows(rows: PatientRow[], sort: Sort, remedyAbbrev: (id: number) => string): PatientRow[] {
-  const cmpStr = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' })
+const cmpKey = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+
+/** Sort rows by a column; empty values always last, ties by name. Uses the precomputed keys only. */
+export function sortRows(rows: PatientRow[], sort: Sort, _remedyAbbrev?: (id: number) => string): PatientRow[] {
   const val = (r: PatientRow): string | number | null => {
     switch (sort.key) {
-      case 'name': return r.name
+      case 'name': return r.keys.name
       case 'age': return r.age
-      case 'sex': return r.patient.sex
-      case 'tags': return r.patient.tags.join(', ') || null
+      case 'sex': return r.keys.sex || null
+      case 'tags': return r.keys.tags || null
       case 'lastVisit': return r.lastVisit
       case 'consultations': return r.consultations
-      case 'lastRx': return r.lastRx ? remedyAbbrev(r.lastRx.remedyId) : null
+      case 'lastRx': return r.keys.rx || null
     }
   }
-  return [...rows].sort((a, b) => {
-    const x = val(a), y = val(b)
-    // empty values always last
-    if (x === null || x === '') return y === null || y === '' ? cmpStr(a.name, b.name) : 1
+  // potency ranks are parsed once per row, not once per comparison (ties on the remedy are common)
+  const byRx = sort.key === 'lastRx'
+  const keyed = rows.map(r => ({ r, v: val(r), p: byRx && r.lastRx ? potencyRank(r.lastRx.potency) : null }))
+  keyed.sort((a, b) => {
+    const x = a.v, y = b.v
+    if (x === null || x === '') return y === null || y === '' ? cmpKey(a.r.keys.name, b.r.keys.name) : 1
     if (y === null || y === '') return -1
-    let c = typeof x === 'number' && typeof y === 'number' ? x - y : cmpStr(String(x), String(y))
-    if (!c && sort.key === 'lastRx') c = comparePotency(a.lastRx!.potency, b.lastRx!.potency)
-    return c * sort.dir || cmpStr(a.name, b.name)
+    let c = typeof x === 'number' && typeof y === 'number' ? x - y : cmpKey(String(x), String(y))
+    if (!c && a.p && b.p) c = a.p[0] - b.p[0] || a.p[1] - b.p[1] || comparePotencyText(a.r.lastRx!.potency, b.r.lastRx!.potency)
+    return c * sort.dir || cmpKey(a.r.keys.name, b.r.keys.name)
   })
+  return keyed.map(k => k.r)
 }
 
 /**
@@ -266,13 +349,24 @@ export function potencyRank(potency: string): [number, number] {
 
 export function comparePotency(a: string, b: string): number {
   const x = potencyRank(a), y = potencyRank(b)
-  return x[0] - y[0] || x[1] - y[1] || a.localeCompare(b)
+  return x[0] - y[0] || x[1] - y[1] || comparePotencyText(a, b)
 }
+const comparePotencyText = (a: string, b: string) => (a === b ? 0 : a.localeCompare(b))
 
-/** Every query word must appear somewhere; every selected tag must be on the patient. */
+/** Every query word must appear somewhere; every selected tag must be on the patient. Rubric text is consulted only when needed. */
 export function filterRows(rows: PatientRow[], query: string, tags: string[]): PatientRow[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean)
-  return rows.filter(r => words.every(w => r.haystack.includes(w)) && tags.every(t => r.patient.tags.includes(t)))
+  if (!words.length && !tags.length) return rows
+  return rows.filter(r => {
+    if (!tags.every(t => r.patient.tags.includes(t))) return false
+    let rubric: string | null = null
+    for (const w of words) {
+      if (r.haystack.includes(w)) continue
+      rubric ??= rubricHaystack(r)
+      if (!rubric.includes(w)) return false
+    }
+    return true
+  })
 }
 
 /** Tags in use with their counts, most used first. */
@@ -295,13 +389,48 @@ export function relativeDate(date: string | null, now = Date.now()): string {
   return `${Math.round(d / 365.25)} years ago`
 }
 
+let dateFmt: Intl.DateTimeFormat | null = null
+let dateTimeFmt: Intl.DateTimeFormat | null = null
+
+/** The app's one date format for calendar dates (YYYY-MM-DD): medium date style in the user's locale. */
 export function formatDate(date: string | null): string {
   if (!date) return ''
   const t = Date.parse(date + 'T00:00:00')
-  return Number.isNaN(t) ? date : new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+  if (Number.isNaN(t)) return date
+  dateFmt ??= new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' })
+  return dateFmt.format(t)
+}
+
+/** The app's one format for moments (epoch ms or Date): medium date, short time. */
+export function formatDateTime(at: number | Date | null | undefined): string {
+  if (at === null || at === undefined) return ''
+  const t = typeof at === 'number' ? at : at.getTime()
+  if (!Number.isFinite(t)) return ''
+  dateTimeFmt ??= new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  return dateTimeFmt.format(t)
 }
 
 export const today = () => {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// ───────────────────────── analysis summary ─────────────────────────
+
+/**
+ * Plain-language notes for the analysis options that narrow or mark the result (family limit,
+ * highlight, excluded remedies, minimum coverage), so a "Top remedies" summary never hides them.
+ */
+export function analysisFilterNotes(o: Pick<AnalysisOptions, 'remedyFilter' | 'filterLabel' | 'highlight' | 'highlightLabel' | 'excludedRemedies' | 'minCoverage'>, remedyAbbrev: (id: number) => string): string[] {
+  const out: string[] = []
+  const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`
+  if (o.remedyFilter) out.push(`Limited to ${o.filterLabel || n(o.remedyFilter.length, 'remedy', 'remedies')}`)
+  if (o.highlight?.length) out.push(`Highlighting ${o.highlightLabel || n(o.highlight.length, 'remedy', 'remedies')}`)
+  const ex = o.excludedRemedies ?? []
+  if (ex.length) {
+    const names = ex.slice(0, 3).map(remedyAbbrev).join(', ')
+    out.push(`Excluding ${names}${ex.length > 3 ? ` and ${ex.length - 3} more` : ''}`)
+  }
+  if (o.minCoverage > 0) out.push(`Minimum coverage ${n(o.minCoverage, 'symptom', 'symptoms')}`)
+  return out
 }

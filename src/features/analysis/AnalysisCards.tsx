@@ -4,7 +4,7 @@ import { formatScore } from '../../engine/analysis'
 import type { AnalysisResult, AnalysisRow } from '../../engine/analysis'
 import type { MenuItem } from '../../ui/Menu'
 import { useContextMenu } from '../../ui/Menu'
-import { GradeMark } from './AnalysisGrid'
+import { GradeMark } from '../../ui/marks'
 import { exclusionText } from './labels'
 
 interface Props {

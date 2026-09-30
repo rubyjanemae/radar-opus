@@ -40,7 +40,12 @@ function FindBody({ rep, from, current, onClose, abbrev, setAbbrev }: { rep: Rep
   const [active, setActiveRaw] = useState(initial.active)
   /** The reader moved the highlight: Esc then shows that rubric in the book. */
   const moved = useRef(false)
-  const setActive = (i: number) => { if (i !== active) moved.current = true; setActiveRaw(i) }
+  /**
+   * The highlight is the first sub-rubric Find picked on its own after a level opened (the reader has
+   * not moved inside the level yet): Esc and Go to then mean the opened rubric, not that child.
+   */
+  const [auto, setAuto] = useState(from >= 0 && initial.level === from)
+  const setActive = (i: number, picked = false) => { if (i !== active) moved.current = true; setAuto(picked); setActiveRaw(i) }
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -56,7 +61,7 @@ function FindBody({ rep, from, current, onClose, abbrev, setAbbrev }: { rep: Rep
 
   const descend = (i: number) => {
     if (!rep.childCountOf(i)) return false
-    setLevel(i); setQuery(''); setActive(rep.children(i)[0] ?? -1)
+    setLevel(i); setQuery(''); setActive(rep.children(i)[0] ?? -1, true)
     return true
   }
   const up = () => {
@@ -64,7 +69,11 @@ function FindBody({ rep, from, current, onClose, abbrev, setAbbrev }: { rep: Rep
     setActive(level); setLevel(rep.parent(level)); setQuery('')
   }
   const go = (i: number) => { if (i < 0) return; onClose(); void goToRef(rep.ref(i)) }
-  const move = (d: number) => { if (items.length) setActive(items[Math.max(0, Math.min(items.length - 1, activeIdx + d))]) }
+  /** What Esc and Go to show: the opened rubric while its first child is only auto-highlighted. */
+  const target = auto && level >= 0 ? level : cur
+  const goTarget = () => go(target)
+  // a step that goes nowhere (Up on the first row) is not a move inside the level
+  const move = (d: number) => { const i = items[Math.max(0, Math.min(items.length - 1, activeIdx + d))]; if (i != null && i !== cur) setActive(i) }
   const searchAll = () => { const q = filter.trim(); onClose(); openSearch(q) }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -76,11 +85,11 @@ function FindBody({ rep, from, current, onClose, abbrev, setAbbrev }: { rep: Rep
     else if (e.key === 'Enter') {
       if (takeMode) { if (parsed?.ok && cur >= 0) { takeRefs([rep.ref(cur)], parsed.options); setQuery(filter) } }
       else if (!items.length && filter.trim()) searchAll()
-      else if (e.shiftKey || e.ctrlKey || e.metaKey) go(cur)
+      else if (e.shiftKey || e.ctrlKey || e.metaKey) goTarget()
       else if (cur >= 0 && !descend(cur)) go(cur)
     } else if (e.key === 'Escape') {
       // leave Find at the rubric last highlighted (if the reader moved to one); the book keeps focus
-      if (moved.current && cur >= 0) go(cur)
+      if (moved.current && target >= 0) goTarget()
       else onClose()
     } else if (e.key === 'ArrowRight' && !query && cur >= 0) descend(cur)
     else if ((e.key === 'ArrowLeft' || e.key === 'Backspace') && !query) up()
@@ -119,7 +128,7 @@ function FindBody({ rep, from, current, onClose, abbrev, setAbbrev }: { rep: Rep
           {path.map(p => (
             <span key={p}>
               <span className="rfind-sep">›</span>
-              <button className={`rfind-crumb${p === level ? ' on' : ''}`} onClick={() => { const next = rep.lineage(level); const child = next[next.indexOf(p) + 1]; setLevel(p); setQuery(''); setActive(child ?? rep.children(p)[0] ?? -1); inputRef.current?.focus() }}>{rep.text(p)}</button>
+              <button className={`rfind-crumb${p === level ? ' on' : ''}`} onClick={() => { const next = rep.lineage(level); const child = next[next.indexOf(p) + 1]; setLevel(p); setQuery(''); setActive(child ?? rep.children(p)[0] ?? -1, child == null); inputRef.current?.focus() }}>{rep.text(p)}</button>
             </span>
           ))}
         </nav>
@@ -173,7 +182,7 @@ function FindBody({ rep, from, current, onClose, abbrev, setAbbrev }: { rep: Rep
         </label>
         <span className="rfind-hint"><kbd className="kbd">↵</kbd> open level <kbd className="kbd">⇧↵</kbd> go to <kbd className="kbd">⌫</kbd> up <kbd className="kbd">+</kbd> take</span>
         <button className="btn" disabled={cur < 0} onClick={() => cur >= 0 && takeRefs([rep.ref(cur)], DEFAULT_TAKE)}><CornerDownRight size={13} /> Take</button>
-        <button className="btn btn-primary" disabled={cur < 0} onClick={() => go(cur)}>Go to</button>
+        <button className="btn btn-primary" disabled={target < 0} onClick={goTarget} title={target !== cur && target >= 0 ? `Show ${rep.text(target)} in the book` : undefined}>Go to</button>
       </div>
     </div>
   )

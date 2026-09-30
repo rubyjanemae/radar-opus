@@ -22,8 +22,8 @@ export function buildMenus(catalog: Catalog): { label: string; items: MenuItem[]
         { command: 'file.importWorkspace' },
         { command: 'file.exportWorkspace' },
         sep,
-        { command: 'analysis.print' },
-        { command: 'mm.print' },
+        // one Ctrl+P entry: it prints what the active document is (analysis or monograph)
+        { label: 'Print…', commands: ['analysis.print', 'mm.print'] },
         { command: 'case.report' },
         sep,
         { command: 'app.settings' },

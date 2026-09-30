@@ -31,3 +31,17 @@ describe('remedy index', () => {
     expect(idx.stats(2).keynotes).toEqual([])
   })
 })
+
+describe('remedy index build', () => {
+  it('builds in idle time and caches, readable without building', async () => {
+    const { remedyIndexIfReady, warmRemedyIndex } = await import('./remedyIndex')
+    const rep = tinyRepertory()
+    expect(remedyIndexIfReady(rep)).toBeNull()
+    const idx = await warmRemedyIndex(rep)
+    expect(remedyIndexIfReady(rep)).toBe(idx)
+    expect(await warmRemedyIndex(rep)).toBe(idx)
+    expect(idx.range(1)).toEqual([0, 3])
+    expect([...idx.rubrics.subarray(0, 3)]).toEqual([1, 2, 6])
+    expect([...idx.grades.subarray(0, 3)]).toEqual([3, 4, 1])
+  })
+})

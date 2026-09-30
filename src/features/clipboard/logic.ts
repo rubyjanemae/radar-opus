@@ -25,11 +25,6 @@ export interface RubricFacts {
   size: number
 }
 
-export function parseRubricRef(ref: RubricRef): { repertory: string; index: number } {
-  const i = ref.lastIndexOf(':')
-  return { repertory: ref.slice(0, i), index: Number(ref.slice(i + 1)) }
-}
-
 /** Returns symptom ids in sorted order. Stable; unknown rubrics sort last. */
 export function sortSymptomIds(symptoms: Symptom[], mode: SortMode, facts: (ref: RubricRef) => RubricFacts | null): string[] {
   const keyed = symptoms.map((s, pos) => ({ s, pos, f: facts(s.rubrics[0]) }))

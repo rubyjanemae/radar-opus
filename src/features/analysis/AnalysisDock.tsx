@@ -41,7 +41,7 @@ export function AnalysisDock() {
     const max = Math.max(1e-9, ...rows.map(r => r.points))
     body = (
       <div className="an-dock-body">
-        <div className="an-dock-bars" role="list" aria-label="Top remedies (click to show in the analysis)">
+        <ul className="an-dock-bars" aria-label="Top remedies (click to show in the analysis)">
           {rows.map(r => {
             const rem = catalog.remedy(r.remedyId)
             // points per grade, stacked bottom-up from grade 1
@@ -50,19 +50,21 @@ export function AnalysisDock() {
             const score = formatScore(result.strategy, r)
             const breakdown = byGrade.map((v, g) => (v ? `grade ${g + 1}: ${Math.round(v * 10) / 10}` : '')).filter(Boolean).join(', ')
             return (
-              <button
-                key={r.remedyId} role="listitem" className={`an-dock-bar${highlight?.has(r.remedyId) ? ' fam' : ''}`}
-                title={`#${r.rank} ${rem.name}: ${score}\n${breakdown}\nClick to show in the analysis`}
-                aria-label={`Rank ${r.rank}, ${rem.abbrev}, score ${score}`}
-                onClick={() => openAt(r.remedyId)}
-              >
-                <span className="an-dock-stack" style={{ height: `${Math.max(3, (r.points / max) * 34)}px` }} aria-hidden="true">
-                  {byGrade.map((v, g) => (v ? <span key={g} className={`s${g + 1}`} style={{ flexGrow: v, flexBasis: 0 }} /> : null))}
-                </span>
-              </button>
+              <li key={r.remedyId} className="an-dock-item">
+                <button
+                  className={`an-dock-bar${highlight?.has(r.remedyId) ? ' fam' : ''}`}
+                  title={`#${r.rank} ${rem.name}: ${score}\n${breakdown}\nClick to show in the analysis`}
+                  aria-label={`Rank ${r.rank}, ${rem.abbrev}, score ${score}`}
+                  onClick={() => openAt(r.remedyId)}
+                >
+                  <span className="an-dock-stack" style={{ height: `${Math.max(3, (r.points / max) * 34)}px` }} aria-hidden="true">
+                    {byGrade.map((v, g) => (v ? <span key={g} className={`s${g + 1}`} style={{ flexGrow: v, flexBasis: 0 }} /> : null))}
+                  </span>
+                </button>
+              </li>
             )
           })}
-        </div>
+        </ul>
         <AnalysisGrid
           compact label="Analysis preview grid"
           result={result} rows={rows} catalog={catalog}

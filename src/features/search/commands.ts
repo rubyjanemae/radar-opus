@@ -5,6 +5,7 @@ import type { SearchTab } from '../../state/workspace'
 import { downloadBlob } from '../../ui/files'
 import { registerRubricSource } from '../repertory/ops'
 import { warmIndex } from './engine'
+import { warmRemedyPopularity } from './remedies'
 import {
   activeSearchTab, currentRepertory, currentRubric, focusQuickFind, openRemedySearch, openSearch, rubricsCsv, searchRubricRefs,
   selection, setSearchCatalog, tabRubrics,
@@ -25,12 +26,23 @@ export function register(catalog: Catalog) {
   registerRubricSource('search', searchRubricRefs)
 
   // build the word index of the default repertory while the app is idle
-  const warm = () => { void catalog.loadRepertory(currentRepertory()).then(r => warmIndex(r)).catch(() => {}) }
-  if (typeof window !== 'undefined') setTimeout(warm, 1200)
+  const warm = () => { void catalog.loadRepertory(currentRepertory()).then(r => { warmRemedyPopularity(r); return warmIndex(r) }).catch(() => {}) }
+  if (typeof window !== 'undefined') {
+    setTimeout(warm, 1200)
+    // every repertory loaded later (opened or prefetched) gets its word index in idle slices too,
+    // so QuickFind and the search view never build a whole index on a keystroke
+    catalog.onRepertoryLoaded(rep => { void warmIndex(rep); warmRemedyPopularity(rep) })
+  }
 
   registerCommands([
     { id: 'search.focus', title: 'Quick find', category: 'Search', keys: ['Mod+F'], allowInInput: true, keywords: 'find toolbar type ahead', run: focusQuickFind },
-    { id: 'search.open', title: 'Search rubrics…', category: 'Search', keys: ['F4', 'Shift+?', '?'], keywords: 'simple search words find text', run: () => openSearch() },
+    { id: 'search.open', title: 'Search rubrics…', category: 'Search', keys: ['F4'], keywords: 'simple search words find text', run: () => openSearch() },
+    // '?' is a single printable key: like the other single-key shortcuts it only fires in the workspace
+    // (not while typing in a field, nor inside a dialog or menu), whereas F4 works everywhere
+    {
+      id: 'search.openKey', title: 'Search rubrics…', category: 'Search', keys: ['?'], hidden: true,
+      scope: '.shell, body:not(:has([role="dialog"], [role="menu"], [role="alertdialog"]))', scopeLabel: 'in the workspace', run: () => openSearch(),
+    },
     { id: 'search.new', title: 'New search tab', category: 'Search', keys: ['Mod+Shift+F'], allowInInput: true, keywords: 'search window compare', run: () => openSearch('', { newTab: true }) },
     { id: 'search.all', title: 'Search all repertories…', category: 'Search', keywords: 'library everything', run: () => openSearch(undefined, { newTab: !isText(), scope: 'all' }) },
     { id: 'search.remedy', title: 'Remedy search…', category: 'Search', keys: ['F5'], allowInInput: true, keywords: 'advanced rubrics of remedy degree grade co-remedies', run: () => openRemedySearch() },

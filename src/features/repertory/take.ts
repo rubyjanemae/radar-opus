@@ -11,9 +11,23 @@ export interface TakeOptions {
   group: string | null
   /** Take the rubric together with all its sub-rubrics as one combined symptom. */
   subRubrics: boolean
+  /**
+   * Whether `weight` was asked for. A rubric already on the clipboard keeps its intensity unless one
+   * was given: a bare `+`, Insert or Ctrl+Enter never downgrades it. Unset: given when not 1 (so
+   * "take with intensity 3" is explicit, a plain take is not).
+   */
+  weightSet?: boolean
+  /**
+   * The options describe the whole symptom (the F6 dialog): on a rubric already taken, qualifications
+   * and group not set are cleared. Otherwise (the mini-language) only what was given changes.
+   */
+  replace?: boolean
 }
 
 export const DEFAULT_TAKE: TakeOptions = { weight: 1, clipboard: null, eliminatory: false, exclusive: false, causal: false, group: null, subRubrics: false }
+
+/** Whether a take asked for its intensity (see TakeOptions.weightSet). */
+export const weightGiven = (o: TakeOptions) => o.weightSet ?? o.weight !== 1
 
 export type TakeParse = { ok: true; options: TakeOptions } | { ok: false; error: string }
 
@@ -33,12 +47,13 @@ export function parseTake(input: string): TakeParse {
   const s = input.trim().toLowerCase().replace(/\s+/g, '')
   if (!s) return { ok: false, error: 'Empty command' }
   if (s[0] !== '+' && s[0] !== '=') return { ok: false, error: 'Start with + or =' }
-  const o: TakeOptions = { ...DEFAULT_TAKE }
+  const o: TakeOptions = { ...DEFAULT_TAKE, weightSet: false }
   let i = 1
   if (i < s.length && /[0-9]/.test(s[i])) {
     const w = Number(s[i])
     if (w > 4) return { ok: false, error: `Intensity ${w} is out of range (0–4)` }
     o.weight = w as Weight
+    o.weightSet = true
     i++
     if (i < s.length && /[0-9]/.test(s[i])) return { ok: false, error: 'Intensity is a single digit (0–4)' }
   }

@@ -7,7 +7,9 @@ import { actions, selectActiveClipboard, selectActiveConsultation, selectActiveT
 import type { RepertoryTab } from '../../state/workspace'
 import type { Consultation } from '../../state/patients'
 import type { MenuItem } from '../../ui/Menu'
-import { DEFAULT_TAKE, describeTake, rubricHtml, rubricPlainText } from './take'
+import { DEFAULT_TAKE, bookAbbrev, describeTake, rubricHtml, rubricPlainText, weightGiven } from './take'
+import { alphaRemedies, GRADE_WORD } from './remedies'
+import { getHighlight, setHighlight } from './highlight'
 import type { TakeOptions } from './take'
 
 /**
@@ -76,7 +78,7 @@ export async function goToRef(ref: RubricRef, opts: { newTab?: boolean } = {}) {
     const other = s.tabs.find((t): t is RepertoryTab => t.kind === 'repertory' && t.repertory === repertory)
     if (other) { actions.activateTab(other.id); actions.navigateRubric(other.id, index); return }
   }
-  await openRepertory(repertory, index)
+  await openRepertory(repertory, index, { reuse: false })
 }
 
 export function goParent(tab: RepertoryTab, rep: Repertory) {
@@ -199,13 +201,13 @@ export function takeToastText(log: readonly TakeRecord[], single: string): strin
   const total = log.reduce((n, r) => n + r.count, 0)
   const byTarget = new Map<string, number>()
   for (const r of log) byTarget.set(r.target, (byTarget.get(r.target) ?? 0) + r.count)
-  const where = byTarget.size === 1 ? `into ${[...byTarget.keys()][0]}` : [...byTarget].map(([t, n]) => `${n} → ${t}`).join(', ')
-  return `${total} rubrics taken (${where}) · last: ${log[log.length - 1].last}`
+  const where = byTarget.size === 1 ? `→ ${[...byTarget.keys()][0]}` : [...byTarget].map(([t, n]) => `${n} → ${t}`).join(', ')
+  return `${total} rubrics taken ${where} · last: ${log[log.length - 1].last}`
 }
 
 let takeLog: { toastId: string; log: TakeRecord[] } | null = null
 
-function takeToast(record: TakeRecord, single: string, undo: () => void) {
+export function takeToast(record: TakeRecord, single: string, undo: () => void) {
   const s = st()
   const prev = takeLog && s.toasts.some(t => t.id === takeLog!.toastId) ? takeLog : null
   if (prev) actions.dismissToast(prev.toastId)
@@ -217,22 +219,79 @@ function takeToast(record: TakeRecord, single: string, undo: () => void) {
   lastToast = t ? { id: t.id, kind: 'take', count: log.length } : null
 }
 
+/** "Clipboard 2", or "Clipboard 2 (Particulars)" when the clipboard has a name of its own. */
+export function clipboardTitle(n: number, name: string): string {
+  const base = `Clipboard ${n}`
+  return !name || name === base ? base : `${base} (${name})`
+}
+
+/**
+ * Undo label of a take: the rubric's full path, the chapter then its levels
+ * ("Take Mind - morning, and evening, during").
+ */
+export function takeUndoLabel(refs: readonly RubricRef[]): string {
+  if (refs.length !== 1) return `Take ${refs.length} rubrics`
+  const r = resolve(refs[0])
+  if (!r) return `Take ${refs[0]}`
+  const [chapter, ...levels] = r.rep.lineage(r.index).map(i => r.rep.text(i))
+  return `Take ${levels.length ? `${chapter} - ${levels.join(', ')}` : chapter}`
+}
+
+/**
+ * The symptom of clipboard `n` (1-based, null = active) that holds exactly `rubrics`, with the
+ * clipboard's number and name; null when the rubric set is not on that clipboard.
+ */
+export function existingSymptom(rubrics: readonly RubricRef[], n: number | null): { symptom: Symptom; n: number; name: string } | null {
+  const c = selectActiveConsultation(st())
+  if (!c || !rubrics.length) return null
+  const k = n == null ? c.clipboards.findIndex(cb => cb.id === st().activeClipboardId) : n - 1
+  const cb = c.clipboards[k]
+  const symptom = cb?.symptoms.find(x => sameRubrics(x.rubrics, rubrics))
+  return symptom ? { symptom, n: k + 1, name: cb.name } : null
+}
+
+/**
+ * The changes a take makes to a symptom already on the clipboard; empty when it would change nothing.
+ * A take that did not ask for an intensity keeps the symptom's one; the mini-language only sets the
+ * qualifications and group it names, the F6 dialog (`replace`) sets them all.
+ */
+export function takePatch(x: Symptom, o: TakeOptions): Partial<Symptom> {
+  const want: Partial<Symptom> = {}
+  if (o.replace || weightGiven(o)) want.weight = o.weight
+  if (o.replace) Object.assign(want, { eliminatory: o.eliminatory, exclusive: o.exclusive, causal: o.causal, group: o.group })
+  else {
+    if (o.eliminatory) Object.assign(want, { eliminatory: true, exclusive: false })
+    if (o.exclusive) Object.assign(want, { exclusive: true, eliminatory: false })
+    if (o.causal) want.causal = true
+    if (o.group) want.group = o.group
+  }
+  const out: Partial<Symptom> = {}
+  if (want.weight !== undefined && want.weight !== x.weight) out.weight = want.weight
+  if (want.eliminatory !== undefined && want.eliminatory !== !!x.eliminatory) out.eliminatory = want.eliminatory
+  if (want.exclusive !== undefined && want.exclusive !== !!x.exclusive) out.exclusive = want.exclusive
+  if (want.causal !== undefined && want.causal !== !!x.causal) out.causal = want.causal
+  if (want.group !== undefined && want.group !== (x.group ?? null)) out.group = want.group
+  return out
+}
+
 /**
  * Take rubrics into a clipboard. Returns the number of symptoms added or updated. The whole take
- * (a new unsaved case, new clipboards, added and updated symptoms) is one undo step.
+ * (a new unsaved case, new clipboards, added and updated symptoms) is one undo step. A rubric
+ * already on the clipboard only changes by what the take asked for (see takePatch); when nothing
+ * changes the toast says where it already is.
  */
 export function takeRefs(refs: RubricRef[], o: TakeOptions): number {
   if (!refs.length) { featureToast('error', () => 'No rubric to take', 'error'); return 0 }
   const newCase = !selectActiveConsultation(st())
   const pastBefore = st().past
-  const result = actions.transaction(() => takeInto(refs, o), refs.length === 1 ? `Take ${leafText(refs[0])}` : `Take ${refs.length} rubrics`)
+  const result = actions.transaction(() => takeInto(refs, o), takeUndoLabel(refs))
   if (!result) { featureToast('error', () => 'No clipboard available', 'error'); return 0 }
   const { target, added, updated } = result
   for (const ref of refs.slice(0, 5)) recordRecent(ref)
   const what = refs.length === 1 ? refShort(refs[0]) : `${refs.length} rubrics`
   const leafNote = o.subRubrics && refs.length === 1 && (() => { const r = resolve(refs[0]); return !!r && r.rep.childCountOf(r.index) === 0 })() ? ' · no sub-rubrics' : ''
   const caseNote = newCase ? ' · new unsaved case' : ''
-  if (added + updated === 0) { featureToast('same', () => `Already in ${target.name}: ${what}`, 'info'); return 0 }
+  if (added + updated === 0) { featureToast('same', () => `Already in ${clipboardTitle(target.n, target.name)}: ${what}`, 'info'); return 0 }
   // the history entry this take pushed: Undo only undoes it while it is still the latest change
   const entry = st().past !== pastBefore ? st().past[st().past.length - 1] : null
   const undo = () => {
@@ -242,40 +301,40 @@ export function takeRefs(refs: RubricRef[], o: TakeOptions): number {
   }
   const verb = updated && !added ? 'Updated' : 'Taken'
   // a multi-rubric take names its last rubric too ("last: Fear and 2 more", never "last: 3 rubrics")
-  const last = `${leafText(refs[refs.length - 1])}${refs.length > 1 ? ` and ${refs.length - 1} more` : ''} (${describeTake({ ...o, clipboard: null })})`
-  takeToast({ count: added + updated, target: target.name, last }, `${verb} ${what} (${describeTake(o, target.name)}${leafNote}${caseNote})`, undo)
+  // one line, no brackets: "Taken Mind - morning · ×2 · group a → Clipboard 1"
+  const how = describeTake({ ...o, clipboard: null })
+  const last = `${leafText(refs[refs.length - 1])}${refs.length > 1 ? ` and ${refs.length - 1} more` : ''} ${how}`
+  takeToast({ count: added + updated, target: target.name, last }, `${verb} ${what} · ${how} → ${target.name}${leafNote}${caseNote}`, undo)
   return added + updated
 }
 
-function takeInto(refs: RubricRef[], o: TakeOptions): { target: { id: string; name: string }; added: number; updated: number } | null {
-  const target = ensureClipboard(o.clipboard, { quiet: true })
-  if (!target) return null
+function takeInto(refs: RubricRef[], o: TakeOptions): { target: { id: string; name: string; n: number }; added: number; updated: number } | null {
+  const cb = ensureClipboard(o.clipboard, { quiet: true })
+  if (!cb) return null
+  const n = (selectActiveConsultation(st())?.clipboards.findIndex(x => x.id === cb.id) ?? -1) + 1
+  const target = { ...cb, n }
   const flags: Partial<Symptom> = { weight: o.weight, eliminatory: o.eliminatory, exclusive: o.exclusive, causal: o.causal, group: o.group }
   const plain = !o.eliminatory && !o.exclusive && !o.causal && !o.group && !o.subRubrics
   let added = 0, updated = 0
-  const symptoms = () => selectActiveConsultation(st())?.clipboards.find(cb => cb.id === target.id)?.symptoms ?? []
+  const symptoms = () => selectActiveConsultation(st())?.clipboards.find(x => x.id === target.id)?.symptoms ?? []
   /** The symptom holding exactly these rubrics, if any (a plain take and a /s take of a leaf match the same one). */
   const findExisting = (rubrics: RubricRef[]) => symptoms().find(x => sameRubrics(x.rubrics, rubrics)) ?? null
-  const differs = (x: Symptom) => x.weight !== o.weight || !!x.eliminatory !== o.eliminatory || !!x.exclusive !== o.exclusive || !!x.causal !== o.causal || (x.group ?? null) !== o.group
-  if (plain) {
-    const fresh = refs.filter(r => !findExisting([r]))
-    const existing = refs.map(r => findExisting([r])).filter((x): x is Symptom => !!x && x.weight !== o.weight)
-    if (fresh.length) added = actions.addRubrics(fresh, { clipboardId: target.id, weight: o.weight })
-    if (existing.length) { actions.updateSymptoms(target.id, existing.map(x => x.id), { weight: o.weight }); updated = existing.length }
-  } else {
-    for (const ref of refs) {
-      const r = o.subRubrics ? resolve(ref) : null
-      // with sub-rubrics: one combined symptom; on a leaf this is just the rubric itself
-      const rubrics = r ? subtreeRefs(r.rep, r.index) : [ref]
-      const ex = findExisting(rubrics)
-      if (ex) {
-        if (differs(ex)) { actions.updateSymptoms(target.id, [ex.id], flags); updated++ }
-        continue
-      }
-      const label = rubrics.length > 1 ? `${r ? r.rep.text(r.index) : ref} (with ${rubrics.length - 1} sub-rubrics)` : undefined
-      if (actions.addSymptom(target.id, { ...flags, rubrics, combine: 'union', label })) added++
+  const fresh: RubricRef[] = []
+  for (const ref of refs) {
+    const r = o.subRubrics ? resolve(ref) : null
+    // with sub-rubrics: one combined symptom; on a leaf this is just the rubric itself
+    const rubrics = r ? subtreeRefs(r.rep, r.index) : [ref]
+    const ex = findExisting(rubrics)
+    if (ex) {
+      const patch = takePatch(ex, o)
+      if (Object.keys(patch).length) { actions.updateSymptoms(target.id, [ex.id], patch); updated++ }
+      continue
     }
+    if (plain) { fresh.push(ref); continue }
+    const label = rubrics.length > 1 ? `${r ? r.rep.text(r.index) : ref} (with ${rubrics.length - 1} sub-rubrics)` : undefined
+    if (actions.addSymptom(target.id, { ...flags, rubrics, combine: 'union', label })) added++
   }
+  if (fresh.length) added += actions.addRubrics(fresh, { clipboardId: target.id, weight: o.weight })
   return { target, added, updated }
 }
 
@@ -344,18 +403,70 @@ export const openFind = (fromCurrent: boolean) => {
 }
 
 /**
- * Open a repertory in a new tab. The tab appears at once and shows a loading skeleton while the
- * book loads; when loading fails the tab shows the error with Retry and an error toast says so.
+ * Open a repertory. With `reuse` (the default) a tab already showing that repertory is activated
+ * (and moved to `rubric` when one is given); `reuse: false`, the explicit "new tab" action, always
+ * opens another tab. A new tab appears at once and shows a loading skeleton while the book loads;
+ * when loading fails the tab shows the error with Retry and an error toast says so.
  */
-export async function openRepertory(abbrev?: string, rubric = 0): Promise<void> {
+export async function openRepertory(abbrev?: string, rubric?: number, opts: { reuse?: boolean } = {}): Promise<void> {
   const a = abbrev ?? st().settings.defaultRepertory
-  actions.openTab({ kind: 'repertory', repertory: a, rubric, back: [], forward: [] }, { reuse: false })
+  if (opts.reuse ?? true) {
+    const s = st()
+    const active = selectActiveTab(s)
+    const existing = active?.kind === 'repertory' && active.repertory === a ? active
+      : s.tabs.find((t): t is RepertoryTab => t.kind === 'repertory' && t.repertory === a)
+    if (existing) {
+      if (s.activeTabId !== existing.id) actions.activateTab(existing.id)
+      if (rubric != null && rubric !== existing.rubric) actions.navigateRubric(existing.id, rubric)
+      return
+    }
+  }
+  actions.openTab({ kind: 'repertory', repertory: a, rubric: rubric ?? 0, back: [], forward: [] }, { reuse: false })
   try {
     await catalog().loadRepertory(a)
   } catch (e) {
     const title = catalogRef?.repertoryInfos.find(r => r.abbrev === a)?.title ?? a
     actions.toast(`Could not open ${title}: ${e instanceof Error ? e.message : 'load failed'}`, 'error')
   }
+}
+
+/** The repertory tab a rubric of this repertory is read in: the active one when it shows it. */
+function tabFor(ref: RubricRef): RepertoryTab | null {
+  const { repertory } = parseRef(ref)
+  const a = activeRepertoryTab()
+  if (a?.repertory === repertory) return a
+  return st().tabs.find((t): t is RepertoryTab => t.kind === 'repertory' && t.repertory === repertory) ?? null
+}
+
+/** Highlight a remedy in the book showing `ref`'s repertory (null clears it). */
+export function highlightRemedy(ref: RubricRef, remedyId: number | null) {
+  const t = tabFor(ref)
+  if (t) setHighlight(t.id, remedyId)
+}
+
+/**
+ * The remedies of a rubric as menu entries, in book order with their grade; each opens a submenu to
+ * highlight the remedy in the book or open its materia medica. Keyboard route to the highlight bar.
+ */
+export function remedyMenuItems(ref: RubricRef): MenuItem[] {
+  const r = resolve(ref)
+  if (!r) return []
+  const cat = catalog()
+  const t = tabFor(ref)
+  const hl = t ? getHighlight(t.id) : null
+  return alphaRemedies(r.rep, cat, r.index).map(x => {
+    const rem = cat.remedy(x.id)
+    return {
+      label: `${bookAbbrev(rem.abbrev, x.grade)}  ${rem.name} (${GRADE_WORD[x.grade]})`,
+      checked: hl === x.id ? true : undefined,
+      submenu: [
+        hl === x.id
+          ? { label: 'Clear highlight', run: () => highlightRemedy(ref, null) }
+          : { label: 'Highlight in book', run: () => highlightRemedy(ref, x.id) },
+        { label: 'Open remedy', run: () => actions.openTab({ kind: 'remedy', remedyId: x.id }) },
+      ],
+    }
+  })
 }
 
 /** Context menu of a rubric in the book view (right-click, Shift+F10, the ContextMenu key). */
@@ -374,6 +485,12 @@ export function rubricMenu(ref: RubricRef): MenuItem[] {
         ...(count < MAX_CLIPBOARDS ? [{ type: 'separator' as const }, { label: 'New clipboard', run: () => into(count + 1) }] : []),
       ],
     },
+    { type: 'separator' },
+    (() => {
+      const r = resolve(ref)
+      const n = r ? r.rep.remedyCount(r.index) : 0
+      return n ? { label: `Remedies (${n})`, submenu: remedyMenuItems(ref) } : { label: 'Remedies', disabled: true }
+    })(),
     { type: 'separator' },
     { command: 'rubric.copy' },
     { command: 'rubric.copyText' },

@@ -25,6 +25,7 @@ function commandIds(items: MenuItem[], path: string[] = []): { id: string; path:
     if (it.type === 'separator' || it.type === 'label') continue
     const here = [...path, it.label ?? it.command ?? '?']
     if (it.command) out.push({ id: it.command, path: here.join(' › ') })
+    for (const id of it.commands ?? []) out.push({ id, path: here.join(' › ') })
     if (it.submenu) out.push(...commandIds(it.submenu, here))
   }
   return out
@@ -94,9 +95,25 @@ describe('menus', () => {
   })
 
   it('treats a reserved chord as reserved in every spelling', () => {
-    for (const k of ['Mod+W', 'Mod+1', 'Mod+PageDown', 'Mod+Shift+P']) expect(BROWSER_RESERVED.has(k)).toBe(true)
-    expect(displayKey(['Mod+1', 'Alt+1'])).toBe('Alt+1')
+    for (const k of ['Mod+W', 'Mod+PageDown', 'Mod+Shift+P']) expect(BROWSER_RESERVED.has(k)).toBe(true)
     expect(displayKey(['Mod+W'])).toBeUndefined()
+  })
+
+  it('shows Mod+1..5 (the page receives them): documents are one chord away', () => {
+    for (let i = 1; i <= 9; i++) expect(isReserved(`Mod+${i}`)).toBe(false)
+    expect(displayKey(getCommand('repertory.toc')!.keys)).toBe('Mod+1')
+    expect(displayKey(getCommand('mm.open')!.keys)).toBe('Mod+2')
+    expect(displayKey(getCommand('patients.open')!.keys)).toBe('Mod+3')
+  })
+
+  it('lists one File › Print… entry for Ctrl+P, named after the enabled print command', () => {
+    const file = menus.find(m => m.label === 'File')!.items
+    const printing = file.filter(it => !('type' in it && it.type) && resolveMenuItem(it as MenuEntry).keys === 'Mod+P')
+    expect(printing).toHaveLength(1)
+    const r = resolveMenuItem(printing[0] as MenuEntry)
+    // nothing printable is open in a bare test workspace
+    expect(r.label).toBe('Print…')
+    expect(r.disabled).toBe(true)
   })
 })
 
@@ -114,9 +131,10 @@ describe('shortcut normalisation', () => {
     expect(normaliseChord('Mod+Shift+=')).toBe('Mod+=')
     expect(normaliseChord('Mod+Shift+K')).toBe('Mod+Shift+K')
     expect(normaliseChord('+')).toBe('+')
-    // search.open was registered with both "Shift+?" and "?": one key after normalisation
-    expect(getCommand('search.open')!.keys!.filter(k => k === '?')).toHaveLength(1)
-    expect(getCommand('search.open')!.keys).not.toContain('Shift+?')
+    // '?' opens search through a workspace-scoped alias; F4 stays global on search.open
+    expect(getCommand('search.openKey')!.keys).toEqual(['?'])
+    expect(getCommand('search.openKey')!.scope).toBeTruthy()
+    expect(getCommand('search.open')!.keys).toEqual(['F4'])
   })
 })
 

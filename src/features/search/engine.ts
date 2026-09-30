@@ -1,6 +1,7 @@
 import type { Repertory } from '../../data/repertory'
 import type { Grade } from '../../data/types'
-import { branchMatch, fold, sameOrSynonym, synonymsOf, tokenize } from './text'
+import { remedyIndexNow as remedyIndex } from '../mm/remedyIndexAccess'
+import { branchMatch, sameOrSynonym, synonymsOf, tokenize } from './text'
 import { parseQuery, wordTermMatch } from './query'
 import type { Node, ParsedQuery, Term } from './query'
 
@@ -20,8 +21,6 @@ export interface WordIndex {
   words: string[]
   /** postings[k] = rubric ids (ascending) whose own text contains words[k]. */
   postings: Int32Array[]
-  /** remedyId → rubric ids * 4 + (grade - 1), ascending. Built on first use. */
-  remedies: Map<number, Int32Array> | null
   /** Number of word tokens in each rubric's own text (for ranking by coverage). */
   tokenCount: Uint8Array
   buildMs: number
@@ -33,73 +32,125 @@ export function hasIndex(rep: Repertory) { return indexes.has(rep) }
 
 export function getIndex(rep: Repertory): WordIndex {
   let ix = indexes.get(rep)
-  if (!ix) { ix = buildIndex(rep); indexes.set(rep, ix) }
+  if (!ix) {
+    // someone needs it now: finish (or run) the build in one go
+    const b = builders.get(rep) ?? new IndexBuilder(rep)
+    b.step()
+    ix = b.result!
+  }
   return ix
 }
 
-function buildIndex(rep: Repertory): WordIndex {
-  const t0 = performance.now()
-  const map = new Map<string, number[]>()
-  const cache = new Map<string, string[]>()
-  const tokenCount = new Uint8Array(rep.size)
-  for (let i = 0; i < rep.size; i++) {
-    const text = rep.text(i)
-    let toks = cache.get(text)
-    if (!toks) { toks = tokenize(text); cache.set(text, toks) }
-    tokenCount[i] = Math.min(255, toks.length)
-    for (const w of toks) {
-      const list = map.get(w)
-      if (!list) map.set(w, [i])
-      else if (list[list.length - 1] !== i) list.push(i)
+/**
+ * Resumable word-index build. `step(deadline)` works until `deadline()` says stop and returns
+ * true when the index is complete (and registered). Like `Repertory.buildLowerPaths`, so a
+ * background build never blocks the main thread for more than a slice.
+ */
+export class IndexBuilder {
+  private i = 0
+  private phase: 'scan' | 'sort' | 'post' | 'done' = 'scan'
+  private readonly map = new Map<string, number[]>()
+  private readonly cache = new Map<string, string[]>()
+  private readonly tokenCount: Uint8Array
+  private words: string[] = []
+  private postings: Int32Array[] = []
+  private ms = 0
+  result: WordIndex | null = null
+
+  private readonly rep: Repertory
+  constructor(rep: Repertory) {
+    this.rep = rep
+    this.tokenCount = new Uint8Array(rep.size)
+    builders.set(rep, this)
+  }
+
+  step(deadline?: () => boolean): boolean {
+    if (this.result) return true
+    const t0 = performance.now()
+    try {
+      const { rep, map, cache, tokenCount } = this
+      while (this.phase === 'scan') {
+        const end = Math.min(rep.size, this.i + 1024)
+        for (let i = this.i; i < end; i++) {
+          const text = rep.text(i)
+          let toks = cache.get(text)
+          if (!toks) { toks = tokenize(text); cache.set(text, toks) }
+          tokenCount[i] = Math.min(255, toks.length)
+          for (const w of toks) {
+            const list = map.get(w)
+            if (!list) map.set(w, [i])
+            else if (list[list.length - 1] !== i) list.push(i)
+          }
+        }
+        this.i = end
+        if (end >= rep.size) { this.phase = 'sort'; cache.clear() }
+        if (deadline?.()) return false
+      }
+      if (this.phase === 'sort') {
+        this.words = [...map.keys()].sort()
+        this.phase = 'post'
+        this.i = 0
+        if (deadline?.()) return false
+      }
+      while (this.phase === 'post') {
+        const end = Math.min(this.words.length, this.i + 4096)
+        for (let k = this.i; k < end; k++) this.postings.push(Int32Array.from(map.get(this.words[k])!))
+        this.i = end
+        if (end >= this.words.length) { this.phase = 'done'; break }
+        if (deadline?.()) return false
+      }
+    } finally {
+      this.ms += performance.now() - t0
     }
+    this.result = { words: this.words, postings: this.postings, tokenCount: this.tokenCount, buildMs: this.ms }
+    this.map.clear()
+    indexes.set(this.rep, this.result)
+    builders.delete(this.rep)
+    return true
   }
-  const words = [...map.keys()].sort()
-  const postings = words.map(w => Int32Array.from(map.get(w)!))
-  return { words, postings, remedies: null, tokenCount, buildMs: performance.now() - t0 }
 }
 
-function remedyIndex(rep: Repertory, ix: WordIndex): Map<number, Int32Array> {
-  if (ix.remedies) return ix.remedies
-  const lists = new Map<number, number[]>()
-  for (let i = 0; i < rep.size; i++) {
-    rep.forEachRemedy(i, (id, g) => {
-      const l = lists.get(id)
-      const v = i * 4 + (g - 1)
-      if (l) l.push(v)
-      else lists.set(id, [v])
-    })
-  }
-  ix.remedies = new Map([...lists].map(([k, v]) => [k, Int32Array.from(v)]))
-  return ix.remedies
-}
+const builders = new WeakMap<Repertory, IndexBuilder>()
+const warming = new WeakMap<Repertory, { promise: Promise<void>; hurry: () => void }>()
+type IdleDeadlineLike = { timeRemaining(): number; didTimeout: boolean }
+type IdleWindow = { requestIdleCallback?: (cb: (d: IdleDeadlineLike) => void, o?: { timeout: number }) => number }
 
-/** Rubric ids * 4 + (grade - 1) carrying a remedy, in book order. */
-export function remedyPostings(rep: Repertory, remedyId: number): Int32Array {
-  return remedyIndex(rep, getIndex(rep)).get(remedyId) ?? new Int32Array(0)
-}
-
-const warming = new WeakMap<Repertory, { promise: Promise<void>; now: () => void }>()
-type IdleWindow = { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }
+/** Main-thread budget of one urgent slice (ms): short enough that typing stays responsive. */
+const URGENT_SLICE_MS = 12
 
 /**
- * Build the index off the critical path. By default in an idle callback so the first
- * search is instant; `urgent` (someone is waiting) builds on the next task instead.
+ * Build the index off the critical path, in time slices: by default in idle callbacks so the
+ * first search is instant; `urgent` (someone is waiting) continues on the next tasks instead.
  */
 export function warmIndex(rep: Repertory, urgent = false): Promise<void> {
   if (indexes.has(rep)) return Promise.resolve()
   let w = warming.get(rep)
   if (!w) {
-    let done = false
+    const b = builders.get(rep) ?? new IndexBuilder(rep)
     let resolve!: () => void
     const promise = new Promise<void>(res => { resolve = res })
-    const now = () => { if (done) return; done = true; getIndex(rep); warming.delete(rep); resolve() }
-    w = { promise, now }
-    warming.set(rep, w)
+    let hurried = false
+    const finish = () => { warming.delete(rep); resolve() }
     const win = (typeof window !== 'undefined' ? window : undefined) as IdleWindow | undefined
-    if (!urgent && win?.requestIdleCallback) win.requestIdleCallback(now, { timeout: 2000 })
-    else setTimeout(now, 0)
+    const idle = (d: IdleDeadlineLike) => {
+      if (hurried) return
+      const t0 = performance.now()
+      // at most one slice per idle callback (also one that timed out), so a keystroke never waits long
+      if (b.step(() => performance.now() - t0 > URGENT_SLICE_MS || (!d.didTimeout && d.timeRemaining() < 2))) finish()
+      else win!.requestIdleCallback!(idle, { timeout: 2000 })
+    }
+    const task = () => {
+      const t0 = performance.now()
+      if (b.step(() => performance.now() - t0 > URGENT_SLICE_MS)) finish()
+      else setTimeout(task, 0)
+    }
+    const hurry = () => { if (hurried) return; hurried = true; setTimeout(task, 0) }
+    w = { promise, hurry }
+    warming.set(rep, w)
+    if (!urgent && win?.requestIdleCallback) win.requestIdleCallback(idle, { timeout: 2000 })
+    else hurry()
   }
-  if (urgent) { const run = w.now; setTimeout(run, 0) }
+  if (urgent) w.hurry()
   return w.promise
 }
 
@@ -225,9 +276,10 @@ function evalTerm(ctx: Ctx, term: Term): Uint8Array {
     const id = ctx.resolveRemedy?.(term.token) ?? null
     const mask = new Uint8Array(n)
     if (id == null) { ctx.unknownRemedy = term.token; ctx.own.set(term, mask); return mask }
-    const p = remedyPostings(rep, id)
+    const ix = remedyIndex(rep)
+    const [from, to] = ix.range(id)
     const own = new Uint8Array(n)
-    for (let j = 0; j < p.length; j++) if ((p[j] & 3) + 1 >= term.minGrade) { mask[p[j] >> 2] = 1; own[p[j] >> 2] = 2 }
+    for (let j = from; j < to; j++) if (ix.grades[j] >= term.minGrade) { mask[ix.rubrics[j]] = 1; own[ix.rubrics[j]] = 2 }
     ctx.own.set(term, own)
     return mask
   }
@@ -364,23 +416,30 @@ export interface RemedySearchOptions {
 
 export interface RemedyHit { index: number; grade: Grade; size: number; co: number }
 
-/** Rubrics of a repertory that contain a remedy, filtered, in book order. */
+/**
+ * Rubrics of a repertory that contain a remedy, filtered, in book order. Reads the remedy's slice
+ * of the cached remedy index (no scan of the repertory) and the raw entry columns for co-remedies.
+ */
 export function remedyRubrics(rep: Repertory, remedyId: number, o: RemedySearchOptions = {}): RemedyHit[] {
-  const p = remedyPostings(rep, remedyId)
+  const ix = remedyIndex(rep)
+  const [from, to] = ix.range(remedyId)
+  const { offsets, data } = rep.rawEntries()
   const minG = o.minGrade ?? 1, maxG = o.maxGrade ?? 4
   const maxSize = o.maxSize ?? 0, minSize = o.minSize ?? 0, maxCo = o.maxCo ?? -1
   const start = o.start ?? 0, end = o.end ?? rep.size
   const out: RemedyHit[] = []
-  for (let j = 0; j < p.length; j++) {
-    const i = p[j] >> 2
+  for (let j = from; j < to; j++) {
+    const i = ix.rubrics[j]
     if (i < start || i >= end) continue
-    const grade = ((p[j] & 3) + 1) as Grade
+    const grade = ix.grades[j] as Grade
     if (grade < minG || grade > maxG) continue
-    const size = rep.remedyCount(i)
+    const k0 = offsets[i], k1 = offsets[i + 1]
+    const size = k1 - k0
     if (maxSize > 0 && size > maxSize) continue
     if (size < minSize) continue
+    // other remedies at the same or a higher grade (grade code = grade - 1)
     let co = 0
-    rep.forEachRemedy(i, (id, g) => { if (id !== remedyId && g >= grade) co++ })
+    for (let k = k0; k < k1; k++) { const v = data[k]; if ((v & 3) + 1 >= grade && v >> 2 !== remedyId) co++ }
     if (maxCo >= 0 && co > maxCo) continue
     out.push({ index: i, grade, size, co })
   }
@@ -406,6 +465,3 @@ export function remedyFrequency(items: { rep: Repertory; index: number }[], limi
   const all = [...map.values()].sort((a, b) => b.count - a.count || b.gradeSum - a.gradeSum || a.remedyId - b.remedyId)
   return { top: all.slice(0, limit), distinct: all.length }
 }
-
-/** Folded key for a query in recent-search lists. */
-export function queryKey(q: string) { return fold(q.trim().replace(/\s+/g, ' ')) }

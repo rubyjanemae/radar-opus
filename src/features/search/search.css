@@ -1,5 +1,7 @@
 /* ───────── shared ───────── */
 .srch-mark { background: color-mix(in srgb, var(--warning) 28%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; margin: 0 -1px; box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--warning) 70%, transparent); }
+/* inside blue chapter text the mark takes the neutral text colour, so it keeps ≥4.5:1 on the mark background (dark mode too, and in the palette) */
+.srch-chap .srch-mark { color: var(--text); }
 .spin { animation: srch-spin .9s linear infinite; }
 @keyframes srch-spin { to { transform: rotate(360deg); } }
 
@@ -17,7 +19,7 @@
 .qf-clear { position: absolute; right: 5px; display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 50%; background: var(--bg-hover); color: var(--text-2); }
 .qf-clear:hover { background: var(--border-strong); color: var(--text); }
 .qf-pop {
-  position: absolute; top: calc(100% + 5px); left: 0; z-index: 800; width: min(600px, calc(100vw - 24px)); max-height: min(560px, 72vh); overflow: auto;
+  position: absolute; top: calc(100% + 5px); left: 0; z-index: var(--z-dropdown, 800); width: min(600px, calc(100vw - 24px)); max-height: min(560px, 72vh); overflow: auto;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-2); padding: 4px 0 0;
   animation: pop .09s ease-out;
 }
@@ -49,14 +51,14 @@
 .srch-qwrap { position: relative; flex: 1; display: flex; align-items: center; min-width: 0; }
 .srch-qicon { position: absolute; left: 10px; color: var(--text-3); pointer-events: none; }
 .srch-q {
-  width: 100%; height: 32px; padding: 0 32px 0 32px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-elev);
+  width: 100%; height: var(--ctl-h, 28px); padding: 0 32px 0 32px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-elev);
   font-size: calc(var(--fs) + 1px);
 }
 .srch-q:focus { outline: none; border-color: var(--focus); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 22%, transparent); }
 .srch-q::-webkit-calendar-picker-indicator { display: none !important; }
 .srch-qclear { position: absolute; right: 5px; }
 .srch-help {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 50; width: 440px; padding: 10px 12px; font-size: var(--fs-sm);
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-dropdown, 800); width: 440px; padding: 10px 12px; font-size: var(--fs-sm);
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-2);
 }
 .srch-help-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
@@ -64,19 +66,19 @@
 .srch-help td { padding: 3px 6px 3px 0; vertical-align: top; color: var(--text-2); }
 .srch-help code { font: 500 var(--fs-xs)/1.4 var(--font-mono); color: var(--text); background: var(--bg-sunken); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
 .srch-help p { margin: 8px 0 0; color: var(--text-3); line-height: 1.45; }
-.srch-rbar { gap: 10px; flex-wrap: wrap; }
+.srch-qbar-spacer { flex: none; width: 26px; }
 .srch-field { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: var(--fs-xs); white-space: nowrap; }
-.srch-num { width: 60px; height: 24px; font-size: var(--fs-xs); }
+.srch-num { width: 60px; height: var(--ctl-h-sm, 24px); font-size: var(--fs-xs); }
 .srch-vsep { width: 1px; height: 16px; background: var(--border); margin: 0 2px; }
 .srch-whole { color: var(--text-2); }
-.srch-scope .srch-field select { height: 24px; }
-.srch-rp { position: relative; display: flex; align-items: center; flex: 1; min-width: 220px; max-width: 420px; }
-.srch-rp-icon { position: absolute; left: 10px; z-index: 1; color: var(--text-3); pointer-events: none; }
+
+.srch-rp { position: relative; display: flex; align-items: center; flex: 1; min-width: 0; }
+.srch-rp-icon { position: absolute; left: 10px; z-index: var(--z-raised, 1); color: var(--text-3); pointer-events: none; }
 /* scoped under .srch-rp so the shared .input padding cannot put the text under the icon */
-.srch-rp .srch-rp-input { width: 100%; height: 32px; padding: 0 10px 0 32px; border-radius: 7px; font-size: calc(var(--fs) + 1px); }
+.srch-rp .srch-rp-input { width: 100%; height: var(--ctl-h, 28px); padding: 0 10px 0 32px; border-radius: 7px; font-size: calc(var(--fs) + 1px); }
 .srch-rp-none { padding: 6px 8px; color: var(--text-3); font-size: var(--fs-sm); }
 .srch-rp-pop {
-  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 60; max-height: 320px; overflow: auto; padding: 3px;
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: var(--z-dropdown, 800); max-height: 320px; overflow: auto; padding: 3px;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 7px; box-shadow: var(--shadow-2);
 }
 .srch-rp-opt { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px; border-radius: 4px; font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; }
@@ -85,9 +87,9 @@
 .srch-rp-opt em { color: var(--text-3); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; }
 .srch-rp-opt.active { background: var(--bg-selected); }
 
-.srch-scope { display: flex; align-items: center; gap: 8px; padding: 0 12px 8px; color: var(--text-3); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.srch-scope .select { height: 24px; font-size: var(--fs-xs); }
-.srch-check { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; color: var(--text-2); font-size: var(--fs-xs); }
+.srch-scope { display: flex; align-items: center; gap: 8px; min-height: calc(var(--ctl-h-sm, 24px) + 8px); padding: 0 12px 8px; color: var(--text-3); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.srch-scope .select { height: var(--ctl-h-sm, 24px); margin: 0; font-size: var(--fs-xs); color: var(--text); }
+.srch-check { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; line-height: var(--ctl-h-sm, 24px); color: var(--text-2); font-size: var(--fs-xs); }
 
 .srch-body { flex: 1; display: flex; min-height: 0; }
 .srch-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -96,7 +98,7 @@
 .srch-total b { color: var(--text); font-variant-numeric: tabular-nums; }
 .srch-ms { margin-left: 8px; color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .srch-status { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 10px; overflow: hidden; white-space: nowrap; }
-.srch-desc { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); }
+.srch-desc { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); }
 .srch-err { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); font-size: var(--fs-xs); }
 .srch-pend { display: inline-flex; align-items: center; gap: 4px; color: var(--text-3); font-size: var(--fs-xs); }
 .srch-chip { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border: 1px solid var(--accent); border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-xs); font-weight: 600; }
@@ -120,12 +122,16 @@
 .srch-row.cursor { background: var(--bg-active); box-shadow: inset 2px 0 0 var(--accent); }
 .srch-results:focus .srch-row.cursor { background: var(--bg-selected); }
 .srch-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.srch-cb { flex: none; margin: 0; }
+/* tick box: a picture inside the option (no nested control); the row toggles it on click */
+.srch-cb { flex: none; position: relative; width: 14px; height: 14px; border: 1px solid var(--border-strong); border-radius: 3px; background: var(--bg-elev); }
+.srch-cb.on { background: var(--accent); border-color: var(--accent); }
+.srch-cb.on::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid var(--on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.srch-cb::before { content: ""; position: absolute; inset: -5px; } /* 24px hit area */
 .srch-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-book); font-size: calc(var(--fs) + .5px); }
 .srch-chap { color: var(--accent); font-weight: 600; }
 .srch-leaf { color: var(--text); }
 .srch-sep { color: var(--text-3); }
-.srch-count { flex: none; min-width: 28px; text-align: right; color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.srch-count { flex: none; min-width: 28px; text-align: right; color: var(--text-2); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .srch-grade { flex: none; font-family: var(--font-book); }
 .srch-co { flex: none; color: var(--text-3); font-size: var(--fs-xs); }
 .srch-repbadge { flex: none; padding: 0 5px; border-radius: 3px; background: var(--bg-sunken); color: var(--text-3); font-size: 10.5px; line-height: 16px; }
@@ -154,7 +160,7 @@
 .srch-sum-tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
 .srch-sum-note { margin: 0; padding: 8px 12px 4px; color: var(--text-3); font-size: var(--fs-xs); line-height: 1.4; }
 .srch-bars { list-style: none; margin: 0; padding: 2px 6px 8px; overflow: auto; flex: 1; }
-.srch-barrow { display: grid; grid-template-columns: 74px 1fr 34px; align-items: center; gap: 6px; width: 100%; height: 22px; padding: 0 6px; border: 0; border-radius: 4px; background: transparent; font-size: var(--fs-xs); text-align: left; }
+.srch-barrow { display: grid; grid-template-columns: 74px 1fr 34px; align-items: center; gap: 6px; width: 100%; min-height: 24px; padding: 0 6px; border: 0; border-radius: 4px; background: transparent; font-size: var(--fs-xs); text-align: left; }
 .srch-barrow:hover { background: var(--bg-hover); }
 .srch-chapbars .srch-barrow { grid-template-columns: minmax(0, 118px) 1fr 34px; }
 .srch-bargroup { display: flex; justify-content: space-between; gap: 8px; padding: 8px 6px 3px; font-size: 10.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); }
@@ -166,14 +172,21 @@
 .srch-bartrack { height: 12px; display: flex; align-items: center; }
 .srch-bar { display: flex; height: 12px; border-radius: 2px; overflow: hidden; gap: 1px; }
 .srch-bar.plain { background: var(--accent); opacity: .75; }
-.srch-bar-seg { display: inline-block; min-width: 2px; height: 100%; }
-.srch-legend .srch-bar-seg { width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
-.sb4 { background: var(--g4); }
+.srch-bar-seg { display: inline-flex; align-items: center; justify-content: center; min-width: 2px; height: 100%; overflow: hidden; container-type: inline-size; }
+/* the grade numeral inside a segment, like the analysis bars; hidden when the segment is too narrow for it */
+.srch-seg-n { font: 700 9px/1 var(--font-ui, inherit); color: var(--bg-elev); font-variant-numeric: tabular-nums; pointer-events: none; }
+@container (max-width: 8px) { .srch-seg-n { display: none; } }
+.srch-legend .srch-bar-seg { width: 12px; height: 12px; border-radius: 2px; vertical-align: -2px; }
+/* grade 4: darker than grade 3 in light mode and hatched in both themes */
+.sb4 { background-color: var(--g4); background-image: repeating-linear-gradient(135deg, transparent 0 2px, color-mix(in srgb, var(--bg-elev) 45%, transparent) 2px 3.5px); }
 .sb3 { background: var(--g3); }
-.sb2 { background: var(--g2); background-image: repeating-linear-gradient(135deg, transparent 0 2px, color-mix(in srgb, var(--bg-elev) 45%, transparent) 2px 3px); }
-.sb1 { background: color-mix(in srgb, var(--g1) 45%, transparent); }
+/* solid fills, the same as the analysis grade swatches (.s1–.s4); the legend names each grade */
+.sb2 { background: var(--g2); }
+.sb1 { background: color-mix(in srgb, var(--g1) 75%, var(--bg-elev)); }
+.srch-barbreak { display: none; grid-column: 1 / -1; padding: 0 0 3px; color: var(--text-2); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srch-barrow:focus-visible .srch-barbreak, .srch-barrow.on .srch-barbreak { display: block; }
 .srch-barnum { text-align: right; color: var(--text-2); font-variant-numeric: tabular-nums; }
-.srch-legend { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 12px 10px; border-top: 1px solid var(--border); color: var(--text-3); font-size: 10.5px; }
+.srch-legend { display: grid; grid-template-columns: repeat(2, max-content); gap: 4px 16px; padding: 6px 12px 10px; border-top: 1px solid var(--border); color: var(--text-3); font-size: 10.5px; }
 .srch-legend > span { display: inline-flex; align-items: center; gap: 4px; }
 .srch-legend-searches { list-style: none; margin: 0; padding: 2px 12px 6px; display: grid; gap: 2px; font-size: var(--fs-xs); color: var(--text-2); }
 .srch-legend-searches li { display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

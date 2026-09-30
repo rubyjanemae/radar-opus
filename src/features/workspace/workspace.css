@@ -19,7 +19,7 @@
 }
 .ws-settings-tab:hover { background: var(--bg-hover); color: var(--text); }
 .ws-settings-tab[aria-selected="true"] { background: var(--bg-active); color: var(--accent); font-weight: 600; }
-.ws-settings-panel { min-width: 0; min-height: 0; overflow: auto; padding: 4px 20px 18px; scrollbar-gutter: stable; }
+.ws-settings-panel { container-type: inline-size; min-width: 0; min-height: 0; overflow: auto; padding: 4px 20px 18px; scrollbar-gutter: stable; }
 .ws-pane h3 {
   margin: 16px 0 4px; padding-bottom: 6px; border-bottom: 1px solid var(--border);
   font-size: var(--fs-xs); font-weight: 650; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3);
@@ -29,21 +29,16 @@
 .ws-row { display: grid; grid-template-columns: minmax(150px, 200px) 1fr; gap: 16px; align-items: start; padding: 9px 0; }
 .ws-row + .ws-row { border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent); }
 .ws-row-block { grid-template-columns: 1fr; gap: 8px; }
+/* narrow panel (small window or high zoom): stack label over control so nothing is clipped */
+@container (max-width: 560px) { .ws-row { grid-template-columns: 1fr; gap: 6px; } }
 .ws-row-label { font-size: var(--fs-sm); font-weight: 550; color: var(--text); padding-top: 4px; }
 .ws-row-hint { margin-top: 2px; font-size: var(--fs-xs); font-weight: 400; color: var(--text-3); line-height: 1.4; }
 .ws-row-hint .kbd { margin-right: 2px; }
 .ws-row-control { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 
-.ws-seg { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-sunken); }
-.ws-seg-btn {
-  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px; border: 0; border-radius: 4px;
-  background: transparent; color: var(--text-2); font-size: var(--fs-sm); font-weight: 500;
-}
-.ws-seg-btn:hover { color: var(--text); }
-.ws-seg-btn[aria-checked="true"] { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-1), 0 0 0 1px var(--border); font-weight: 600; }
 
-.ws-slider { display: flex; align-items: center; gap: 10px; }
-.ws-slider input[type="range"] { width: 200px; accent-color: var(--accent); }
+.ws-slider { display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; }
+.ws-slider input[type="range"] { flex: 0 1 200px; width: 200px; min-width: 80px; accent-color: var(--accent); }
 .ws-slider-val { min-width: 42px; font-variant-numeric: tabular-nums; font-weight: 600; font-size: var(--fs-sm); }
 
 .ws-preview { margin-top: 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); overflow: hidden; }
@@ -189,11 +184,12 @@
 .ws-tour-dot.on { background: var(--accent); width: 18px; border-radius: 4px; }
 
 /* ───────── pane focus cycling ───────── */
+/* Ctrl+F6 marks the pane it lands on with a 1px accent line along its top, never a frame */
 .ws-pane-flash { animation: ws-flash .7s ease-out; }
-@keyframes ws-flash { 0%, 40% { box-shadow: inset 0 0 0 2px var(--focus); } 100% { box-shadow: inset 0 0 0 2px transparent; } }
+@keyframes ws-flash { 0%, 40% { box-shadow: inset 0 1px 0 0 var(--accent); } 100% { box-shadow: inset 0 1px 0 0 transparent; } }
 .pane:focus, .tab-content:focus, .analysis-dock:focus { outline: none; }
-/* a focused pane gets a quiet inset ring (its active item already shows where the keyboard is) */
-.pane:focus-visible, .tab-content:focus-visible, .analysis-dock:focus-visible { outline: none; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--focus) 40%, transparent); }
+/* a pane reached by keyboard pane cycling gets a 1px top accent; its active item carries the focus ring */
+.pane:focus-visible, .tab-content:focus-visible, .analysis-dock:focus-visible { outline: none; box-shadow: inset 0 1px 0 0 var(--accent); }
 
 /* ───────── pane header consistency ───────── */
 .pane-head { user-select: none; }
@@ -224,32 +220,9 @@
 }
 @keyframes ws-slide-in { from { opacity: 0; transform: translateX(var(--ws-from, -12px)); } }
 
-/* ───────── focus rings: visible, high contrast ───────── */
-:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-button:focus-visible, a:focus-visible, [role="tab"]:focus-visible, [role="radio"]:focus-visible, .btn:focus-visible {
-  outline: 2px solid var(--focus); outline-offset: 1px;
-}
-input[type="range"]:focus-visible, input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-@media (prefers-contrast: more) {
-  :root { --border: #8d94a1; --border-strong: #5e6572; --text-3: #4b5260; --focus: #0b4fd6; }
-  :focus-visible, button:focus-visible { outline-width: 3px; }
-}
-@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { --border: #5a616d; --border-strong: #7a8190; --text-3: #aab1bd; --focus: #9cc0ff; }
-}
 @media (forced-colors: active) {
-  :focus-visible, button:focus-visible { outline: 3px solid Highlight; outline-offset: 1px; }
   .ws-tour-spot { outline: 3px solid Highlight; }
-  .ws-seg-btn[aria-checked="true"], .ws-settings-tab[aria-selected="true"] { outline: 2px solid Highlight; }
-}
-
-/* ───────── reduced motion (system preference or setting) ───────── */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
-  .skeleton, .boot-bar span, .spin { animation: none !important; }
-}
-:root[data-reduce-motion="true"] *, :root[data-reduce-motion="true"] *::before, :root[data-reduce-motion="true"] *::after {
-  animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important;
+  .ws-settings-tab[aria-selected="true"] { outline: 2px solid Highlight; }
 }
 
 /* ───────── minimum target 1152×720: keep the menubar on one line ───────── */

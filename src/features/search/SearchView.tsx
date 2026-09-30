@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import {
   AlertCircle, BarChart3, ChevronDown, CircleHelp, ClipboardPlus, Download, ExternalLink, FolderSearch, History, ListTree, Loader2, Pill,
@@ -8,27 +8,25 @@ import { formatKeys, isMac, runCommand } from '../../commands/registry'
 import { useCatalog } from '../../data/CatalogContext'
 import type { Catalog } from '../../data/catalog'
 import type { Repertory } from '../../data/repertory'
-import type { Grade, RubricRef } from '../../data/types'
+import type { RubricRef } from '../../data/types'
 import type { Weight } from '../../engine/model'
 import { actions, useApp } from '../../state/store'
 import type { SearchTab } from '../../state/workspace'
 import { useContextMenu } from '../../ui/Menu'
 import type { MenuItem } from '../../ui/Menu'
-import { copyRubric, ensureClipboard, goToRef, openTakeOptions, takeRefs, toggleBookmark } from '../repertory/ops'
+import { copyRubric, ensureClipboard, goToRef, openTakeOptions, takeRefs, takeToast, toggleBookmark } from '../repertory/ops'
 import { DEFAULT_TAKE, bookAbbrev } from '../repertory/take'
 import { useFixedVirtual } from '../repertory/virtual'
-import { highlighter, remedyFrequency, remedyRubrics, search } from './engine'
+import { highlighter, remedyFrequency, search } from './engine'
 import type { RemedyFrequency } from './engine'
 import { describeQuery } from './query'
-import { GradeBar, RemedyPicker, RubricPath, titleIfTruncated } from './components'
+import { GradeBar, RemedyPicker, gradeBreakdown, RubricPath, titleIfTruncated } from './components'
 import { prepare, readyTargets, remedyResolver, selection, tabRepertories, tabRubrics, useSearchSel } from './ops'
+import { filterByRemedy, firstHit, hitRows, refsBetween, remedyRows, rowRef, stepCursor, textRows } from './rows'
+import type { HeadRow, HitRow, Row } from './rows'
+import { useWidth } from '../mm/useWidth'
+import { RUBRIC_MIME } from '../clipboard/logic'
 import './search.css'
-
-type Row =
-  | { t: 'hit'; rep: Repertory; index: number; grade?: Grade; size?: number; co?: number }
-  | { t: 'head'; rep: Repertory; root: number; count: number }
-
-const RUBRIC_MIME = 'application/x-rubric-ref'
 
 export function SearchView({ tab }: { tab: SearchTab }) {
   const catalog = useCatalog()
@@ -36,6 +34,8 @@ export function SearchView({ tab }: { tab: SearchTab }) {
   const scope = tab.scope ?? 'repertory'
   const [version, setVersion] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
+  // bumped by Retry so the prepare() effect runs again and re-requests the failed repertory
+  const [attempt, setAttempt] = useState(0)
   const repKey = tabRepertories(tab).join(',')
   const renderedPending = useRef(false)
 
@@ -46,12 +46,13 @@ export function SearchView({ tab }: { tab: SearchTab }) {
     // The background warm-up may have finished the index between render and this effect: re-read the targets.
     if (!pending.length) { if (renderedPending.current) setVersion(v => v + 1); return }
     setLoadError(null)
-    prepare(pending).then(() => alive && setVersion(v => v + 1), e => alive && setLoadError(e instanceof Error ? e.message : String(e)))
+    // results for the newly indexed repertories render in a transition (typing keeps priority)
+    prepare(pending, mode).then(() => { if (alive) startTransition(() => setVersion(v => v + 1)) }, e => alive && setLoadError(e instanceof Error ? e.message : String(e)))
     return () => { alive = false }
-  }, [repKey, scope]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [repKey, scope, mode, attempt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const update = (patch: Partial<SearchTab>) => actions.updateTab<SearchTab>(tab.id, patch)
-  const { targets, pending } = useMemo(() => readyTargets(tab), [repKey, scope, tab.chapter, version]) // eslint-disable-line react-hooks/exhaustive-deps
+  const { targets, pending } = useMemo(() => readyTargets(tab), [repKey, scope, mode, tab.chapter, version]) // eslint-disable-line react-hooks/exhaustive-deps
   renderedPending.current = pending.length > 0
 
   return (
@@ -69,7 +70,7 @@ export function SearchView({ tab }: { tab: SearchTab }) {
       </div>
       <ScopeBar tab={tab} />
       {loadError ? (
-        <div className="error-state"><h3>Could not load a repertory</h3><pre>{loadError}</pre><button className="btn" onClick={() => { setLoadError(null); setVersion(v => v + 1) }}>Retry</button></div>
+        <div className="error-state"><h3>Could not load a repertory</h3><pre>{loadError}</pre><button className="btn" onClick={() => { setLoadError(null); setAttempt(a => a + 1); setVersion(v => v + 1) }}>Retry</button></div>
       ) : pending.length && !targets.length ? (
         <div className="empty-state"><Loader2 className="spin" size={18} /><strong>Preparing search</strong>Loading and indexing {pending.map(a => catalog.repertoryInfos.find(r => r.abbrev === a)?.title ?? a).join(', ')}…</div>
       ) : mode === 'text' ? <TextResults tab={tab} targets={targets} pendingCount={pending.length} version={version} /> : <RemedyResults tab={tab} targets={targets} version={version} />}
@@ -156,6 +157,8 @@ function RemedyQueryBar({ tab }: { tab: SearchTab }) {
   return (
     <div className="srch-qbar srch-rbar">
       <RemedyPicker value={tab.remedyId ?? null} onChange={id => update({ remedyId: id })} autoFocus={tab.remedyId == null} id={`srch-rp-${tab.id}`} />
+      {/* keeps the field the same width as the word query, which has the syntax-help button here */}
+      <span className="srch-qbar-spacer" aria-hidden />
     </div>
   )
 }
@@ -198,7 +201,7 @@ function ScopeBar({ tab }: { tab: SearchTab }) {
     <div className="srch-scope">
       <FolderSearch size={14} aria-hidden />
       <label className="srch-field">
-        <span className="sr-only">Scope</span>
+        <span>Search in</span>
         <select className="select" aria-label="Search scope" value={scope} onChange={e => update({ scope: e.target.value as SearchTab['scope'], chapter: e.target.value === 'chapter' ? chapterRoot : tab.chapter })}>
           <option value="repertory">One repertory</option>
           <option value="chapter">One chapter</option>
@@ -227,15 +230,18 @@ function ScopeBar({ tab }: { tab: SearchTab }) {
 
 // ───────────────────────── results ─────────────────────────
 
-function TextResults({ tab, targets, pendingCount, version }: { tab: SearchTab; targets: ReturnType<typeof readyTargets>['targets']; pendingCount: number; version: number }) {
+type Targets = ReturnType<typeof readyTargets>['targets']
+
+function TextResults({ tab, targets, pendingCount, version }: { tab: SearchTab; targets: Targets; pendingCount: number; version: number }) {
   const recent = useApp(s => s.recentSearches)
+  // typing stays responsive: the search runs in a deferred (interruptible) render
   const query = useDeferredValue(tab.query)
   const result = useMemo(
     () => search(query, targets, { collapse: tab.collapse, resolveRemedy: remedyResolver }),
     [query, targets, tab.collapse, version], // eslint-disable-line react-hooks/exhaustive-deps
   )
   const hl = useMemo(() => (result.parsed.positive.length ? highlighter(result.parsed) : null), [result])
-  const rows = useMemo<Row[]>(() => result.hits.map(h => ({ t: 'hit', rep: h.rep, index: h.index })), [result])
+  const rows = useMemo(() => textRows(result.hits), [result])
 
   if (!tab.query.trim()) {
     return (
@@ -260,6 +266,7 @@ function TextResults({ tab, targets, pendingCount, version }: { tab: SearchTab; 
       rows={rows}
       hitCount={result.total}
       hl={hl}
+      busy={query !== tab.query}
       status={
         <>
           {result.error ? <span className="srch-err"><AlertCircle size={13} /> {result.error}</span> : <span className="srch-desc">{describeQuery(result.parsed)}</span>}
@@ -273,26 +280,25 @@ function TextResults({ tab, targets, pendingCount, version }: { tab: SearchTab; 
   )
 }
 
-function RemedyResults({ tab, targets, version }: { tab: SearchTab; targets: ReturnType<typeof readyTargets>['targets']; version: number }) {
+interface RemedyJob { remedyId: number; minGrade?: number; maxSize?: number; maxCo?: number; targets: Targets; version: number }
+const NO_JOB: RemedyJob | null = null
+
+function RemedyResults({ tab, targets, version }: { tab: SearchTab; targets: Targets; version: number }) {
   const catalog = useCatalog()
-  const { rows, count, ms } = useMemo(() => {
+  const job = useMemo<RemedyJob | null>(
+    () => (tab.remedyId == null ? null : { remedyId: tab.remedyId, minGrade: tab.minGrade, maxSize: tab.maxSize, maxCo: tab.maxCo, targets, version }),
+    [tab.remedyId, tab.minGrade, tab.maxSize, tab.maxCo, targets, version],
+  )
+  // The tab paints first (picker, filters, "finding rubrics"); the rubrics are then gathered in a
+  // deferred render from the remedy's slice of the cached remedy index, so opening (F5, "Find
+  // rubrics") and changing a filter never block input.
+  const deferred = useDeferredValue(job, NO_JOB)
+  const result = useMemo(() => {
+    if (!deferred) return null
     const t0 = performance.now()
-    const rows: Row[] = []
-    let count = 0
-    if (tab.remedyId == null) return { rows, count, ms: 0 }
-    for (const t of targets) {
-      const hits = remedyRubrics(t.rep, tab.remedyId, { minGrade: tab.minGrade, maxSize: tab.maxSize, maxCo: tab.maxCo, start: t.start, end: t.end })
-      let head: Extract<Row, { t: 'head' }> | null = null
-      for (const h of hits) {
-        const root = t.rep.chapterRoot(h.index)
-        if (!head || head.root !== root) { head = { t: 'head', rep: t.rep, root, count: 0 }; rows.push(head) }
-        head.count++
-        rows.push({ t: 'hit', rep: t.rep, index: h.index, grade: h.grade, size: h.size, co: h.co })
-      }
-      count += hits.length
-    }
+    const { rows, count } = remedyRows(deferred.targets, deferred.remedyId, deferred)
     return { rows, count, ms: performance.now() - t0 }
-  }, [tab.remedyId, tab.minGrade, tab.maxSize, tab.maxCo, targets, version]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [deferred])
 
   if (tab.remedyId == null) {
     return (
@@ -304,13 +310,17 @@ function RemedyResults({ tab, targets, version }: { tab: SearchTab; targets: Ret
     )
   }
   const r = catalog.remedy(tab.remedyId)
+  if (!result || deferred?.remedyId !== tab.remedyId) {
+    return <div className="srch-empty" role="status"><Loader2 className="spin" size={18} /><span>Finding the rubrics of {r.abbrev}…</span></div>
+  }
   return (
     <ResultsBody
       tab={tab}
-      rows={rows}
-      hitCount={count}
+      rows={result.rows}
+      hitCount={result.count}
       hl={null}
-      ms={ms}
+      ms={result.ms}
+      busy={deferred !== job}
       multiRep={targets.length > 1}
       status={<span className="srch-desc"><b>{r.abbrev}</b> {r.name}{(tab.minGrade ?? 1) > 1 ? ` · grade ≥ ${tab.minGrade}` : ''}{tab.maxSize ? ` · ≤ ${tab.maxSize} remedies` : ''}{(tab.maxCo ?? -1) >= 0 ? ` · ≤ ${tab.maxCo} co-remedies` : ''}</span>}
       emptyText={`No rubric of ${r.abbrev} passes these filters.`}
@@ -325,11 +335,14 @@ interface BodyProps {
   hl: ((n: string) => boolean) | null
   status: React.ReactNode
   ms: number
+  /** A newer query or filter is being computed (the rows shown are the previous ones). */
+  busy?: boolean
   multiRep: boolean
   emptyText: string
 }
 
-function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, emptyText }: BodyProps) {
+/** Results of one search: selection, cursor, keyboard, take/open actions and the summary. */
+function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, busy, multiRep, emptyText }: BodyProps) {
   const [showRemedies, setShowRemedies] = useState(false)
   // the summary shows by default only when the results keep a readable width; a click overrides
   const [summaryPref, setSummaryPref] = useState<boolean | null>(null)
@@ -344,28 +357,15 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, e
   const menu = useContextMenu()
 
   // filter by a remedy picked in the summary
-  const rows = useMemo(() => {
-    if (remFilter == null) return allRows
-    const out: Row[] = []
-    let head: Extract<Row, { t: 'head' }> | null = null
-    let pushed = false
-    for (const r of allRows) {
-      if (r.t === 'head') { head = { ...r, count: 0 }; pushed = false; continue }
-      if (r.rep.gradeOf(r.index, remFilter) > 0) {
-        if (head) { if (!pushed) { out.push(head); pushed = true } head.count++ }
-        out.push(r)
-      }
-    }
-    return out
-  }, [allRows, remFilter])
-  const hits = useMemo(() => rows.filter((r): r is Extract<Row, { t: 'hit' }> => r.t === 'hit'), [rows])
+  const rows = useMemo(() => filterByRemedy(allRows, remFilter) as Row[], [allRows, remFilter])
+  const hits = useMemo(() => hitRows(rows), [rows])
   useEffect(() => { setRemFilter(null) }, [allRows])
 
   // prune selection to what is still listed
   useEffect(() => {
     const cur = selection.get(tab.id)
     if (!cur.length) return
-    const listed = new Set(allRows.flatMap(r => r.t === 'hit' ? [r.rep.ref(r.index)] : []))
+    const listed = new Set(hitRows(allRows).map(rowRef))
     const keep = cur.filter(r => listed.has(r))
     if (keep.length !== cur.length) selection.set(tab.id, keep)
   }, [allRows, tab.id])
@@ -375,40 +375,43 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, e
   const v = useFixedVirtual(listRef, rows.length, ROW)
   const [cursor, setCursor] = useState(0)
   const cur = Math.min(cursor, Math.max(0, rows.length - 1))
-  useEffect(() => { setCursor(rows.findIndex(r => r.t === 'hit')) }, [rows])
+  useEffect(() => { setCursor(firstHit(rows)) }, [rows])
   useEffect(() => {
     const r = rows[cur]
-    selection.focus(tab.id, r?.t === 'hit' ? r.rep.ref(r.index) : null)
+    selection.focus(tab.id, r?.t === 'hit' ? rowRef(r) : null)
   }, [rows, cur, tab.id])
   useEffect(() => () => selection.focus(tab.id, null), [tab.id])
   useEffect(() => { v.scrollToIndex(cur) }, [cur]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const refOf = (r: Row) => r.t === 'hit' ? r.rep.ref(r.index) : ''
-  const targetRefs = (): RubricRef[] => selected.length ? selected : (rows[cur]?.t === 'hit' ? [refOf(rows[cur])] : [])
+  const curHit = rows[cur]?.t === 'hit' ? rows[cur] as HitRow : null
+  const targetRefs = (): RubricRef[] => selected.length ? selected : (curHit ? [rowRef(curHit)] : [])
   const open = (r: Row | undefined, newTab = false) => {
     if (!r || r.t !== 'hit') return
     if (tab.mode !== 'remedy') actions.addRecentSearch(tab.query)
-    void goToRef(refOf(r), { newTab })
+    void goToRef(rowRef(r), { newTab })
   }
   const take = (weight: Weight, refs = targetRefs()) => { if (refs.length) takeRefs(refs, { ...DEFAULT_TAKE, weight }) }
   const takeCombined = (refs = targetRefs()) => {
     if (refs.length < 2) return take(1, refs)
-    const cb = ensureClipboard(null)
-    if (!cb) return
     const label = tab.mode === 'remedy' ? `${catalog.remedy(tab.remedyId ?? 0).abbrev}: ${refs.length} rubrics` : `${tab.query.trim()} (${refs.length} rubrics)`
-    if (actions.addSymptom(cb.id, { rubrics: refs, combine: 'union', label })) actions.toast(`Took ${refs.length} rubrics as one combined symptom into ${cb.name}`, 'success', { label: 'Undo', run: () => actions.undo() })
+    // creating the clipboard (if none) and adding the symptom are one undo step
+    const run = () => {
+      const cb = ensureClipboard(null)
+      return cb && actions.addSymptom(cb.id, { rubrics: refs, combine: 'union', label }) ? cb : null
+    }
+    const pastBefore = useApp.getState().past
+    const cb = actions.transaction(run, 'Take combined symptom')
+    if (!cb) return
+    // the standard take toast (merges with fast takes); Undo only while this take is still the latest change
+    const entry = useApp.getState().past !== pastBefore ? useApp.getState().past[useApp.getState().past.length - 1] : null
+    const undo = () => { const past = useApp.getState().past; if (entry && past[past.length - 1] === entry) actions.undo() }
+    takeToast({ count: 1, target: cb.name, last: `${label}, combined` }, `Taken ${refs.length} rubrics as one combined symptom → ${cb.name}`, undo)
   }
-  const move = (i: number) => {
-    let k = Math.max(0, Math.min(rows.length - 1, i))
-    // skip chapter headers in the direction of travel
-    const dir = i >= cur ? 1 : -1
-    while (rows[k]?.t === 'head' && k + dir >= 0 && k + dir < rows.length) k += dir
-    if (rows[k]?.t === 'head') k = cur
-    setCursor(k)
-  }
+  const move = (target: number) => setCursor(stepCursor(rows, cur, target))
+  const selectAlso = (refs: RubricRef[]) => selection.set(tab.id, [...new Set([...selected, ...refs])])
 
-  const rowMenu = (r: Extract<Row, { t: 'hit' }>): MenuItem[] => {
-    const ref = refOf(r)
+  const rowMenu = (r: HitRow): MenuItem[] => {
+    const ref = rowRef(r)
     const refs = selSet.has(ref) ? selected : [ref]
     const n = refs.length
     const what = n > 1 ? `${n} selected rubrics` : 'rubric'
@@ -432,18 +435,18 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, e
     const mod = isMac ? e.metaKey : e.ctrlKey
     const r = rows[cur]
     let handled = true
-    if (e.key === 'ArrowDown') { move(cur + 1); if (e.shiftKey && rows[cur + 1]?.t === 'hit') selectRange(cur, cur + 1) }
+    if (e.key === 'ArrowDown') { const k = stepCursor(rows, cur, cur + 1); setCursor(k); if (e.shiftKey) selectAlso(refsBetween(rows, cur, k)) }
     else if (e.key === 'ArrowUp') {
-      if (cur <= rows.findIndex(x => x.t === 'hit')) (e.currentTarget.closest('.srch') as HTMLElement | null)?.querySelector<HTMLElement>('[data-search-input]')?.focus()
-      else { move(cur - 1); if (e.shiftKey && rows[cur - 1]?.t === 'hit') selectRange(cur, cur - 1) }
+      if (cur <= firstHit(rows)) (e.currentTarget.closest('.srch') as HTMLElement | null)?.querySelector<HTMLElement>('[data-search-input]')?.focus()
+      else { const k = stepCursor(rows, cur, cur - 1); setCursor(k); if (e.shiftKey) selectAlso(refsBetween(rows, cur, k)) }
     }
     else if (e.key === 'PageDown') move(cur + v.pageSize)
     else if (e.key === 'PageUp') move(cur - v.pageSize)
     else if (e.key === 'Home') move(0)
     else if (e.key === 'End') move(rows.length - 1)
-    else if (e.key === ' ') { if (r?.t === 'hit') selection.toggle(tab.id, refOf(r)) }
+    else if (e.key === ' ') { if (r?.t === 'hit') selection.toggle(tab.id, rowRef(r)) }
     else if (e.key === 'Enter') open(r, mod)
-    else if (mod && e.key.toLowerCase() === 'a') selection.set(tab.id, hits.map(refOf))
+    else if (mod && e.key.toLowerCase() === 'a') selection.set(tab.id, hits.map(rowRef))
     else if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') {
       const el = listRef.current?.querySelector<HTMLElement>('.srch-row.cursor')
       if (el && r?.t === 'hit') menu.openAt(el, rowMenu(r))
@@ -451,27 +454,105 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, e
     else handled = false
     if (handled) { e.preventDefault(); e.stopPropagation() }
   }
-  const selectRange = (from: number, to: number) => {
-    const refs = new Set(selected)
-    for (const k of [from, to]) { const r = rows[k]; if (r?.t === 'hit') refs.add(refOf(r)) }
-    selection.set(tab.id, [...refs])
-  }
   const onRowClick = (e: ReactMouseEvent, k: number) => {
     const r = rows[k]
     if (r.t !== 'hit') return
     const mod = isMac ? e.metaKey : e.ctrlKey
-    if (e.shiftKey) {
-      const [a, b] = cur < k ? [cur, k] : [k, cur]
-      const refs = new Set(selected)
-      for (let i = a; i <= b; i++) { const x = rows[i]; if (x.t === 'hit') refs.add(refOf(x)) }
-      selection.set(tab.id, [...refs])
-    } else if (mod) selection.toggle(tab.id, refOf(r))
+    // the tick box toggles like Ctrl+click
+    const onBox = (e.target as HTMLElement).closest('.srch-cb')
+    if (e.shiftKey) selectAlso(refsBetween(rows, cur, k))
+    else if (mod || onBox) selection.toggle(tab.id, rowRef(r))
     setCursor(k)
   }
 
-  const allSelected = hits.length > 0 && hits.every(h => selSet.has(refOf(h)))
+  const allSelected = hits.length > 0 && hits.every(h => selSet.has(rowRef(h)))
   const someSelected = selected.length > 0
+  const countText = `${hits.length.toLocaleString()}${remFilter != null && hits.length !== hitCount ? ` of ${hitCount.toLocaleString()}` : ''} rubric${hitCount === 1 ? '' : 's'}`
 
+  return (
+    <div className={`srch-body${bodyWidth && bodyWidth < 640 ? ' narrow' : ''}`} ref={bodyRef}>
+      <div className="srch-main">
+        <div className="srch-bar-row">
+          <input
+            type="checkbox"
+            aria-label={allSelected ? 'Deselect all results' : 'Select all results'}
+            checked={allSelected}
+            ref={el => { if (el) el.indeterminate = someSelected && !allSelected }}
+            onChange={() => selection.set(tab.id, allSelected ? [] : hits.map(rowRef))}
+            disabled={!hits.length}
+          />
+          <span className="srch-total">
+            <b>{hits.length.toLocaleString()}</b>{remFilter != null && hits.length !== hitCount ? ` of ${hitCount.toLocaleString()}` : ''} rubric{hitCount === 1 ? '' : 's'}
+            {someSelected && <> · <b>{selected.length}</b> selected</>}
+            <span className="srch-ms">{busy ? <Loader2 size={11} className="spin" aria-label="Updating" /> : `${ms < 1 ? '<1' : ms.toFixed(0)} ms`}</span>
+          </span>
+          {/* announced politely once the results settle: the count, or that nothing matched */}
+          <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{busy ? '' : rows.length ? countText : emptyText}</span>
+          <span className="srch-status">{status}</span>
+          {remFilter != null && (
+            <button className="srch-chip" onClick={() => setRemFilter(null)} title="Remove remedy filter">
+              with {catalog.remedy(remFilter).abbrev} <X size={11} />
+            </button>
+          )}
+          <div className="srch-actions">
+            <TakeButton count={targetRefs().length} selected={someSelected} onTake={w => take(w)} onOptions={() => openTakeOptions(targetRefs())} onCombined={() => takeCombined()} />
+            <button className="btn btn-sm srch-open" disabled={!curHit} onClick={() => open(rows[cur])} aria-label="Open" title="Open the focused rubric in the repertory (Enter)"><ExternalLink size={12} /><span className="srch-open-label">Open</span></button>
+            <button className="icon-btn" aria-label="Show remedies" title="Show remedies under each rubric" aria-pressed={showRemedies} onClick={() => setShowRemedies(s => !s)}><Pill size={14} /></button>
+            <button className="icon-btn" aria-label="Result summary" title="Remedy summary chart" aria-pressed={showSummary} onClick={() => setSummaryPref(!showSummary)}><BarChart3 size={14} /></button>
+            <button className="icon-btn" aria-label="Export CSV" title="Export results as CSV" disabled={!allRows.length} onClick={() => runCommand('search.export')}><Download size={14} /></button>
+          </div>
+        </div>
+        {rows.length === 0
+          ? <div className="srch-empty small"><Search size={20} strokeWidth={1.5} /><span>{emptyText}</span></div>
+          : (
+            <ResultList
+              listRef={listRef} tab={tab} rows={rows} cursor={cur} selSet={selSet} selected={selected} rowHeight={ROW} v={v} hl={hl}
+              multiRep={multiRep} showRemedies={showRemedies} remFilter={remFilter}
+              onKeyDown={onKeyDown} onRowClick={onRowClick} onCursor={setCursor} onOpen={r => open(r)}
+              onMenu={(e, k, r) => { setCursor(k); menu.open(e, rowMenu(r)) }}
+            />
+          )}
+      </div>
+      {showSummary && allRows.length > 0 && (
+        <Summary tab={tab} hits={hits} remFilter={remFilter} onFilter={setRemFilter} rowsForChapters={tab.mode === 'remedy' ? rows : null} onJump={k => { setCursor(k + 1); listRef.current?.focus() }} />
+      )}
+      {menu.element}
+    </div>
+  )
+}
+
+/**
+ * The virtualised result listbox. Presentational: rows, cursor and selection come in, gestures go
+ * out. Options hold no interactive controls (the tick box is a picture; the row handles clicks).
+ */
+function ResultList({ listRef, tab, rows, cursor, selSet, selected, rowHeight, v, hl, multiRep, showRemedies, remFilter, onKeyDown, onRowClick, onCursor, onOpen, onMenu }: {
+  listRef: React.RefObject<HTMLDivElement | null>
+  tab: SearchTab
+  rows: Row[]
+  cursor: number
+  selSet: Set<RubricRef>
+  selected: RubricRef[]
+  rowHeight: number
+  v: ReturnType<typeof useFixedVirtual>
+  hl: ((n: string) => boolean) | null
+  multiRep: boolean
+  showRemedies: boolean
+  remFilter: number | null
+  onKeyDown: (e: ReactKeyboardEvent<HTMLDivElement>) => void
+  onRowClick: (e: ReactMouseEvent, k: number) => void
+  onCursor: (k: number) => void
+  onOpen: (r: HitRow) => void
+  onMenu: (e: ReactMouseEvent, k: number, r: HitRow) => void
+}) {
+  const catalog = useCatalog()
+  const ROW = rowHeight
+  // position of each rubric row among all rubric rows (chapter headings are not options), for aria-posinset/-setsize
+  const pos = useMemo(() => {
+    const out = new Int32Array(rows.length)
+    let n = 0
+    for (let k = 0; k < rows.length; k++) if (rows[k].t === 'hit') out[k] = ++n
+    return { at: out, size: n }
+  }, [rows])
   const items = []
   for (let k = v.start; k < v.end; k++) {
     const r = rows[k]
@@ -483,7 +564,7 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, e
       )
       continue
     }
-    const ref = refOf(r)
+    const ref = rowRef(r)
     const checked = selSet.has(ref)
     const parts = r.rep.lineage(r.index).map(i => r.rep.text(i))
     items.push(
@@ -492,7 +573,9 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, e
         id={`srch-${tab.id}-${k}`}
         role="option"
         aria-selected={checked}
-        className={`srch-row${k === cur ? ' cursor' : ''}${checked ? ' checked' : ''}`}
+        aria-posinset={pos.at[k]}
+        aria-setsize={pos.size}
+        className={`srch-row${k === cursor ? ' cursor' : ''}${checked ? ' checked' : ''}`}
         style={{ top: k * ROW, height: ROW }}
         draggable
         onDragStart={e => {
@@ -501,13 +584,13 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, e
           e.dataTransfer.setData('text/plain', refs.map(x => { const [a, i] = [x.slice(0, x.lastIndexOf(':')), Number(x.slice(x.lastIndexOf(':') + 1))]; const rp = catalog.repertory(a); return rp ? rp.path(i) : x }).join('\n'))
           e.dataTransfer.effectAllowed = 'copy'
         }}
-        onMouseDown={e => { if (e.button === 0) setCursor(k) }}
+        onMouseDown={e => { if (e.button === 0) onCursor(k) }}
         onClick={e => onRowClick(e, k)}
-        onDoubleClick={() => open(r)}
-        onContextMenu={e => { setCursor(k); menu.open(e, rowMenu(r)) }}
+        onDoubleClick={e => { if (!(e.target as HTMLElement).closest('.srch-cb')) onOpen(r) }}
+        onContextMenu={e => onMenu(e, k, r)}
       >
         <div className="srch-line">
-          <input type="checkbox" className="srch-cb" tabIndex={-1} checked={checked} aria-label="Select rubric" onClick={e => e.stopPropagation()} onChange={() => { selection.toggle(tab.id, ref); setCursor(k) }} />
+          <span className={`srch-cb${checked ? ' on' : ''}`} aria-hidden="true" title={checked ? 'Deselect (Space)' : 'Select (Space)'} />
           <span className="srch-path" onMouseEnter={titleIfTruncated(() => r.rep.path(r.index, ', ') + (multiRep ? ` (${r.rep.info.title})` : ''))}>
             {r.grade && parts.length > 1 ? <RubricPath parts={parts} hit={hl} skip={1} /> : r.grade ? <i className="srch-whole">{parts[0]} (whole chapter)</i> : <RubricPath parts={parts} hit={hl} />}
           </span>
@@ -520,59 +603,18 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, e
       </div>,
     )
   }
-
-  const focusedHit = rows[cur]?.t === 'hit'
-
   return (
-    <div className={`srch-body${bodyWidth && bodyWidth < 640 ? ' narrow' : ''}`} ref={bodyRef}>
-      <div className="srch-main">
-        <div className="srch-bar-row">
-          <input
-            type="checkbox"
-            aria-label={allSelected ? 'Deselect all results' : 'Select all results'}
-            checked={allSelected}
-            ref={el => { if (el) el.indeterminate = someSelected && !allSelected }}
-            onChange={() => selection.set(tab.id, allSelected ? [] : hits.map(refOf))}
-            disabled={!hits.length}
-          />
-          <span className="srch-total">
-            <b>{hits.length.toLocaleString()}</b>{remFilter != null && hits.length !== hitCount ? ` of ${hitCount.toLocaleString()}` : ''} rubric{hitCount === 1 ? '' : 's'}
-            {someSelected && <> · <b>{selected.length}</b> selected</>}
-            <span className="srch-ms">{ms < 1 ? '<1' : ms.toFixed(0)} ms</span>
-          </span>
-          <span className="srch-status">{status}</span>
-          {remFilter != null && (
-            <button className="srch-chip" onClick={() => setRemFilter(null)} title="Remove remedy filter">
-              with {catalog.remedy(remFilter).abbrev} <X size={11} />
-            </button>
-          )}
-          <div className="srch-actions">
-            <TakeButton count={targetRefs().length} selected={someSelected} onTake={w => take(w)} onOptions={() => openTakeOptions(targetRefs())} onCombined={() => takeCombined()} />
-            <button className="btn btn-sm srch-open" disabled={!focusedHit} onClick={() => open(rows[cur])} aria-label="Open" title="Open the focused rubric in the repertory (Enter)"><ExternalLink size={12} /><span className="srch-open-label">Open</span></button>
-            <button className="icon-btn" aria-label="Show remedies" title="Show remedies under each rubric" aria-pressed={showRemedies} onClick={() => setShowRemedies(s => !s)}><Pill size={14} /></button>
-            <button className="icon-btn" aria-label="Result summary" title="Remedy summary chart" aria-pressed={showSummary} onClick={() => setSummaryPref(!showSummary)}><BarChart3 size={14} /></button>
-            <button className="icon-btn" aria-label="Export CSV" title="Export results as CSV" disabled={!allRows.length} onClick={() => runCommand('search.export')}><Download size={14} /></button>
-          </div>
-        </div>
-        <div
-          ref={listRef}
-          className="srch-results"
-          tabIndex={0}
-          role="listbox"
-          aria-multiselectable="true"
-          aria-label="Search results"
-          aria-activedescendant={rows[cur] ? `srch-${tab.id}-${cur}` : undefined}
-          onKeyDown={onKeyDown}
-        >
-          {rows.length === 0
-            ? <div className="srch-empty small"><Search size={20} strokeWidth={1.5} /><span>{emptyText}</span></div>
-            : <div style={{ height: v.total, position: 'relative' }}>{items}</div>}
-        </div>
-      </div>
-      {showSummary && allRows.length > 0 && (
-        <Summary tab={tab} hits={hits} remFilter={remFilter} onFilter={setRemFilter} rowsForChapters={tab.mode === 'remedy' ? rows : null} onJump={k => { setCursor(k + 1); listRef.current?.focus() }} />
-      )}
-      {menu.element}
+    <div
+      ref={listRef}
+      className="srch-results"
+      tabIndex={0}
+      role="listbox"
+      aria-multiselectable="true"
+      aria-label="Search results"
+      aria-activedescendant={rows[cursor] ? `srch-${tab.id}-${cursor}` : undefined}
+      onKeyDown={onKeyDown}
+    >
+      <div style={{ height: v.total, position: 'relative' }}>{items}</div>
     </div>
   )
 }
@@ -580,19 +622,6 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, multiRep, e
 const EMPTY: RubricRef[] = []
 /** Below this body width the summary starts hidden, so rubric paths stay readable. */
 const SUMMARY_AUTO_MIN = 760
-
-function useWidth(ref: React.RefObject<HTMLElement | null>): number {
-  const [w, setW] = useState(0)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    setW(el.clientWidth)
-    const ro = new ResizeObserver(() => setW(el.clientWidth))
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [ref])
-  return w
-}
 
 function RemedyLine({ rep, index, highlight }: { rep: Repertory; index: number; highlight: number | null }) {
   const catalog = useCatalog()
@@ -630,7 +659,7 @@ function TakeButton({ count, selected, onTake, onOptions, onCombined }: { count:
 
 function Summary({ tab, hits, remFilter, onFilter, rowsForChapters, onJump }: {
   tab: SearchTab
-  hits: Extract<Row, { t: 'hit' }>[]
+  hits: HitRow[]
   remFilter: number | null
   onFilter: (id: number | null) => void
   rowsForChapters: Row[] | null
@@ -668,7 +697,7 @@ function Summary({ tab, hits, remFilter, onFilter, rowsForChapters, onJump }: {
           <p className="srch-sum-note">Rubrics of {catalog.remedy(tab.remedyId ?? 0).abbrev} per chapter. Click to jump.</p>
           <ol className="srch-bars srch-chapbars">
             {(() => {
-              const heads = rowsForChapters.map((r, k) => ({ r, k })).filter((x): x is { r: Extract<Row, { t: 'head' }>; k: number } => x.r.t === 'head')
+              const heads = rowsForChapters.map((r, k) => ({ r, k })).filter((x): x is { r: HeadRow; k: number } => x.r.t === 'head')
               const m = Math.max(1, ...heads.map(h => h.r.count))
               const multi = new Set(heads.map(h => h.r.rep)).size > 1
               const out: React.ReactNode[] = []
@@ -727,10 +756,12 @@ function FreqRow({ f, max, active, onClick, onOpen }: { f: RemedyFrequency; max:
   return (
     <li>
       <button className={`srch-barrow${active ? ' on' : ''}`} onClick={onClick} onDoubleClick={onOpen} aria-pressed={active}
+        aria-label={`${r.abbrev} ${f.count}: ${gradeBreakdown(f.byGrade)}`}
         title={`${r.name}: ${f.count} rubrics (grade 4: ${f.byGrade[3]}, 3: ${f.byGrade[2]}, 2: ${f.byGrade[1]}, 1: ${f.byGrade[0]}). Double-click for remedy info.`}>
         <span className="srch-barlabel">{r.abbrev}</span>
         <span className="srch-bartrack"><GradeBar byGrade={f.byGrade} max={max} /></span>
         <span className="srch-barnum">{f.count}</span>
+        <span className="srch-barbreak" aria-hidden>{gradeBreakdown(f.byGrade)}</span>
       </button>
     </li>
   )
@@ -739,7 +770,7 @@ function FreqRow({ f, max, active, onClick, onOpen }: { f: RemedyFrequency; max:
 function GradeLegend() {
   return (
     <div className="srch-legend" aria-label="Grade legend">
-      {[4, 3, 2, 1].map(g => <span key={g}><span className={`srch-bar-seg sb${g}`} /> grade {g}</span>)}
+      {[4, 3, 2, 1].map(g => <span key={g}><span className={`srch-bar-seg sb${g}`}><span className="srch-seg-n">{g}</span></span> grade {g}</span>)}
     </div>
   )
 }

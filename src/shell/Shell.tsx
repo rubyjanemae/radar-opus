@@ -1,4 +1,4 @@
-import { memo, useEffect, useSyncExternalStore } from 'react'
+import { memo, startTransition, Suspense, useEffect, useState, useSyncExternalStore } from 'react'
 import { useApp, actions } from '../state/store'
 import { Splitter } from '../ui/Splitter'
 import { Toasts } from '../ui/Toasts'
@@ -7,14 +7,15 @@ import { MenuBar } from './MenuBar'
 import { Toolbar } from './Toolbar'
 import { TabStrip, TAB_PANEL_ID, tabDomId } from './TabStrip'
 import { StatusBar } from './StatusBar'
-import { TabHost } from './TabHost'
+import { TabDeck } from './TabHost'
 import { tabTitle } from './tabTitle'
 import { Navigator as NavigatorView } from '../features/repertory/Navigator'
 import { ClipboardPanel as ClipboardPanelView } from '../features/clipboard/ClipboardPanel'
-import { AnalysisDock as AnalysisDockView } from '../features/analysis/AnalysisDock'
 import { CommandPalette } from '../features/command/CommandPalette'
 import { DEFAULT_LAYOUT } from '../state/workspace'
 import { DialogHost } from './DialogHost'
+import { preloadDialogs } from './dialogs'
+import { lazyRetry } from '../ui/lazyRetry'
 import { WorkspaceChrome as WorkspaceChromeView } from '../features/workspace/WorkspaceChrome'
 import { fitSidePanes, MIN_CLIPBOARD_WIDTH, MIN_TREE_WIDTH } from '../features/workspace/responsive'
 import { useCatalog } from '../data/CatalogContext'
@@ -23,8 +24,12 @@ import { useCatalog } from '../data/CatalogContext'
 // them; each re-renders only on the store slices it subscribes to itself.
 const Navigator = memo(NavigatorView)
 const ClipboardPanel = memo(ClipboardPanelView)
-const AnalysisDock = memo(AnalysisDockView)
+// the analysis preview dock (hidden by default) brings the analysis grid: its own chunk, loaded when shown
+const AnalysisDock = memo(lazyRetry(() => import('../features/analysis/AnalysisDock'), m => m.AnalysisDock))
 const WorkspaceChrome = memo(WorkspaceChromeView)
+
+/** Startup's idle work (word and remedy indexes, row estimates) runs first; then dialog chunks load. */
+const PRELOAD_DIALOGS_AFTER_MS = 1500
 
 const subscribeResize = (fn: () => void) => { window.addEventListener('resize', fn); return () => window.removeEventListener('resize', fn) }
 const viewportWidth = () => window.innerWidth
@@ -41,6 +46,18 @@ const DocumentHeading = memo(function DocumentHeading() {
   return <h1 className="sr-only">Radar Opus{title ? `: ${title}` : ''}</h1>
 })
 
+/** Startup mount stage: 0 chrome, 1 side panes, 2 document. Advances one task at a time, once per page. */
+let startupStage = 0
+function useStartupStage(): number {
+  const [stage, setStage] = useState(startupStage)
+  useEffect(() => {
+    if (stage >= 2) return
+    const t = setTimeout(() => startTransition(() => { startupStage = Math.max(startupStage, stage + 1); setStage(startupStage) }), 0)
+    return () => clearTimeout(t)
+  }, [stage])
+  return stage
+}
+
 export function Shell() {
   const layout = useApp(s => s.layout)
   const theme = useApp(s => s.settings.theme)
@@ -50,6 +67,11 @@ export function Shell() {
   // the analysis preview dock steps aside while an analysis tab is visible (it would only repeat it)
   const analysisVisible = useApp(s => s.tabs.find(x => x.id === s.activeTabId)?.kind === 'analysis')
   const paletteOpen = useApp(s => s.commandPaletteOpen)
+  // startup mounts in three renders, each its own task: the window chrome, then the side panes, then
+  // the open document, so the app's first layout is split instead of one long task (each deferred
+  // render follows at once; the pane frames keep their size meanwhile, so nothing shifts)
+  const stage = useStartupStage()
+  const panesMounted = stage >= 1, documentMounted = stage >= 2
   const vw = useSyncExternalStore(subscribeResize, viewportWidth, () => 1440)
   const vh = useSyncExternalStore(subscribeResize, viewportHeight, () => 900)
 
@@ -62,12 +84,16 @@ export function Shell() {
     root.style.setProperty('--fs', `${Math.round(13 * fontScale)}px`)
   }, [theme, density, fontScale])
 
+  // lazily registered dialogs: fetch their chunks in idle time once the workspace is up
+  useEffect(() => { preloadDialogs(PRELOAD_DIALOGS_AFTER_MS) }, [])
+
   const maxSide = Math.max(360, Math.floor(vw * 0.45))
   // below the saved widths the side panes shrink so the document keeps its minimum width
   const fit = fitSidePanes(vw, layout)
 
   return (
-    <div className="shell">
+    // data-ready: every startup stage is mounted (end-to-end tests wait for it)
+    <div className="shell" data-ready={documentMounted || undefined}>
       <header className="shell-header">
         <DocumentHeading />
         <ErrorBoundary label="The menu bar" compact><MenuBar /></ErrorBoundary>
@@ -76,7 +102,7 @@ export function Shell() {
       <div className="shell-main">
         {layout.showTree && (
           <aside className="pane pane-left" style={{ width: fit.tree }} aria-label="Repertory navigator">
-            <ErrorBoundary label="The navigator"><Navigator /></ErrorBoundary>
+            {panesMounted && <ErrorBoundary label="The navigator"><Navigator /></ErrorBoundary>}
             <Splitter
               orientation="vertical" label="Resize navigator" value={fit.tree} min={MIN_TREE_WIDTH} max={maxSide}
               onChange={v => actions.setLayout({ treeWidth: v })} onReset={() => actions.setLayout({ treeWidth: DEFAULT_LAYOUT.treeWidth })}
@@ -92,7 +118,7 @@ export function Shell() {
               role={activeTabId ? 'tabpanel' : undefined}
               aria-labelledby={activeTabId ? tabDomId(activeTabId) : undefined}
             >
-              {activeTabId ? <TabHost tabId={activeTabId} key={activeTabId} /> : <EmptyWorkspace />}
+              {activeTabId ? (documentMounted && <TabDeck activeTabId={activeTabId} />) : <EmptyWorkspace />}
             </div>
             {layout.showAnalysisDock && !analysisVisible && (
               <>
@@ -101,7 +127,7 @@ export function Shell() {
                   direction={-1} onChange={v => actions.setLayout({ analysisHeight: v })} onReset={() => actions.setLayout({ analysisHeight: DEFAULT_LAYOUT.analysisHeight })}
                 />
                 <section className="analysis-dock" style={{ height: layout.analysisHeight }} aria-label="Analysis preview">
-                  <ErrorBoundary label="The analysis preview"><AnalysisDock /></ErrorBoundary>
+                  <ErrorBoundary label="The analysis preview"><Suspense fallback={null}><AnalysisDock /></Suspense></ErrorBoundary>
                 </section>
               </>
             )}
@@ -113,7 +139,7 @@ export function Shell() {
               orientation="vertical" label="Resize clipboard panel" value={fit.clipboard} min={MIN_CLIPBOARD_WIDTH} max={maxSide} direction={-1}
               onChange={v => actions.setLayout({ clipboardWidth: v })} onReset={() => actions.setLayout({ clipboardWidth: DEFAULT_LAYOUT.clipboardWidth })}
             />
-            <ErrorBoundary label="The clipboards"><ClipboardPanel /></ErrorBoundary>
+            {panesMounted && <ErrorBoundary label="The clipboards"><ClipboardPanel /></ErrorBoundary>}
           </aside>
         )}
       </div>

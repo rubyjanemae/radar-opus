@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useRef } from 'react'
 import { ArrowLeft, ArrowRight, ArrowUp, BarChart3, BookText, ClipboardPlus, Network, PanelLeft, PanelRight, PanelBottom, Users, Undo2, Redo2, Bookmark, MoreHorizontal } from 'lucide-react'
 import { displayKey, formatKeys, getCommand, runCommand } from '../commands/registry'
 import { useCommandState } from '../commands/useCommandState'
@@ -9,6 +9,9 @@ import { QuickFind } from '../features/search/QuickFind'
 import { useContextMenu } from '../ui/Menu'
 import type { MenuItem } from '../ui/Menu'
 import { onColor } from './color'
+import { openRepertory, takeRefs } from '../features/repertory/ops'
+import { DEFAULT_TAKE } from '../features/repertory/take'
+import { RUBRIC_MIME, parseRubricDrop } from '../features/clipboard/logic'
 
 /** Width below which the repertory picker, clipboard chips and Analyse also fold into "More tools" (shell.css). */
 export const COMPACT_TOOLBAR_QUERY = '(max-width: 760px)'
@@ -53,7 +56,26 @@ function ToolButton({ command, icon: Icon, label, state, pressed }: { command: s
 export const Toolbar = memo(function Toolbar() {
   const catalog = useCatalog()
   const cs = useCommandState(TOOL_COMMANDS)
-  const repertory = useApp(s => { const t = selectActiveTab(s); return t?.kind === 'repertory' ? t.repertory : null })
+  // the repertory the active document reads: a repertory tab's book, or the first book a search searches
+  const repertory = useApp(s => {
+    const t = selectActiveTab(s)
+    return t?.kind === 'repertory' ? t.repertory : t?.kind === 'search' ? (t.repertories[0] ?? null) : null
+  })
+  // elsewhere the picker names the last repertory used (dimmed) rather than a bare placeholder
+  const lastRepertory = useRef<string | null>(null)
+  if (repertory) lastRepertory.current = repertory
+  const fallbackRepertory = useApp(s => s.settings.defaultRepertory)
+  const shownRepertory = lastRepertory.current ?? fallbackRepertory
+  /** Ctrl/Cmd held while choosing: open another tab even when the repertory is already open. */
+  const newTabChoice = useRef(false)
+  const chooseRepertory = (abbrev: string) => {
+    const s = useApp.getState()
+    const existing = s.tabs.find(t => t.kind === 'repertory' && t.repertory === abbrev)
+    if (newTabChoice.current) void openRepertory(abbrev, undefined, { reuse: false })
+    else if (existing) actions.activateTab(existing.id)
+    else runCommand(`repertory.open.${abbrev}`)
+    newTabChoice.current = false
+  }
   const clipboards = useApp(s => selectActiveConsultation(s)?.clipboards ?? null)
   const activeClipboardId = useApp(s => s.activeClipboardId)
   const more = useContextMenu()
@@ -83,12 +105,16 @@ export const Toolbar = memo(function Toolbar() {
       </div>
       <div className="tool-group tool-rep">
         <select
-          className="tool-select"
+          className={`tool-select${repertory == null ? ' tool-select-dim' : ''}`}
           aria-label="Repertory"
+          title={repertory == null ? 'Open a repertory (Ctrl+click: in a new tab)' : 'Repertory (Ctrl+click: open in a new tab)'}
           value={repertory ?? ''}
-          onChange={e => runCommand(`repertory.open.${e.target.value}`)}
+          onMouseDown={e => { newTabChoice.current = e.ctrlKey || e.metaKey }}
+          onKeyDown={e => { newTabChoice.current = e.ctrlKey || e.metaKey }}
+          onChange={e => { if (e.target.value) chooseRepertory(e.target.value) }}
         >
-          {repertory == null && <option value="">Repertory…</option>}
+          {/* outside a repertory the picker shows the last one used, dimmed; choosing it (or another) opens it */}
+          {repertory == null && <option value="" disabled hidden>{catalog.repertoryInfos.find(r => r.abbrev === shownRepertory)?.title ?? 'Repertory…'}</option>}
           {catalog.repertoryInfos.map(r => <option key={r.abbrev} value={r.abbrev}>{r.title}</option>)}
         </select>
       </div>
@@ -107,15 +133,15 @@ export const Toolbar = memo(function Toolbar() {
             aria-label={`${cb.name}, ${cb.symptoms.length} symptom${cb.symptoms.length === 1 ? '' : 's'}`}
             aria-pressed={cb.id === currentClip}
             onClick={() => actions.setActiveClipboard(cb.id)}
-            onDragOver={e => { if (e.dataTransfer.types.includes('application/x-rubric-ref')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('drop') } }}
+            onDragOver={e => { if (e.dataTransfer.types.includes(RUBRIC_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('drop') } }}
             onDragLeave={e => e.currentTarget.classList.remove('drop')}
             onDrop={e => {
               e.currentTarget.classList.remove('drop')
-              const refs = e.dataTransfer.getData('application/x-rubric-ref').split(/[\s,]+/).filter(r => /^[\w.-]+:\d+$/.test(r))
+              const refs = parseRubricDrop(e.dataTransfer.getData(RUBRIC_MIME))
               if (!refs.length) return
               e.preventDefault()
-              const n = actions.addRubrics(refs, { clipboardId: cb.id })
-              actions.toast(n ? `Added ${n} rubric${n === 1 ? '' : 's'} to ${cb.name}` : `Already in ${cb.name}`, n ? 'success' : 'info')
+              // the standard take: recents, the take toast with Undo, into this chip's clipboard
+              takeRefs(refs, { ...DEFAULT_TAKE, clipboard: i + 1 })
             }}
           >
             {i + 1}<sup aria-hidden="true">{cb.symptoms.length || ''}</sup>
@@ -136,7 +162,7 @@ export const Toolbar = memo(function Toolbar() {
         <ToolButton command="families.open" icon={Network} state={cs['families.open']} />
       </div>
       <div className="tool-group tool-more">
-        <button className="tool-btn" aria-label="More tools" title="More tools" aria-haspopup="menu" onClick={e => more.openAt(e.currentTarget, overflowItems())}>
+        <button className="tool-btn" aria-label="More tools" title="More tools" aria-haspopup="menu" aria-expanded={more.isOpen} onClick={e => more.openAt(e.currentTarget, overflowItems())}>
           <MoreHorizontal size={15} aria-hidden />
         </button>
       </div>

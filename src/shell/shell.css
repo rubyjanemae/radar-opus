@@ -1,3 +1,4 @@
+:root { --statusbar-h: 24px; }
 .shell { display: flex; flex-direction: column; height: 100vh; min-width: 0; }
 .shell-header { flex: none; min-width: 0; }
 
@@ -109,7 +110,7 @@
 .tabstrip-list { flex: 0 1 auto; display: flex; align-items: flex-end; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; height: 100%; }
 .tabstrip-list::-webkit-scrollbar { display: none; }
 .tab {
-  position: relative; flex: 0 1 auto; display: flex; align-items: center; height: 31px; min-width: 72px; max-width: 260px; padding: 0 4px 0 0;
+  position: relative; flex: 0 1 auto; display: flex; align-items: center; height: 31px; min-width: 90px; max-width: 260px; padding: 0 4px 0 0;
   border-right: 1px solid var(--border); color: var(--text-2); font-size: var(--fs-sm); user-select: none; white-space: nowrap;
 }
 .tab-main { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; min-width: 0; height: 100%; padding: 0 4px 0 11px; }
@@ -124,6 +125,11 @@
 .tab.active .tab-icon { color: var(--accent); }
 .tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
 .tab-sub { min-width: 0; color: var(--text-2); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; flex: 0 100 auto; }
+/* case documents: middle truncation (patient name first), and the kind label ("Analysis") never gives way */
+.tab-title-split { display: inline-flex; flex: 0 1 auto; }
+.tab-title-head { flex: 0 100 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; }
+.tab-title-tail { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tab-main[data-kind="analysis"] .tab-sub { flex: none; }
 .tab-close { flex: none; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--text-2); opacity: 0; }
 .tab:hover .tab-close, .tab.active .tab-close { opacity: 1; }
 .tab-close:hover { background: var(--bg-active); color: var(--text); }
@@ -137,7 +143,7 @@
 
 /* ───────── status bar ───────── */
 .statusbar {
-  flex: none; display: flex; align-items: center; gap: 14px; height: 24px; padding: 0 10px;
+  flex: none; display: flex; align-items: center; gap: 14px; height: var(--statusbar-h); padding: 0 10px;
   background: var(--chrome); border-top: 1px solid var(--border); color: var(--text-2); font-size: var(--fs-xs); white-space: nowrap;
 }
 .status-main { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -178,3 +184,27 @@
   .brand { padding: 0 6px 0 2px; }
   .menubar-search { margin-right: 4px; }
 }
+
+/* ───────── menubar overflow ───────── */
+/* an invisible copy of the menu labels, measured to decide how many menus fit (MenuBar.tsx) */
+.menubar-measure { position: absolute; width: 0; height: 0; overflow: hidden; visibility: hidden; pointer-events: none; white-space: nowrap; }
+.menubar-measure > .menubar-item { display: inline-flex; align-items: center; flex: none; }
+.menubar { position: relative; min-width: 0; }
+
+/* phones (320-420px): the toolbar keeps every control by dropping button labels and narrowing quick find */
+@media (max-width: 420px) {
+  .toolbar .tool-btn.with-label > span { display: none; }
+  .toolbar .tool-btn.with-label { padding: 0 6px; }
+  .toolbar .qf { min-width: 64px; }
+  .toolbar .qf-kbd { display: none; }
+  .toolbar .tool-group { padding-right: 2px; margin-right: 0; }
+  .toolbar .tool-btn { min-width: 26px; padding: 0 4px; }
+}
+
+/* one wrapper per mounted document (TabHost.tsx); hidden ones are display:none via <Activity> */
+.tab-doc { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.tab-doc:not([data-active]) { display: none; }
+.tab-doc > * { flex: 1; min-height: 0; }
+/* outside a repertory the picker names the last repertory used, dimmed */
+.tool-select-dim { color: var(--text-3); }
+.tool-select-dim option { color: var(--text); }

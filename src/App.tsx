@@ -1,4 +1,4 @@
-import { Component, useEffect, useState, useSyncExternalStore } from 'react'
+import { Component, startTransition, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { Catalog } from './data/catalog'
 import { CatalogProvider } from './data/CatalogContext'
@@ -8,6 +8,7 @@ import { claimWorkspace, instanceMode, requestHandover } from './state/instance'
 import { clearStoredWorkspace, exportRawData, hydrate, RestoreError, startAutosave } from './state/persist'
 import { Shell } from './shell/Shell'
 import { downloadBlob } from './ui/files'
+import { installModalGuard } from './ui/modal'
 import './ui/ConfirmDialog'
 import './ui/ui.css'
 import './shell/shell.css'
@@ -26,6 +27,13 @@ let bootPromise: Promise<Catalog> | null = null
 let stepListener: ((step: string) => void) | null = null
 const step = (s: string) => stepListener?.(s)
 
+/** Let the browser paint and handle input between startup steps (scheduler.yield where supported). */
+function yieldToMain(): Promise<void> {
+  const sch = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler
+  if (sch?.yield) return sch.yield()
+  return new Promise(resolve => setTimeout(resolve, 0))
+}
+
 async function boot(): Promise<Catalog> {
   const catalog = await Catalog.load()
   step('Restoring workspace…')
@@ -38,12 +46,15 @@ async function boot(): Promise<Catalog> {
     const { seedWorkspace } = await import('./seed/seed')
     await seedWorkspace(catalog)
   }
+  // each startup step in its own task, so none of them adds to the first render's task
+  await yieldToMain()
   registerCoreCommands(catalog)
   registerCommands([{
     id: 'app.focusNotification', title: 'Focus notification action', category: 'View', keys: ['Alt+N'], allowInInput: true,
     keywords: 'toast undo notification', enabled: () => !!document.querySelector('.toasts .toast-action'), run: () => { focusLatestToastAction() },
   }])
   startAutosave()
+  await yieldToMain()
   return catalog
 }
 
@@ -116,7 +127,8 @@ export default function App() {
     let cancelled = false
     stepListener = s => { if (!cancelled) setState({ phase: 'loading', step: s }) }
     bootOnce().then(
-      catalog => { if (!cancelled) setState({ phase: 'ready', catalog }) },
+      // a transition: the first render of the workspace is time-sliced instead of one long task
+      catalog => { if (!cancelled) startTransition(() => setState({ phase: 'ready', catalog })) },
       e => { if (!cancelled) setState({ phase: 'error', message: e instanceof Error ? e.message : String(e), restore: e instanceof RestoreError }) },
     )
     return () => { cancelled = true }
@@ -139,11 +151,20 @@ export default function App() {
   return (
     <ShellBoundary>
       <CatalogProvider catalog={state.catalog}>
-        <div className="app-frame">
-          <InstanceBanner />
-          <Shell />
-        </div>
+        <AppFrame />
       </CatalogProvider>
     </ShellBoundary>
+  )
+}
+
+/** The app root: made inert while a modal overlay (portalled outside it) is open. */
+function AppFrame() {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => (ref.current ? installModalGuard(ref.current) : undefined), [])
+  return (
+    <div className="app-frame" ref={ref}>
+      <InstanceBanner />
+      <Shell />
+    </div>
   )
 }

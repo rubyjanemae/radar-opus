@@ -52,10 +52,15 @@
  *  Family pseudo-remedy analysis (§4.16) is `analyzeFamilies`, which runs any strategy
  *  over families instead of remedies.
  *
+ * ─── View (§2 step 3) ─────────────────────────────────────────────────────
+ *  The repertory view (minimum grade shown) filters every rubric's grades before
+ *  combining and grouping, so n_s, m_r and every cell are view-specific (E8).
+ *
  * ─── Exclusion (§2 steps 5–7), first matching reason wins ──────────────────
- *  eliminative:<line>  absent from an eliminative line (first failing line in order)
- *  excluding:<line>    present in an excluding ("exclusive") line
- *  filter              outside options.remedyFilter (family limit)
+ *  eliminative:<line>  absent from an eliminative line (first failing line in order); under
+ *                      Kent, mustCoverStrong / markedMentalEliminative make lines eliminative
+ *  exclusive:<line>    present in an excluding ("exclusive") line
+ *  family-limit        outside options.remedyFilter (family limit)
  *  manual              in options.excludedRemedies
  *  coverage            below options.minCoverage, (elimination) not covering all lines, or
  *                      (polarity) covering fewer than N − allowMissing polar lines
@@ -65,8 +70,10 @@
  *  position unranked (rank 0), never counted in the limit.
  */
 import type { Grade, RubricRef } from '../data/types'
-import { DEFAULT_PARAMS } from './model'
+import { DEFAULT_PARAMS, mergeParams, normalizeStrategy, normalizeWeight } from './model'
 import type { AnalysisOptions, Clipboard, StrategyId, StrategyParams, Symptom, Weight } from './model'
+
+export { mergeParams, normalizeStrategy } from './model'
 
 export type ChapterClass = 'mental' | 'general' | 'particular'
 
@@ -86,8 +93,8 @@ export interface RubricSource {
   rubricSize?(ref: RubricRef): number
   /** Kent hierarchy class of the rubric's chapter (default particular). */
   chapterClass?(ref: RubricRef): ChapterClass
-  /** Remedy sizes m_r of a repertory (small-remedy strategies). */
-  remedyStats?(repertory: string): RemedyStats | null
+  /** Remedy sizes m_r of a repertory (small-remedy strategies), counting only grades ≥ minGrade (the view). */
+  remedyStats?(repertory: string, minGrade?: number): RemedyStats | null
   /** General rubrics linked to a rubric for Bönninghausen generalisation (§4.12). */
   generalRubrics?(ref: RubricRef): RubricRef[]
   /** Polar opposite of a rubric (polarity strategy, §4.13), e.g. "… agg." ↔ "… amel.", or null. */
@@ -125,13 +132,25 @@ export interface ResolvedSymptom {
   topGrade: number
   /** Number of remedies holding `topGrade`. */
   topCount: number
+  /** The line removes remedies absent from it: its own qualifier, or a Kent option (§4.11). */
+  eliminative: boolean
+  /** Why the line is eliminative: the symptom's qualifier, Kent mustCoverStrong or Kent markedMentalEliminative. */
+  eliminativeRule: EliminativeRule | null
   /** Polar opposite rubric (polarity strategy only), else null. */
   opposite: RubricRef | null
   /** Grades of the opposite rubric (polarity strategy only), else null. */
   oppositeGrades: Map<number, Grade> | null
 }
 
-export type ExclusionReason = 'manual' | 'filter' | 'excluding' | 'eliminative' | 'coverage'
+export type EliminativeRule = 'symptom' | 'must-cover-strong' | 'marked-mental'
+
+/** Exclusion reason codes as the spec writes them (§2 steps 5–7). */
+export type ExclusionReason = 'manual' | 'family-limit' | 'exclusive' | 'eliminative' | 'coverage'
+
+/** The repertory view the analysis runs under (§2 step 3): grades below minGrade are removed first. */
+export interface AnalysisViewFilter {
+  minGrade?: number
+}
 
 export interface PolarityStats {
   /** PS: Σ grade in the polar lines (plus the non-polar degree sum with includeNonPolar). */
@@ -179,6 +198,8 @@ export interface AnalysisResult {
   strategy: StrategyId
   useIntensity: boolean
   params: StrategyParams
+  /** Repertory view the analysis ran under: grades below this were removed (1 = every grade). */
+  minGrade: number
   symptoms: ResolvedSymptom[]
   /** Sorted rows, limited to options.limit included rows (excluded rows interleaved when shown). */
   rows: AnalysisRow[]
@@ -248,20 +269,6 @@ export const FACTOR_NOTES: Record<TermFactor['key'], string> = {
   π: 'prominence: counts when the remedy has the rubric\'s top grade (sole top grade ×2 in the composite)',
 }
 
-export function mergeParams(patch: AnalysisOptions['params']): StrategyParams {
-  if (!patch) return DEFAULT_PARAMS
-  return {
-    smallRubrics: { ...DEFAULT_PARAMS.smallRubrics, ...patch.smallRubrics },
-    smallRemedies: { ...DEFAULT_PARAMS.smallRemedies, ...patch.smallRemedies },
-    kent: { weights: { ...DEFAULT_PARAMS.kent.weights, ...patch.kent?.weights } },
-    smallRubricsCont: { ...DEFAULT_PARAMS.smallRubricsCont, ...patch.smallRubricsCont },
-    prominence: { ...DEFAULT_PARAMS.prominence, ...patch.prominence },
-    polarity: { ...DEFAULT_PARAMS.polarity, ...patch.polarity },
-    segments: { ...DEFAULT_PARAMS.segments, ...patch.segments },
-    composite: { ...DEFAULT_PARAMS.composite, ...patch.composite },
-  }
-}
-
 /** f_s (§4.6): F_small when 0 < n ≤ T_small, else 1. */
 export function smallRubricFactor(size: number, p: StrategyParams['smallRubrics'] = DEFAULT_PARAMS.smallRubrics): number {
   return size > 0 && size <= p.threshold ? p.factor : 1
@@ -311,8 +318,50 @@ function repertoryOf(ref: RubricRef): string {
 
 const HIERARCHY_RANK: Record<ChapterClass, number> = { mental: 3, general: 2, particular: 1 }
 
-export function resolveSymptom(src: RubricSource, symptom: Symptom, clipboardId: string, generalise = false): ResolvedSymptom {
-  const maps = symptom.rubrics.map(r => src.grades(r))
+/* View filter (§2 step 3): grades ≥ minGrade, memoised per source map so filtered maps keep a stable identity. */
+const viewCaches = new Map<number, WeakMap<Map<number, Grade>, Map<number, Grade>>>()
+export function viewGrades(m: Map<number, Grade>, minGrade: number): Map<number, Grade> {
+  if (!(minGrade > 1)) return m
+  let cache = viewCaches.get(minGrade)
+  if (!cache) { cache = new WeakMap(); viewCaches.set(minGrade, cache) }
+  let hit = cache.get(m)
+  if (!hit) {
+    hit = new Map()
+    for (const [rem, g] of m) if (g >= minGrade) hit.set(rem, g)
+    cache.set(m, hit)
+  }
+  return hit
+}
+
+function gradesIn(src: RubricSource, ref: RubricRef, minGrade: number): Map<number, Grade> | null {
+  const m = src.grades(ref)
+  return m ? viewGrades(m, minGrade) : null
+}
+
+/** The part of a resolved line that depends only on its rubrics (not on intensity or qualifiers). */
+interface LineVector {
+  grades: Map<number, Grade>
+  baseGrades: Map<number, Grade>
+  generals: RubricRef[]
+  size: number
+  missing: boolean
+  hierarchy: ChapterClass
+}
+
+/*
+ * Per-source cache of line vectors: an intensity or qualifier change re-scores without re-merging
+ * combined rubrics, re-generalising or re-filtering the view. Only complete vectors are cached (a
+ * repertory still loading resolves again later); sources are immutable, so entries never go stale.
+ */
+const vectorCaches = new WeakMap<RubricSource, Map<string, LineVector>>()
+const VECTOR_CACHE_MAX = 4000
+
+function lineVector(src: RubricSource, symptom: Symptom, generalise: boolean, minGrade: number): LineVector {
+  const key = `${minGrade}|${generalise ? 1 : 0}|${symptom.combine}|${symptom.rubrics.join(',')}`
+  let cache = vectorCaches.get(src)
+  const hit = cache?.get(key)
+  if (hit) return hit
+  const maps = symptom.rubrics.map(r => gradesIn(src, r, minGrade))
   const present = maps.filter((m): m is Map<number, Grade> => m !== null)
   let grades = new Map<number, Grade>()
   if (present.length === 1) grades = present[0]
@@ -336,23 +385,39 @@ export function resolveSymptom(src: RubricSource, symptom: Symptom, clipboardId:
   const generals: RubricRef[] = []
   if (generalise && src.generalRubrics) {
     for (const r of symptom.rubrics) for (const gr of src.generalRubrics(r)) if (!generals.includes(gr) && !symptom.rubrics.includes(gr)) generals.push(gr)
-    const gm = generals.map(r => src.grades(r)).filter((m): m is Map<number, Grade> => m !== null)
+    const gm = generals.map(r => gradesIn(src, r, minGrade)).filter((m): m is Map<number, Grade> => m !== null)
     if (gm.length) {
       grades = new Map(baseGrades)
       for (const m of gm) for (const [rem, g] of m) if (g > (grades.get(rem) ?? 0)) grades.set(rem, g)
     }
   }
-  const label = symptom.label || symptom.rubrics.map(r => src.label(r)).join(symptom.combine === 'intersection' ? ' ∩ ' : ' ∪ ')
   const first = symptom.rubrics[0] ?? ''
   const hierarchy = symptom.rubrics.reduce<ChapterClass>((best, r) => {
     const c = src.chapterClass?.(r) ?? 'particular'
     return HIERARCHY_RANK[c] > HIERARCHY_RANK[best] ? c : best
   }, 'particular')
-  const size = grades === baseGrades && symptom.rubrics.length === 1 && present.length === 1 && src.rubricSize ? src.rubricSize(first) : grades.size
+  // n_s: the declared size, unless the view, generalisation or a combination changed the remedy set
+  const declared = !(minGrade > 1) && grades === baseGrades && symptom.rubrics.length === 1 && present.length === 1 && src.rubricSize
+  const size = declared ? src.rubricSize!(first) : grades.size
+  const missing = present.length < symptom.rubrics.length
+  const v: LineVector = { grades, baseGrades, generals, size, missing, hierarchy }
+  if (!missing) {
+    if (!cache) { cache = new Map(); vectorCaches.set(src, cache) }
+    if (cache.size >= VECTOR_CACHE_MAX) cache.clear()
+    cache.set(key, v)
+  }
+  return v
+}
+
+export function resolveSymptom(src: RubricSource, symptom: Symptom, clipboardId: string, generalise = false, minGrade = 1): ResolvedSymptom {
+  const w = normalizeWeight(symptom.weight)
+  if (w !== symptom.weight) symptom = { ...symptom, weight: w }
+  const v = lineVector(src, symptom, generalise, minGrade)
+  const label = symptom.label || symptom.rubrics.map(r => src.label(r)).join(symptom.combine === 'intersection' ? ' ∩ ' : ' ∪ ')
   return {
-    symptom, clipboardId, label, grades, baseGrades, generals, size, missing: present.length < symptom.rubrics.length, members: [symptom],
-    role: 'scored', weight: symptom.weight, rubricFactor: smallRubricFactor(size), repertory: repertoryOf(first), hierarchy,
-    topGrade: 0, topCount: 0, opposite: null, oppositeGrades: null,
+    symptom, clipboardId, label, grades: v.grades, baseGrades: v.baseGrades, generals: [...v.generals], size: v.size, missing: v.missing, members: [symptom],
+    role: 'scored', weight: symptom.weight, rubricFactor: smallRubricFactor(v.size), repertory: repertoryOf(symptom.rubrics[0] ?? ''), hierarchy: v.hierarchy,
+    topGrade: 0, topCount: 0, eliminative: !!symptom.eliminatory, eliminativeRule: symptom.eliminatory ? 'symptom' : null, opposite: null, oppositeGrades: null,
   }
 }
 
@@ -371,7 +436,8 @@ export function applyGroups(list: ResolvedSymptom[], params: StrategyParams = DE
     if (!key) { out.push(s); continue }
     const g = byGroup.get(key)
     if (!g) {
-      const copy: ResolvedSymptom = { ...s, grades: new Map(s.grades), baseGrades: new Map(s.baseGrades), generals: [...s.generals], label: `[${s.symptom.group}] ${s.label}` }
+      // the group letter is shown as a marker next to the label (never as a "[a]" text prefix)
+      const copy: ResolvedSymptom = { ...s, grades: new Map(s.grades), baseGrades: new Map(s.baseGrades), generals: [...s.generals] }
       byGroup.set(key, copy)
       out.push(copy)
       continue
@@ -385,6 +451,8 @@ export function applyGroups(list: ResolvedSymptom[], params: StrategyParams = DE
     g.label = `${g.label} + ${s.label}`
     g.missing = g.missing || s.missing
     if (HIERARCHY_RANK[s.hierarchy] > HIERARCHY_RANK[g.hierarchy]) g.hierarchy = s.hierarchy
+    g.eliminative = g.eliminative || s.eliminative
+    g.eliminativeRule = g.eliminative ? 'symptom' : null
     g.symptom = {
       ...g.symptom,
       weight: Math.max(g.symptom.weight, s.symptom.weight) as Weight,
@@ -398,8 +466,9 @@ export function applyGroups(list: ResolvedSymptom[], params: StrategyParams = DE
   return out
 }
 
-/** Assign role, effective intensity, f_s and the top-grade statistics to each line. */
-function assignRoles(cols: ResolvedSymptom[], useIntensity: boolean, params: StrategyParams) {
+/** Assign role, effective intensity, f_s, the top-grade statistics and the Kent eliminative options to each line. */
+function assignRoles(cols: ResolvedSymptom[], useIntensity: boolean, params: StrategyParams, strategy: StrategyId) {
+  let markedMental = strategy === 'kent' && params.kent.markedMentalEliminative
   for (const c of cols) {
     const w = c.symptom.weight
     c.role = w <= 0 ? 'ignored' : c.symptom.exclusive ? 'excluding' : 'scored'
@@ -411,14 +480,20 @@ function assignRoles(cols: ResolvedSymptom[], useIntensity: boolean, params: Str
     }
     c.topGrade = top
     c.topCount = count
+    // Kent options (§4.11) act on the recorded intensity, whether or not intensity is used for scoring (like E9)
+    if (c.role === 'scored' && !c.eliminative && strategy === 'kent') {
+      if (params.kent.mustCoverStrong && w >= 3) { c.eliminative = true; c.eliminativeRule = 'must-cover-strong' }
+      else if (markedMental && w >= 3 && c.hierarchy === 'mental') { c.eliminative = true; c.eliminativeRule = 'marked-mental' }
+    }
+    if (markedMental && c.role === 'scored' && c.hierarchy === 'mental' && w >= 3) markedMental = false
   }
 }
 
 /** Polar opposite of a line: the symptom's own, else the source's for a single, ungrouped rubric. */
-function resolveOpposite(src: RubricSource, col: ResolvedSymptom, mapGrades?: Remap['grades']) {
+function resolveOpposite(src: RubricSource, col: ResolvedSymptom, minGrade: number, mapGrades?: Remap['grades']) {
   let ref: RubricRef | null = col.symptom.opposite ?? null
   if (!ref && col.members.length === 1 && col.symptom.rubrics.length === 1) ref = src.oppositeRubric?.(col.symptom.rubrics[0]) ?? null
-  const grades = ref ? src.grades(ref) : null
+  const grades = ref ? gradesIn(src, ref, minGrade) : null
   col.opposite = grades ? ref : null
   col.oppositeGrades = grades && mapGrades ? mapGrades(grades) : grades
 }
@@ -445,11 +520,11 @@ export interface TermExplanation {
 
 type StatsCache = Map<string, RemedyStats | null>
 
-function remedyFactorFor(src: RubricSource | null, col: ResolvedSymptom, remedyId: number, params: StrategyParams, cache?: StatsCache): number {
+function remedyFactorFor(src: RubricSource | null, col: ResolvedSymptom, remedyId: number, params: StrategyParams, minGrade: number, cache?: StatsCache): number {
   if (!src?.remedyStats) return 1
   let stats: RemedyStats | null | undefined = cache?.get(col.repertory)
   if (stats === undefined) {
-    stats = src.remedyStats(col.repertory)
+    stats = src.remedyStats(col.repertory, minGrade)
     cache?.set(col.repertory, stats)
   }
   return stats ? remedySizeFactor(stats.count(remedyId), params.smallRemedies) : 1
@@ -506,9 +581,9 @@ export function explainTerm(result: AnalysisResult, src: RubricSource | null, ro
     factors.push({ key: 'π', label, value: v })
   }
   if (usesRemedyFactor(strategy)) {
-    const stats = src?.remedyStats?.(col.repertory)
+    const stats = src?.remedyStats?.(col.repertory, result.minGrade)
     const m = stats?.count(row.remedyId) ?? 0
-    factors.push({ key: 'R', label: m ? `remedy size: in ${m.toLocaleString()} rubrics` : 'remedy size unknown', value: remedyFactorFor(src, col, row.remedyId, params) })
+    factors.push({ key: 'R', label: m ? `remedy size: in ${m.toLocaleString()} rubrics` : 'remedy size unknown', value: remedyFactorFor(src, col, row.remedyId, params, result.minGrade) })
   }
   return { grade: g, baseGrade, value: gradeValue(strategy, g), weight: col.weight, factors, opposite: null, points: row.contributions[i] }
 }
@@ -525,7 +600,7 @@ export function formatScore(strategy: StrategyId, row: Pick<AnalysisRow, 'score'
   return fmtNum(row.score)
 }
 
-/** Reason code as the spec writes it, e.g. "eliminative:s12". */
+/** Reason code as the spec writes it, e.g. "eliminative:s12", "exclusive:s3", "family-limit". */
 export function exclusionCode(row: Pick<AnalysisRow, 'excluded' | 'excludedBy'>): string | null {
   if (!row.excluded) return null
   return row.excludedBy ? `${row.excluded}:${row.excludedBy}` : row.excluded
@@ -553,20 +628,26 @@ interface Remap {
   grades: (grades: Map<number, Grade>) => Map<number, Grade>
 }
 
-export function analyze(src: RubricSource, clipboards: Clipboard[], options: AnalysisOptions): AnalysisResult {
-  return analyzeCore(src, clipboards, options)
+/** Grade view as a whole number 1–4 (1 = every grade). */
+const normalizeMinGrade = (g: unknown) => (typeof g === 'number' && Number.isFinite(g) ? Math.max(1, Math.min(4, Math.round(g))) : 1)
+const finiteOr = (x: unknown, d: number) => (typeof x === 'number' && Number.isFinite(x) ? x : d)
+
+export function analyze(src: RubricSource, clipboards: Clipboard[], options: AnalysisOptions, view?: AnalysisViewFilter): AnalysisResult {
+  return analyzeCore(src, clipboards, options, view)
 }
 
-function analyzeCore(src: RubricSource, clipboards: Clipboard[], options: AnalysisOptions, remap?: Remap): AnalysisResult {
-  const strategy = options.strategy
+function analyzeCore(src: RubricSource, clipboards: Clipboard[], options: AnalysisOptions, view?: AnalysisViewFilter, remap?: Remap): AnalysisResult {
+  const strategy = normalizeStrategy(options.strategy)
   const params = mergeParams(options.params)
   const useIntensity = options.useIntensity !== false
+  const minGrade = normalizeMinGrade(view?.minGrade)
+  const minCoverage = finiteOr(options.minCoverage, 0)
   const generalise = strategy === 'boenninghausen'
-  const chosen = options.clipboardIds.map(id => clipboards.find(cb => cb.id === id)).filter((c): c is Clipboard => !!c)
-  const resolved = chosen.flatMap(cb => cb.symptoms.map(s => resolveSymptom(src, s, cb.id, generalise)))
+  const chosen = (options.clipboardIds ?? []).map(id => clipboards.find(cb => cb.id === id)).filter((c): c is Clipboard => !!c)
+  const resolved = chosen.flatMap(cb => cb.symptoms.map(s => resolveSymptom(src, s, cb.id, generalise, minGrade)))
   if (remap) resolved.forEach(remap.line)
   const symptoms = applyGroups(resolved, params)
-  assignRoles(symptoms, useIntensity, params)
+  assignRoles(symptoms, useIntensity, params, strategy)
   const ncol = symptoms.length
   const notes: string[] = []
 
@@ -578,11 +659,11 @@ function analyzeCore(src: RubricSource, clipboards: Clipboard[], options: Analys
     if (s.role === 'excluding') excluding.push(i)
     if (s.role !== 'scored') continue
     scored.push(i)
-    if (s.symptom.eliminatory) eliminative.push(i)
+    if (s.eliminative) eliminative.push(i)
   }
 
   const allow = options.remedyFilter ? new Set(options.remedyFilter) : null
-  const manual = new Set(options.excludedRemedies)
+  const manual = new Set(options.excludedRemedies ?? [])
   const statsCache: StatsCache = new Map()
   const needR = usesRemedyFactor(strategy)
 
@@ -604,7 +685,7 @@ function analyzeCore(src: RubricSource, clipboards: Clipboard[], options: Analys
     const s = symptoms[i]
     for (const [rem, g] of s.grades) {
       const row = rowFor(rem)
-      const p = rawPoints(strategy, g, s, needR ? remedyFactorFor(src, s, rem, params, statsCache) : 1, params)
+      const p = rawPoints(strategy, g, s, needR ? remedyFactorFor(src, s, rem, params, minGrade, statsCache) : 1, params)
       row.grades[i] = g
       row.contributions[i] = p
       row.points += p
@@ -626,7 +707,7 @@ function analyzeCore(src: RubricSource, clipboards: Clipboard[], options: Analys
   let polarNeed = 0
   if (strategy === 'polarity') {
     const pp = params.polarity
-    for (const i of scored) resolveOpposite(src, symptoms[i], remap?.grades)
+    for (const i of scored) resolveOpposite(src, symptoms[i], minGrade, remap?.grades)
     const polar = scored.filter(i => symptoms[i].oppositeGrades)
     polarLines = polar.length
     const nonPolarCounts = pp.includeNonPolar || polarLines === 0
@@ -660,7 +741,7 @@ function analyzeCore(src: RubricSource, clipboards: Clipboard[], options: Analys
   }
 
   // exclusion (§2 steps 5–7)
-  const excludedCounts: Record<ExclusionReason, number> = { manual: 0, filter: 0, excluding: 0, eliminative: 0, coverage: 0 }
+  const excludedCounts: Record<ExclusionReason, number> = { manual: 0, 'family-limit': 0, exclusive: 0, eliminative: 0, coverage: 0 }
   for (const r of list) {
     let why: ExclusionReason | null = null
     let by: string | null = null
@@ -668,11 +749,11 @@ function analyzeCore(src: RubricSource, clipboards: Clipboard[], options: Analys
     if (el !== undefined) { why = 'eliminative'; by = symptoms[el].symptom.id }
     else {
       const ex = excluding.find(i => r.grades[i] > 0)
-      if (ex !== undefined) { why = 'excluding'; by = symptoms[ex].symptom.id }
-      else if (allow && !allow.has(r.remedyId)) why = 'filter'
+      if (ex !== undefined) { why = 'exclusive'; by = symptoms[ex].symptom.id }
+      else if (allow && !allow.has(r.remedyId)) why = 'family-limit'
       else if (manual.has(r.remedyId)) why = 'manual'
       else if (
-        r.coverage < options.minCoverage
+        r.coverage < minCoverage
         || (strategy === 'elimination' && r.coverage < scored.length)
         || (strategy === 'polarity' && r.polarity!.cov < polarNeed)
       ) why = 'coverage'
@@ -756,7 +837,7 @@ function analyzeCore(src: RubricSource, clipboards: Clipboard[], options: Analys
   const shown = options.showExcluded ? list : list.filter(r => !r.excluded)
   let rank = 0
   for (const r of shown) if (!r.excluded) r.rank = ++rank
-  const limit = Math.max(1, options.limit)
+  const limit = Math.max(1, finiteOr(options.limit, 30))
   let cut = shown.length
   if (rank > limit) {
     let n = 0
@@ -774,7 +855,7 @@ function analyzeCore(src: RubricSource, clipboards: Clipboard[], options: Analys
   }
 
   return {
-    strategy, useIntensity, params, symptoms, rows: shown.slice(0, cut), all: shown, excludedRows: list.filter(r => r.excluded), total: rank,
+    strategy, useIntensity, params, minGrade, symptoms, rows: shown.slice(0, cut), all: shown, excludedRows: list.filter(r => r.excluded), total: rank,
     eliminated: excludedCounts.eliminative, excludedCounts, scoredCount: scored.length,
     quality: quality.light, confidence, polarLines, notes,
   }
@@ -803,7 +884,7 @@ export interface FamilyAnalysis {
  * and n is recomputed on the pseudo-remedies. The remedy filter and manual exclusions apply to the
  * members first. m_r is not known for a family, so the remedy-size factor is 1.
  */
-export function analyzeFamilies(src: RubricSource, clipboards: Clipboard[], options: AnalysisOptions, families: RemedyFamily[], topN = 20): FamilyAnalysis {
+export function analyzeFamilies(src: RubricSource, clipboards: Clipboard[], options: AnalysisOptions, families: RemedyFamily[], topN = 20, view?: AnalysisViewFilter): FamilyAnalysis {
   const allow = options.remedyFilter ? new Set(options.remedyFilter) : null
   const manual = new Set(options.excludedRemedies)
   const of = new Map<number, number[]>()
@@ -834,8 +915,8 @@ export function analyzeFamilies(src: RubricSource, clipboards: Clipboard[], opti
     remedyName: id => families[id - 1]?.label ?? '',
   }
   const famOptions: AnalysisOptions = { ...options, remedyFilter: null, excludedRemedies: [], highlight: null }
-  const result = analyzeCore(famSrc, clipboards, famOptions, remap)
-  const remedyResult = analyze(src, clipboards, { ...options, limit: topN, showExcluded: false })
+  const result = analyzeCore(famSrc, clipboards, famOptions, view, remap)
+  const remedyResult = analyze(src, clipboards, { ...options, limit: topN, showExcluded: false }, view)
   const top = new Set(remedyResult.rows.filter(r => r.rank > 0 && r.rank <= topN).map(r => r.remedyId))
   const density = families.map(f => f.members.filter(m => top.has(m)).length)
   return { result, families, density, remedyResult }

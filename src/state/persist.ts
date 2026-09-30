@@ -1,6 +1,6 @@
 import { createStore, promisifyRequest } from 'idb-keyval'
 import type { UseStore } from 'idb-keyval'
-import { actions, useApp } from './store'
+import { actions, pruneHistory, sameValue, useApp } from './store'
 import type { AppState } from './store'
 import type { Consultation, Patient } from './patients'
 import { PERSISTED_FIELDS, RestoreError, SCHEMA_VERSION, WORKSPACE_FIELDS, sanitizeLayout, sanitizePersisted, sanitizeSettings, sanitizeWorkspace } from './sanitize'
@@ -21,6 +21,8 @@ export type { PersistedState, SanitizeResult }
 export const WS_KEY = 'workspace'
 export const LEGACY_KEY = 'state-v1'
 export const BACKUP_KEY = 'backup:before-import'
+/** Prefix of the raw copy saved before a repair rewrites or deletes stored records (`backup:before-repair:<ISO time>`). */
+export const REPAIR_BACKUP_PREFIX = 'backup:before-repair:'
 const P = 'p:'
 const C = 'c:'
 
@@ -62,7 +64,7 @@ function idbBackend(): PersistBackend {
 
 let backend: PersistBackend | null = typeof indexedDB === 'undefined' ? null : idbBackend()
 /** Replace the storage backend (tests); null runs without persistence. */
-export function setPersistBackend(b: PersistBackend | null) { backend = b; flushed = emptyFlushed() }
+export function setPersistBackend(b: PersistBackend | null) { backend = b; flushed = emptyFlushed(); pendingBackup = null }
 
 // ───────────────────────── save status ─────────────────────────
 
@@ -90,9 +92,8 @@ interface Flushed { workspace: WorkspaceState | null; records: Map<string, unkno
 const emptyFlushed = (): Flushed => ({ workspace: null, records: new Map(), patients: null, consultations: null })
 let flushed: Flushed = emptyFlushed()
 
-function markFlushed(state: PersistedState, diskKeys?: Iterable<string>) {
+function markFlushed(state: PersistedState) {
   const records = new Map<string, unknown>()
-  for (const k of diskKeys ?? []) records.set(k, DIRTY)
   for (const p of Object.values(state.patients)) records.set(P + p.id, p)
   for (const c of Object.values(state.consultations)) records.set(C + c.id, c)
   flushed = { workspace: pickWorkspace(state), records, patients: state.patients, consultations: state.consultations }
@@ -135,7 +136,11 @@ export function hasUnsavedChanges(): boolean {
 
 // ───────────────────────── load ─────────────────────────
 
-interface Loaded extends SanitizeResult { diskKeys: string[] }
+interface Loaded extends SanitizeResult {
+  diskKeys: string[]
+  /** The stored values as read (before repair), by key; kept for the repair backup and to tell clean records from repaired ones. */
+  raw: Map<string, unknown>
+}
 
 /** Read and validate what is stored. Returns null on a first run; throws RestoreError when unusable. */
 async function loadFromDisk(onWorkspace?: (ws: Record<string, unknown>) => void): Promise<Loaded | null> {
@@ -146,12 +151,15 @@ async function loadFromDisk(onWorkspace?: (ws: Record<string, unknown>) => void)
     const legacy = await backend.get(LEGACY_KEY)
     if (legacy === undefined) return null
     const res = sanitizePersisted(legacy)
-    // Migrate the single blob to the split layout in one transaction, then it is gone.
+    // Migrate the single blob to the split layout in one transaction, then it is gone (a repaired blob is kept as a backup).
     const puts: [string, unknown][] = [[WS_KEY, { version: SCHEMA_VERSION, ...pickWorkspace(res.state) }]]
     for (const p of Object.values(res.state.patients)) puts.push([P + p.id, p])
     for (const c of Object.values(res.state.consultations)) puts.push([C + c.id, c])
+    if (res.repairs.length) puts.push([REPAIR_BACKUP_PREFIX + new Date().toISOString(), repairBackup([[LEGACY_KEY, legacy]], res.repairs)])
     await backend.write(puts, [LEGACY_KEY])
-    return { ...res, repairs: res.repairs, diskKeys: puts.map(([k]) => k).filter(k => k !== WS_KEY) }
+    // The migrated records are what is on disk now: all clean.
+    const raw = new Map<string, unknown>(puts.filter(([k]) => k.startsWith(P) || k.startsWith(C)))
+    return { ...res, diskKeys: [...raw.keys()], raw }
   }
   if (!ws || typeof ws !== 'object' || Array.isArray(ws)) throw new RestoreError('The saved workspace is not a valid object')
   onWorkspace?.(ws as Record<string, unknown>)
@@ -161,8 +169,47 @@ async function loadFromDisk(onWorkspace?: (ws: Record<string, unknown>) => void)
     patients: Object.fromEntries(pe.map(([k, v]) => [k.slice(P.length), v])),
     consultations: Object.fromEntries(ce.map(([k, v]) => [k.slice(C.length), v])),
   })
-  return { ...res, diskKeys: [...pe, ...ce].map(([k]) => k) }
+  return { ...res, diskKeys: [...pe, ...ce].map(([k]) => k), raw: new Map([[WS_KEY, ws], ...pe, ...ce]) }
 }
+
+function repairBackup(entries: Iterable<[string, unknown]>, repairs: string[]) {
+  return { savedAt: new Date().toISOString(), reason: 'Saved data was repaired on load; these are the records as they were stored before the repair.', repairs, entries: Object.fromEntries(entries) }
+}
+
+/**
+ * What this tab knows about the disk after loading. Records the repair left unchanged match the disk;
+ * repaired records are rewritten on the next flush, and only keys that yielded no record at all (unreadable)
+ * are deleted. When a repair will rewrite or delete anything, the original raw values are saved to a
+ * backup key in the same transaction as that first write.
+ */
+function trackLoaded(loaded: Loaded, state: PersistedState = loaded.state) {
+  markFlushed(state)
+  if (!loaded.repairs.length) {
+    for (const k of loaded.diskKeys) if (!flushed.records.has(k)) flushed.records.set(k, DIRTY)
+    return
+  }
+  // Rewrite after a repair: the (small) workspace key, and every record not stored as it is now.
+  flushed.workspace = null
+  flushed.patients = flushed.consultations = null
+  const onDisk = new Set(loaded.diskKeys)
+  for (const k of [...flushed.records.keys()]) if (!onDisk.has(k)) flushed.records.delete(k)
+  const touched: [string, unknown][] = []
+  for (const k of loaded.diskKeys) {
+    const rec = flushed.records.get(k)
+    const raw = loaded.raw.get(k)
+    if (rec !== undefined && sameValue(rec, raw)) continue
+    // repaired (rewritten) or unreadable / stored under another key (deleted): keep the stored value
+    touched.push([k, raw])
+    flushed.records.set(k, DIRTY)
+  }
+  const ws = loaded.raw.get(WS_KEY)
+  if (ws !== undefined) touched.unshift([WS_KEY, ws])
+  // (a migrated legacy blob was backed up by the migration itself)
+  if (touched.length) pendingBackup = [REPAIR_BACKUP_PREFIX + new Date().toISOString(), repairBackup(touched, loaded.repairs)]
+}
+
+/** Raw copy of repaired records, written together with the first flush that changes them. */
+let pendingBackup: [string, unknown] | null = null
 
 function applyState(state: PersistedState) {
   useApp.setState({ ...state, selectedSymptomIds: [], past: [], future: [], hydrated: true })
@@ -184,13 +231,31 @@ export async function hydrate(onStep?: (step: string) => void): Promise<boolean>
     return false
   }
   applyState(loaded.state)
-  // Repaired data is rewritten on the first flush; clean records are known to match the disk.
-  if (loaded.repairs.length) {
-    flushed = { ...emptyFlushed(), records: new Map(loaded.diskKeys.map(k => [k, DIRTY])) }
-    console.warn('Radar Opus repaired the saved workspace:', loaded.repairs)
-    actions.toast(`Some saved data could not be read and was repaired (${loaded.repairs.length} item${loaded.repairs.length === 1 ? '' : 's'})`, 'info', undefined, 8000)
-  } else markFlushed(loaded.state, loaded.diskKeys)
+  // Repaired records are rewritten on the first flush (after a raw backup); clean records are known to match the disk.
+  trackLoaded(loaded)
+  if (loaded.repairs.length) announceRepairs(loaded.repairs)
   return true
+}
+
+/** Toast after a repair on load, offering the raw stored data (including the pre-repair backup) as a file. */
+function announceRepairs(repairs: string[]) {
+  console.warn('Radar Opus repaired the saved workspace:', repairs)
+  actions.toast(
+    `Some saved data could not be read and was repaired (${repairs.length} item${repairs.length === 1 ? '' : 's'}); the original was backed up`,
+    'info',
+    { label: 'Export raw data', run: () => { void downloadRawData() } },
+    15000,
+  )
+}
+
+/** Save everything stored (unvalidated) as a JSON file. */
+export async function downloadRawData(): Promise<void> {
+  try {
+    const { downloadBlob } = await import('../ui/files')
+    downloadBlob(await exportRawData(), `radar-opus-raw-${new Date().toISOString().slice(0, 10)}.json`)
+  } catch (e) {
+    actions.toast(`Export failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+  }
 }
 
 /**
@@ -231,9 +296,22 @@ export async function adoptDiskState(): Promise<void> {
   // Keep this tab's tab objects where they are still valid, so its views do not remount.
   const tabs = workspace.tabs.map(t => s.tabs.find(x => x.id === t.id) ?? t)
   const state = { ...workspace, tabs, patients, consultations }
-  if (loaded) markFlushed({ ...loaded.state, patients: pm.seen, consultations: cm.seen }, loaded.diskKeys)
+  if (loaded) trackLoaded(loaded, { ...loaded.state, patients: pm.seen, consultations: cm.seen })
   else flushed = emptyFlushed()
+  // Undo steps that touch a record replaced from disk would revert another tab's edit: drop them.
+  pruneHistory({ patients: replacedIds(s.patients, patients), consultations: replacedIds(s.consultations, consultations) })
   useApp.setState({ ...state, hydrated: true })
+  if (loaded?.repairs.length) announceRepairs(loaded.repairs)
+}
+
+/** Ids whose record differs between two collections (added, removed or changed in content). */
+function replacedIds<T>(before: Record<string, T>, after: Record<string, T>): string[] {
+  const out: string[] = []
+  for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const a = before[id], b = after[id]
+    if (a !== b && !sameValue(a, b)) out.push(id)
+  }
+  return out
 }
 
 // ───────────────────────── autosave ─────────────────────────
@@ -274,7 +352,8 @@ export function startAutosave(): () => void {
   let debounce: ReturnType<typeof setTimeout> | null = null
   let cancelIdle: (() => void) | null = null
   let writing: Promise<void> | null = null
-  let again = false
+  /** The write queued behind the one in flight: callers awaiting a flush get the one that covers their state. */
+  let followUp: Promise<void> | null = null
   const cancel = () => {
     if (debounce) { clearTimeout(debounce); debounce = null }
     if (cancelIdle) { cancelIdle(); cancelIdle = null }
@@ -283,18 +362,21 @@ export function startAutosave(): () => void {
   const flush = (): Promise<void> => {
     cancel()
     if (suspended || !writable || !backend) return Promise.resolve()
-    if (writing) { again = true; return writing }
+    if (writing) {
+      // Serialize: never drop a flush requested mid-write (a restore or pagehide right after an edit).
+      followUp ??= writing.then(() => { followUp = null; return flush() })
+      return followUp
+    }
     const snap = pickPersisted(useApp.getState())
     const d = diffState(snap)
     if (!d.puts.length && !d.dels.length) { setStatus('saved'); return Promise.resolve() }
     setStatus('saving')
-    writing = backend.write(d.puts, d.dels).then(
-      () => { applyFlushed(d, snap); setStatus('saved'); savedListeners.forEach(fn => fn()) },
+    // The raw copy of repaired records goes in the same transaction as the first write that changes them.
+    const backup = pendingBackup
+    writing = backend.write(backup ? [backup, ...d.puts] : d.puts, d.dels).then(
+      () => { if (pendingBackup === backup) pendingBackup = null; applyFlushed(d, snap); setStatus('saved'); savedListeners.forEach(fn => fn()) },
       e => { console.error('Autosave failed', e); setStatus('error') },
-    ).finally(() => {
-      writing = null
-      if (again) { again = false; void flush() }
-    })
+    ).finally(() => { writing = null })
     return writing
   }
 
@@ -384,10 +466,13 @@ export async function importWorkspace(text: string, confirm: (summary: ImportSum
     }
   }
   applyState(state)
+  // Write the restored workspace now (serialized behind any save in flight), so a pending autosave of
+  // the replaced state flushed on pagehide can never land after it.
+  await flushNow()
   actions.toast(
     `Workspace restored: ${summary.patients} patient${summary.patients === 1 ? '' : 's'}, ${summary.consultations} consultation${summary.consultations === 1 ? '' : 's'}${repairs.length ? ` (${repairs.length} item${repairs.length === 1 ? '' : 's'} repaired)` : ''}`,
     'success',
-    { label: 'Undo', run: () => { applyState(before); actions.toast('Previous workspace put back', 'info') } },
+    { label: 'Undo', run: () => { applyState(before); void flushNow(); actions.toast('Previous workspace put back', 'info') } },
     10000,
   )
   return true

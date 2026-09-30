@@ -58,9 +58,11 @@ test.describe('restoring saved data', () => {
   for (const [name, extra] of cases) {
     test(`boots with ${name} and migrates state-v1 to split keys`, async ({ page }) => {
       await openApp(page)
+      // let the first-run save land first: a save still pending would be flushed on pagehide and overwrite the raw data
+      await waitForSaved(page)
       await writeRaw(page, { 'state-v1': legacyState(extra) })
       await page.reload()
-      await page.waitForSelector('.shell')
+      await page.waitForSelector('.shell[data-ready]')
       await expect(page.getByLabel('Status')).toContainText('rubrics')
       // the patient survived; open the patients list to see it
       await page.keyboard.press('Control+3')
@@ -74,6 +76,7 @@ test.describe('restoring saved data', () => {
 
   test('unusable data shows the rescue card with reset and raw export', async ({ page }) => {
     await openApp(page)
+    await waitForSaved(page)
     await writeRaw(page, { workspace: 'garbage', 'p:p1': patient })
     await page.reload()
     const card = page.getByRole('alert')
@@ -83,7 +86,7 @@ test.describe('restoring saved data', () => {
     expect(download.suggestedFilename()).toMatch(/^radar-opus-raw-.*\.json$/)
     page.once('dialog', d => void d.accept())
     await Promise.all([page.waitForEvent('load'), card.getByRole('button', { name: 'Reset workspace' }).click()])
-    await page.waitForSelector('.shell')
+    await page.waitForSelector('.shell[data-ready]')
     await expect(page.getByRole('tablist', { name: 'Open documents' })).toBeVisible()
   })
 })
@@ -174,12 +177,26 @@ test('workspace restore asks first, rejects invalid files and can be undone', as
   await expect(page.locator('.toast').filter({ hasText: 'Previous workspace put back' })).toBeVisible()
 })
 
+test('a restored workspace survives an immediate reload (no stale autosave lands after it)', async ({ page }) => {
+  await openApp(page)
+  const file = { format: 'radar-opus-workspace', version: 1, state: legacyState({ settings: { theme: 'dark' } }) }
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'File', exact: true }).click()
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Restore workspace backup…' }).click()
+  await (await chooser).setFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) })
+  await page.getByRole('dialog', { name: 'Restore workspace backup' }).getByRole('button', { name: 'Replace workspace' }).click()
+  // the success toast appears only once the restored workspace is written
+  await expect(page.locator('.toast').filter({ hasText: 'Workspace restored' })).toBeVisible()
+  await page.reload()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+})
+
 test('a second tab opens read-only and can take over without losing records', async ({ page, context }) => {
   await openApp(page)
   await waitForSaved(page)
   const second = await context.newPage()
   await second.goto('/')
-  await second.waitForSelector('.shell')
+  await second.waitForSelector('.shell[data-ready]')
   const banner = second.getByRole('status').filter({ hasText: 'Read-only' }).first()
   await expect(second.locator('.app-instance-banner')).toBeVisible()
   await expect(second.locator('.save-ind')).toHaveAttribute('data-state', 'readonly')
@@ -220,8 +237,139 @@ test('a second tab opens read-only and can take over without losing records', as
   // both records are on disk: a fresh load of the (now writing) second tab shows them
   await page.close()
   await second.reload()
-  await second.waitForSelector('.shell')
+  await second.waitForSelector('.shell[data-ready]')
   await second.keyboard.press('Control+3')
   await expect(second.locator('.pt-list')).toContainText('Zebrafinch')
   await expect(second.locator('.pt-list')).toContainText('Kestrel')
+})
+
+type Bridge = { __radarModules: import('../src/e2eBridge').E2EModules }
+
+test('undo after a tab handover never discards the other tab\'s records', async ({ page, context }) => {
+  await openApp(page)
+  await waitForSaved(page)
+  // tab A takes a rubric into its active case
+  const caseA = await page.evaluate(async () => {
+    const { actions, useApp } = await (window as unknown as Bridge).__radarModules.store()
+    actions.addRubrics(['publicum:120'])
+    const s = useApp.getState()
+    return { consultation: s.activeConsultationId!, patient: s.consultations[s.activeConsultationId!].patientId }
+  })
+  await waitForSaved(page)
+
+  // tab B takes over, edits another patient and consultation and creates a patient
+  const second = await context.newPage()
+  await second.goto('/')
+  await second.waitForSelector('.shell[data-ready]')
+  await second.locator('.app-instance-banner').getByRole('button', { name: 'Edit in this tab' }).click()
+  await expect(second.locator('.app-instance-banner')).toHaveCount(0)
+  await expect(page.locator('.app-instance-banner')).toBeVisible()
+  const other = await second.evaluate(async (a) => {
+    const { actions, useApp } = await (window as unknown as Bridge).__radarModules.store()
+    const s = useApp.getState()
+    const c = Object.values(s.consultations).find(x => x.patientId !== a.patient)!
+    const rx = c.prescriptions.length + 1
+    actions.updatePatient(c.patientId, { notes: 'Notes written in tab B' })
+    actions.updateConsultation(c.id, { notes: 'Consultation notes from tab B' })
+    actions.addPrescription(c.id, { remedyId: 945, potency: '200C', dosage: 'once', date: '2026-09-30', note: 'from tab B' })
+    actions.createPatient({ lastName: 'Kestrel', firstName: 'Bea' })
+    return { patient: c.patientId, consultation: c.id, rx }
+  }, caseA)
+  await waitForSaved(second)
+
+  // tab A takes back over and undoes its take: B's records survive, in memory and on disk
+  await page.bringToFront()
+  await page.locator('.app-instance-banner').getByRole('button', { name: 'Edit in this tab' }).click()
+  await expect(page.locator('.app-instance-banner')).toHaveCount(0)
+  const check = () => page.evaluate(async ({ a, o }) => {
+    const { useApp } = await (window as unknown as Bridge).__radarModules.store()
+    const s = useApp.getState()
+    return {
+      notes: s.patients[o.patient]?.notes, cNotes: s.consultations[o.consultation]?.notes, rx: s.consultations[o.consultation]?.prescriptions.length,
+      kestrel: Object.values(s.patients).some(p => p.lastName === 'Kestrel'),
+      taken: s.consultations[a.consultation].clipboards.some(cb => cb.symptoms.some(x => x.rubrics.includes('publicum:120'))),
+      past: s.past.map(e => e.label),
+    }
+  }, { a: caseA, o: other })
+  await expect.poll(async () => (await check()).kestrel).toBe(true)
+  expect((await check()).past).toContain('Take rubric')
+  await page.keyboard.press('Control+z')
+  await expect(page.locator('.toast').filter({ hasText: 'Undone: Take rubric' })).toBeVisible()
+  const after = await check()
+  expect(after).toMatchObject({ notes: 'Notes written in tab B', cNotes: 'Consultation notes from tab B', rx: other.rx, kestrel: true, taken: false })
+  await waitForSaved(page)
+  // B's prescription is shown in A's patient file
+  await page.evaluate(async (o) => {
+    const { actions } = await (window as unknown as Bridge).__radarModules.store()
+    actions.openTab({ kind: 'patient', patientId: o.patient, consultationId: o.consultation })
+  }, other)
+  await expect(page.locator('.shell')).toContainText('Consultation notes from tab B')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/undo-after-handover.png` })
+  await second.close()
+  await page.reload()
+  await page.waitForSelector('.shell[data-ready]')
+  const reloaded = await check()
+  expect(reloaded).toMatchObject({ notes: 'Notes written in tab B', cNotes: 'Consultation notes from tab B', rx: other.rx, kestrel: true, taken: false })
+})
+
+test('a corrupt patient record keeps its consultations, backs up the raw data and offers the raw export', async ({ page }) => {
+  await openApp(page)
+  await waitForSaved(page) // a pending first-run save would overwrite the raw data on pagehide
+  const ws = { version: 2, ...legacyState(), patients: undefined, consultations: undefined, tabs: [{ id: 't0', kind: 'patients' }], activeTabId: 't0' }
+  await writeRaw(page, { workspace: ws, 'p:p1': 'corrupt-bytes', 'c:c1': consultation({ notes: 'Precious notes' }), 'c:junk': 17 })
+  await page.reload()
+  await page.waitForSelector('.shell[data-ready]')
+  const toast = page.locator('.toast').filter({ hasText: 'repaired' })
+  await expect(toast).toBeVisible()
+  await expect(page.locator('.pt-list')).toContainText('Recovered patient')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/recovered-patient.png` })
+  const download = page.waitForEvent('download')
+  await toast.getByRole('button', { name: 'Export raw data' }).click()
+  const file = await download
+  expect(file.suggestedFilename()).toMatch(/^radar-opus-raw-.*\.json$/)
+  await waitForSaved(page)
+  const keys = await readKeys(page)
+  expect(keys).toContain('c:c1')
+  expect(keys).toContain('p:p1')
+  expect(keys).not.toContain('c:junk')
+  const backup = keys.find(k => k.startsWith('backup:before-repair:'))
+  expect(backup).toBeDefined()
+  const saved = await page.evaluate((key) => new Promise<{ entries: Record<string, unknown> }>(res => {
+    const r = indexedDB.open('radar-opus')
+    r.onsuccess = () => { const q = r.result.transaction('workspace').objectStore('workspace').get(key); q.onsuccess = () => { res(q.result); r.result.close() } }
+  }), backup!)
+  expect(saved.entries['p:p1']).toBe('corrupt-bytes')
+  expect(saved.entries['c:junk']).toBe(17)
+  // the consultation itself is intact
+  await page.reload()
+  await page.waitForSelector('.shell[data-ready]')
+  await expect(page.locator('.toast').filter({ hasText: 'repaired' })).toHaveCount(0)
+  const notes = await page.evaluate(async () => (await (window as unknown as Bridge).__radarModules.store()).useApp.getState().consultations.c1?.notes)
+  expect(notes).toBe('Precious notes')
+})
+
+test('an unknown saved strategy falls back to the default and the label matches the ranking', async ({ page }) => {
+  await openApp(page)
+  await waitForSaved(page) // a pending first-run save would overwrite the raw data on pagehide
+  const ws = { version: 2, ...legacyState(), patients: undefined, consultations: undefined, tabs: [{ id: 'ta', kind: 'analysis', consultationId: 'c1' }], activeTabId: 'ta' }
+  const sym = (id: string, rubric: string, weight: unknown) => ({ id, rubrics: [rubric], combine: 'union', weight, eliminatory: false, exclusive: false, group: null, causal: false, addedAt: 1 })
+  await writeRaw(page, {
+    workspace: ws, 'p:p1': patient,
+    'c:c1': consultation({
+      clipboards: [{ id: 'cb1', name: 'Clipboard 1', color: '#2f6fdb', symptoms: [sym('s1', 'publicum:120', '3'), sym('s2', 'publicum:5000', 'heavy')] }],
+      analysis: { strategy: 'magic-strategy', clipboardIds: ['cb1'], remedyFilter: null, excludedRemedies: [], minCoverage: 0, limit: 30, params: { smallRubrics: { threshold: 'x' } } },
+    }),
+  })
+  await page.reload()
+  await page.waitForSelector('.shell[data-ready]')
+  await expect(page.locator('.toast').filter({ hasText: 'repaired' })).toBeVisible()
+  const st = await page.evaluate(async () => {
+    const s = (await (window as unknown as Bridge).__radarModules.store()).useApp.getState()
+    return { strategy: s.consultations.c1.analysis.strategy, params: s.consultations.c1.analysis.params ?? null, weights: s.consultations.c1.clipboards[0].symptoms.map(x => x.weight) }
+  })
+  expect(st).toEqual({ strategy: 'sum-symptoms-degrees', params: null, weights: [3, 1] })
+  // the analysis names the strategy that ranks
+  await expect(page.getByRole('button', { name: 'Analysis method: Sum of symptoms (sort degrees)' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('.shell')).not.toContainText('magic-strategy')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/strategy-fallback.png` })
 })

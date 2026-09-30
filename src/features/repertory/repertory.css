@@ -55,9 +55,11 @@
   background: color-mix(in srgb, var(--warning) 12%, var(--bg-elev)); color: var(--text-2);
 }
 .rv-hlbar > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-hl-keys { flex: none; display: flex; align-items: center; gap: 4px; color: var(--text-3); font-size: var(--fs-xs); white-space: nowrap; }
+.rv-hl-keys .kbd + .kbd, .rv-hl-keys .kbd:not(:first-child) { margin-left: 6px; }
 .rv-hl-chip { padding: 0 6px; border-radius: 3px; background: color-mix(in srgb, var(--warning) 35%, transparent); color: var(--text); font-weight: 700; }
 
-.rv-scroll { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; position: relative; outline: none; contain: strict; }
+.rv-scroll { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; position: relative; outline: none; contain: strict; background: var(--bg-elev); }
 .rv-bodywrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .rv-runhead {
   position: absolute; top: 0; left: 0; right: 10px; z-index: 5; display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 10px 0 40px;
@@ -66,14 +68,18 @@
 }
 .rv-runhead button { border: 0; background: transparent; padding: 2px 3px; border-radius: 3px; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; }
 .rv-runhead button:hover { color: var(--accent); background: var(--bg-hover); }
-.rv-scroll:not(:focus) .rv-row.rv-current { background: var(--bg-active); box-shadow: inset 3px 0 0 var(--border-strong); }
+.rv-scroll:not(:focus) .rv-row.rv-current { background: var(--sel-weak); box-shadow: inset 3px 0 0 var(--border-strong); }
 .rv-canvas { position: relative; width: 100%; font-family: var(--font-book); font-size: calc(var(--fs) + 0.5px); line-height: 1.5; }
-.rv-row {
-  position: absolute; left: 0; right: 0; top: 0; display: flex; padding: 1px 16px 1px 0;
-  color: var(--text); cursor: default; will-change: transform;
+/* the rendered rows, in normal flow, moved as one block to the top of the first of them */
+.rv-win {
+  position: absolute; left: 0; right: 0; top: 0;
+  --rv-hl-bg: color-mix(in srgb, var(--warning) 35%, transparent); --rv-hl-ring: color-mix(in srgb, var(--warning) 70%, transparent);
 }
+/* each row is its own layout and paint island: a row that changes never relayouts its neighbours */
+.rv-row { position: relative; display: flex; padding: 1px 16px 1px 0; color: var(--text); cursor: default; contain: layout paint style; }
 .rv-row:hover { background: color-mix(in srgb, var(--bg-hover) 60%, transparent); }
-.rv-row.rv-current { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+/* the current row: an accent bar and a weak fill, so grade-2 blue italics keep their contrast */
+.rv-row.rv-current { background: var(--sel-weak); box-shadow: inset 3px 0 0 var(--accent); }
 .rv-gutter { flex: none; width: 40px; display: flex; align-items: flex-start; justify-content: flex-end; gap: 2px; padding: 4px 4px 0 0; color: var(--text-3); }
 .rv-hand { color: var(--accent); transform: rotate(90deg); margin-right: auto; margin-left: 5px; }
 .rv-mark-bm { color: var(--warning); fill: currentColor; }
@@ -81,7 +87,6 @@
 .rv-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 /* a remedy never splits across lines (abbreviation or full name): lines break between remedies */
 .rv-rem { white-space: nowrap; }
-.rv-sr { user-select: none; }
 .rv-text { font-weight: 400; }
 .rv-main .rv-text { font-weight: 700; color: var(--g2); font-variant: small-caps; letter-spacing: .01em; font-size: 1.04em; }
 .rv-main { padding-top: 5px; }
@@ -94,7 +99,7 @@
 .rv-rems::before { content: ":"; margin-right: 5px; color: var(--text-3); }
 .rv-rem { border-radius: 2px; padding: 0 1px; cursor: pointer; }
 .rv-rem:hover { background: var(--bg-hover); text-decoration: underline; text-decoration-color: var(--border-strong); }
-.rv-rem.rv-hl { background: color-mix(in srgb, var(--warning) 35%, transparent); outline: 1px solid color-mix(in srgb, var(--warning) 70%, transparent); }
+.rv-count-zero { background: transparent; box-shadow: inset 0 0 0 1px var(--border); color: var(--text-3); font-weight: 500; }
 .rv-names .rv-rem.g4 { letter-spacing: 0; }
 .rv-hidden { margin-left: 6px; font: 500 10.5px var(--font-ui); color: var(--text-3); white-space: nowrap; }
 /* clipboard membership: a coloured square with the clipboard number before the rubric text (a
@@ -121,7 +126,7 @@
 .rv-foot-btn:hover { background: var(--bg-hover); }
 
 .rv-tip {
-  position: fixed; z-index: 1200; display: grid; gap: 1px; padding: 6px 9px; max-width: 320px; pointer-events: none;
+  position: fixed; z-index: var(--z-tooltip); display: grid; gap: 1px; padding: 6px 9px; max-width: 320px; pointer-events: none;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow-2); font-size: var(--fs-sm);
   animation: fade .1s ease-out;
 }
@@ -182,9 +187,13 @@
   font-size: var(--fs-sm); color: var(--text); white-space: nowrap; cursor: default;
 }
 .rnav-row:hover { background: var(--bg-hover); }
-.rnav-row.chapter { font-weight: 600; }
+.rnav-row.chapter { font-weight: 500; }
+/* only the chapter being read stands out */
+.rnav-row.chapter.current-chapter { font-weight: 700; }
 .rnav-row.current { background: var(--bg-selected); }
-.rnav-tree:focus .rnav-row.cursor { box-shadow: inset 0 0 0 1px var(--focus); }
+/* keyboard cursor: a 2px ring, darkened (light theme) or lightened (dark theme) towards the text
+   colour so it keeps at least 3:1 against the selection fill it usually sits on */
+.rnav-tree:focus .rnav-row.cursor { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--focus) 72%, var(--text)); }
 .rnav-row.menu-target, .rnav-tree:focus .rnav-row.menu-target { box-shadow: inset 0 0 0 1px var(--accent), inset 3px 0 0 var(--accent); background: var(--accent-soft); }
 .rnav-twist { flex: none; width: 16px; height: 16px; display: grid; place-items: center; color: var(--text-3); border-radius: 3px; }
 .rnav-twist:hover { background: var(--bg-active); color: var(--text); }
@@ -243,7 +252,7 @@
 .rfind-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rfind-count { font-size: 10.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .rfind-kids { width: 48px; display: inline-flex; justify-content: flex-end; align-items: center; font-size: 10.5px; color: var(--text-3); }
-.rfind-row.active .rfind-count, .rfind-row.active .rfind-kids { color: rgba(255, 255, 255, .8); }
+.rfind-row.active .rfind-count, .rfind-row.active .rfind-kids { color: var(--on-accent); }
 .rfind-empty, .rfind-loading { padding: 16px; color: var(--text-3); font-size: var(--fs-sm); }
 /* no match: the results area collapses to the message and one actionable row */
 .rfind-none { display: grid; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev); }
@@ -280,7 +289,8 @@
 /* ───────── note (rnote-) ───────── */
 .rnote-rubric { font-family: var(--font-book); font-weight: 600; }
 .rnote-text { width: 100%; }
-.rnote-keys { opacity: .75; font-size: var(--fs-xs); margin-left: 4px; }
+/* the shortcut inside the primary button: full --on-accent colour (a faded one fails AA at 11px), set apart by weight */
+.rnote-keys { font-weight: 400; font-size: var(--fs-xs); margin-left: 4px; }
 
 /* ───────── bookmarks manager (rbm-) ───────── */
 .rbm { display: grid; grid-template-columns: 200px 1fr; gap: 12px; height: 420px; }
@@ -356,3 +366,7 @@
 .clip-chip.drop { box-shadow: 0 0 0 2px var(--bg-elev), 0 0 0 4px var(--chip); }
 .rnav-link.current { background: var(--bg-selected); font-weight: 500; }
 .rv-runhead-cont { text-transform: none; letter-spacing: 0; font-weight: 500; font-style: italic; margin-left: 4px; }
+.rtake-already {
+  padding: 5px 8px; border-radius: var(--radius); font-size: var(--fs-sm); color: var(--text);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-elev)); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+}

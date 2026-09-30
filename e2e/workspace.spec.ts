@@ -59,7 +59,7 @@ test('settings: tabs, live changes and keyboard toggle', async ({ page }) => {
   // settings persist across reloads
   await waitForSaved(page)
   await page.reload()
-  await page.waitForSelector('.shell')
+  await page.waitForSelector('.shell[data-ready]')
   await expect(html(page)).toHaveAttribute('data-theme', 'light')
   await expect(html(page)).toHaveAttribute('data-density', 'comfortable')
 })
@@ -167,7 +167,7 @@ test('welcome tour: shows once on first run, keyboard driven', async ({ page }) 
   expect(await page.evaluate(() => localStorage.getItem('radar-opus.welcome.v1'))).toBe('done')
 
   await page.reload()
-  await page.waitForSelector('.shell')
+  await page.waitForSelector('.shell[data-ready]')
   // the first-run tour starts 700 ms after the shell mounts; give it that long before checking it stayed away
   const mounted = await page.evaluate(() => performance.now())
   await page.waitForFunction(t => performance.now() - t > 1000, mounted)
@@ -272,7 +272,7 @@ test('data: storage estimate and reset demo data', async ({ page }) => {
   await dlg.getByRole('button', { name: 'Reset demo data…' }).click()
   await waitForSaved(page) // autosave has stored the dark theme, so the reset really erases it
   await Promise.all([page.waitForEvent('load'), dlg.getByRole('button', { name: 'Erase and reload' }).click()])
-  await page.waitForSelector('.shell')
+  await page.waitForSelector('.shell[data-ready]')
   await expect(html(page)).not.toHaveAttribute('data-theme', 'dark')
   await expect(page.getByRole('dialog', { name: 'Settings' })).toBeHidden()
 })
@@ -325,4 +325,44 @@ test('book re-flows when the document width changes', async ({ page }) => {
   expect(await page.locator('.rv-row').first().evaluate(el => getComputedStyle(el).position)).toBe('static')
   await page.emulateMedia({ media: 'screen' })
   await expect.poll(overlaps).toBe(0)
+})
+
+test('shortcuts reference: merged zoom row, scoped print, no duplicate keys', async ({ page }) => {
+  const errors: string[] = []
+  page.on('console', m => { if (m.type() === 'error' && /same key/.test(m.text())) errors.push(m.text()) })
+  await openApp(page)
+  await page.keyboard.press('F1')
+  const dlg = page.getByRole('dialog', { name: 'Keyboard shortcuts' })
+  const browser = dlg.locator('.ws-sc-ref-browser')
+  await expect(browser.locator('li', { hasText: 'Zoom in' })).toHaveCount(1)
+  await expect(browser.locator('li', { hasText: 'Zoom in' }).locator('kbd')).toHaveCount(2)
+  await expect(dlg.getByRole('button', { name: /Print monograph in the materia medica/ })).toBeVisible()
+  await expect(dlg.locator('.ws-sc-ref-repertory')).toContainText('Type letters to open the chapter chooser')
+  expect(errors).toEqual([])
+  await page.keyboard.press('Escape')
+  // settings theme segmented control uses the shared accent-tint style
+  await page.keyboard.press('Control+Comma')
+  const theme = page.getByRole('dialog', { name: 'Settings' }).getByRole('radiogroup', { name: 'Theme' })
+  await expect(theme).toHaveClass(/\bseg\b/)
+  await expect(theme.getByRole('radio', { checked: true })).toHaveClass(/\bseg-btn\b/)
+})
+
+test('welcome tour step dots are not tabs', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => false }))
+  await openApp(page)
+  await expect(page.locator('.ws-tour-dots')).toBeVisible({ timeout: 5000 })
+  await expect(page.locator('.ws-tour-dots [role="tab"]')).toHaveCount(0)
+  await expect(page.locator('.ws-tour-dot[aria-current="step"]')).toHaveAttribute('aria-label', /^Step 1 of \d+/)
+})
+
+test('settings reflow at 200% zoom (720×450): the text size reset stays inside the panel', async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 450 })
+  await openApp(page)
+  await page.keyboard.press('Control+Comma')
+  const reset = page.getByRole('button', { name: 'Reset text size' })
+  await reset.scrollIntoViewIfNeeded()
+  const panel = await page.locator('.ws-settings-panel').boundingBox()
+  const box = await reset.boundingBox()
+  expect(box!.x + box!.width).toBeLessThanOrEqual(panel!.x + panel!.width - 8)
+  expect(await page.locator('.ws-settings-panel').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
 })

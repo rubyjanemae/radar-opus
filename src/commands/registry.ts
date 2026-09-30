@@ -1,4 +1,5 @@
 import { actions } from '../state/store'
+import { activeModal } from '../ui/modal'
 
 /**
  * Every user action lives here once. Menus, the command palette, context menus
@@ -28,6 +29,11 @@ export interface Command {
   keywords?: string
   /** Human label for `scope` in the shortcuts reference ("in the clipboard list"). */
   scopeLabel?: string
+  /**
+   * CSS selector of the modal overlays in which the shortcut still fires (e.g. the palette's own toggle).
+   * While any other modal is open (a dialog, the palette, the tour) global shortcuts are suppressed.
+   */
+  inModal?: string
 }
 
 const commands = new Map<string, Command>()
@@ -89,13 +95,25 @@ export function normaliseChord(chord: string): string {
   return chord
 }
 
+/**
+ * The key an Alt/Option chord names. On macOS Option changes the character (Option+W types '∑',
+ * Option+N is a dead key), so a letter or digit is read from the physical key (`e.code`) whenever
+ * `e.key` is not already a plain ASCII letter or digit.
+ */
+function altKeyName(e: KeyboardEvent): string | null {
+  const code = e.code ?? ''
+  if (/^[A-Za-z0-9]$/.test(e.key)) return null
+  const m = /^Key([A-Z])$/.exec(code) ?? /^Digit([0-9])$/.exec(code)
+  return m ? m[1] : null
+}
+
 /** Normalise a KeyboardEvent to "Mod+Shift+Alt+Key". */
 export function eventToKeys(e: KeyboardEvent): string {
   const parts: string[] = []
   if (isMac ? e.metaKey : e.ctrlKey) parts.push('Mod')
   if (isMac && e.ctrlKey) parts.push('Ctrl')
   if (e.altKey) parts.push('Alt')
-  let k = e.key
+  let k = (e.altKey && altKeyName(e)) || e.key
   if (k === ' ') k = 'Space'
   else if (k.length === 1) k = k.toUpperCase()
   // shifted punctuation ("+" on Shift+=, "?" on Shift+/) is matched by the character alone
@@ -111,7 +129,6 @@ export function eventToKeys(e: KeyboardEvent): string {
 export const BROWSER_RESERVED: ReadonlySet<string> = new Set([
   'Mod+W', 'Mod+Shift+W', 'Mod+T', 'Mod+Shift+T', 'Mod+N', 'Mod+Shift+N', 'Mod+Q',
   'Mod+Tab', 'Mod+Shift+Tab', 'Ctrl+Tab', 'Ctrl+Shift+Tab', 'Mod+PageUp', 'Mod+PageDown', 'Mod+Shift+PageUp', 'Mod+Shift+PageDown',
-  'Mod+1', 'Mod+2', 'Mod+3', 'Mod+4', 'Mod+5', 'Mod+6', 'Mod+7', 'Mod+8', 'Mod+9',
   'Mod+Shift+P',
 ])
 
@@ -145,9 +162,63 @@ export function formatKeys(keys: string): string {
   }).join(isMac ? '' : '+')
 }
 
+/** A chord in `aria-keyshortcuts` syntax ("Control+Shift+K", "Alt+W", "Meta+K" on the Mac, "Control+Plus"). */
+export function ariaKeyShortcut(chord: string): string {
+  return splitChord(chord).map(p => {
+    if (p === 'Mod') return isMac ? 'Meta' : 'Control'
+    if (p === 'Ctrl') return 'Control'
+    if (p === '+') return 'Plus'
+    if (p === 'Space') return 'Space'
+    return p
+  }).join('+')
+}
+
 function inEditable(t: EventTarget | null) {
   const el = t as HTMLElement | null
   return !!el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))
+}
+
+const hasModifier = (combo: string) => /^(Mod|Ctrl|Alt)\+/.test(combo)
+const isFunctionKey = (combo: string) => /(^|\+)F\d{1,2}$/.test(combo)
+
+/**
+ * Chords whose browser default is navigation or browser UI, never text editing: Back/Forward
+ * (Alt+←/→), find (F3), reload (F5), switch browser tab (Mod+1..9), bookmark (Mod+D), print, save, the profile menu (Mod+Shift+M)…
+ * When the app binds one of them the browser never gets it, even while typing or in a dialog.
+ */
+export function isBrowserActionChord(combo: string): boolean {
+  if (isFunctionKey(combo)) return true
+  if (/^Alt\+(Shift\+)?(ArrowLeft|ArrowRight|Home)$/.test(combo)) return true
+  if (/^Mod\+[1-9]$/.test(combo)) return true // the browser's own tab switching
+  return /^Mod\+(Shift\+)?(D|E|F|G|H|J|K|L|O|P|S|U)$/.test(combo) || combo === 'Mod+Shift+M' || combo === 'Mod+Shift+B'
+}
+
+/**
+ * Whether a bound chord is kept from the browser when no command runs for it (disabled, out of scope,
+ * or suppressed by a modal). Outside text fields any modifier chord or function key the app binds is
+ * the app's; inside a text field only browser-action chords are, so native editing keys keep working.
+ */
+export function claimsChord(combo: string, editing: boolean): boolean {
+  return editing ? isBrowserActionChord(combo) : hasModifier(combo) || isFunctionKey(combo)
+}
+
+/** The command a key event runs, or null. Exported for tests. */
+export function commandForEvent(e: KeyboardEvent, combo = eventToKeys(e)): Command | null {
+  const editing = inEditable(e.target)
+  const modal = activeModal()
+  // Scoped commands (bound to a view) win over global ones with the same key when focus is inside their scope.
+  for (const scoped of [true, false]) {
+    for (const c of commands.values()) {
+      if (!!c.scope !== scoped || !c.keys?.includes(combo)) continue
+      // a modal dialog is modal: only the shortcuts it declares for itself get through
+      if (modal && !(c.inModal && modal.matches(c.inModal))) continue
+      if (editing && !c.allowInInput) continue
+      if (c.scope && !(e.target instanceof Element && e.target.closest(c.scope))) continue
+      if (!isEnabled(c)) continue
+      return c
+    }
+  }
+  return null
 }
 
 /** Global shortcut dispatcher; install once. */
@@ -155,19 +226,17 @@ export function installKeybindings(): () => void {
   const onKey = (e: KeyboardEvent) => {
     if (e.defaultPrevented) return
     const combo = eventToKeys(e)
-    const editing = inEditable(e.target)
-    // Scoped commands (bound to a view) win over global ones with the same key when focus is inside their scope.
-    for (const scoped of [true, false]) {
-      for (const c of commands.values()) {
-        if (!!c.scope !== scoped || !c.keys?.includes(combo)) continue
-        if (editing && !c.allowInInput) continue
-        if (c.scope && !(e.target instanceof Element && e.target.closest(c.scope))) continue
-        if (!isEnabled(c)) continue
-        e.preventDefault()
-        void execute(c)
-        return
-      }
+    let bound = false
+    for (const c of commands.values()) if (c.keys?.includes(combo)) { bound = true; break }
+    if (!bound) return
+    const c = commandForEvent(e, combo)
+    if (c) {
+      e.preventDefault()
+      void execute(c)
+      return
     }
+    // a key the app claims never falls through to the browser (Alt+← must not go Back)
+    if (claimsChord(combo, inEditable(e.target))) e.preventDefault()
   }
   window.addEventListener('keydown', onKey)
   return () => window.removeEventListener('keydown', onKey)

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { actions, onTabClosed, selectActiveClipboard, selectActiveConsultation, useApp } from './store'
+import { actions, combinedFlags, onTabClosed, pruneHistory, sameValue, selectActiveClipboard, selectActiveConsultation, symptomEditLabel, useApp } from './store'
 import type { Tab } from './workspace'
 
 const st = () => useApp.getState()
@@ -51,8 +51,10 @@ describe('undo covers case actions', () => {
       expect(st().past).toHaveLength(1)
       expect(st().consultations === before.consultations && st().patients === before.patients).toBe(false)
       actions.undo()
-      expect(st().patients).toBe(before.patients)
-      expect(st().consultations).toBe(before.consultations)
+      expect(st().patients).toEqual(before.patients)
+      expect(st().consultations).toEqual(before.consultations)
+      // records the step did not touch keep their objects
+      for (const [id, c] of Object.entries(st().consultations)) if (sameValue(c, before.consultations[id])) expect(c).toBe(before.consultations[id])
       actions.redo()
       expect(st().consultations === before.consultations && st().patients === before.patients).toBe(false)
       expect(st().past).toHaveLength(1)
@@ -85,8 +87,8 @@ describe('transaction', () => {
     expect(st().past).toHaveLength(1)
     expect(st().past[0].label).toBe('Take rubric')
     actions.undo()
-    expect(st().patients).toBe(before.patients)
-    expect(st().consultations).toBe(before.consultations)
+    expect(st().patients).toEqual(before.patients)
+    expect(st().consultations).toEqual(before.consultations)
     expect(st().activeConsultationId).toBeNull()
     expect(st().past).toHaveLength(0)
   })
@@ -101,7 +103,7 @@ describe('transaction', () => {
     expect(st().past).toHaveLength(1)
     expect(st().past[0].label).toBe('Take symptom')
     actions.undo()
-    expect(st().consultations).toBe(before)
+    expect(st().consultations).toEqual(before)
   })
 
   it('nests, returns the value, and records nothing when nothing changed', () => {
@@ -212,15 +214,30 @@ describe('symptom structure', () => {
     expect(clipboard().symptoms.at(-1)!.id).toBe(id)
   })
 
-  it('combine inherits the first part label, exclusion and group', () => {
+  it('combine inherits the first part label and group, and the highest weight', () => {
     withCase()
     const [a, b] = clipboard().symptoms
-    actions.updateSymptom(clipboard().id, a.id, { label: 'Only A', exclusive: true, group: 'a' })
+    actions.updateSymptom(clipboard().id, a.id, { label: 'Only A', group: 'a' })
     actions.updateSymptom(clipboard().id, b.id, { label: 'B', group: 'b', weight: 3 })
     actions.combineSymptoms(clipboard().id, [a.id, b.id], 'intersection')
     const merged = clipboard().symptoms[0]
     expect(merged.rubrics).toEqual(['r:1', 'r:2'])
-    expect(merged).toMatchObject({ combine: 'intersection', exclusive: true, group: 'a', weight: 3, label: 'Only A' })
+    expect(merged).toMatchObject({ combine: 'intersection', group: 'a', weight: 3, label: 'Only A', eliminatory: false, exclusive: false })
+  })
+
+  it.each([
+    ['all excluding: excluding', [{ exclusive: true }, { exclusive: true }], { eliminatory: false, exclusive: true }],
+    ['one excluding, one plain: plain', [{ exclusive: true }, {}], { eliminatory: false, exclusive: false }],
+    ['one excluding, one eliminative: eliminative', [{ exclusive: true }, { eliminatory: true }], { eliminatory: true, exclusive: false }],
+    ['one eliminative, one plain: eliminative', [{ eliminatory: true }, {}], { eliminatory: true, exclusive: false }],
+    ['first eliminative, rest excluding: eliminative', [{ eliminatory: true }, { exclusive: true }, { exclusive: true }], { eliminatory: true, exclusive: false }],
+  ] as const)('combine never carries both eliminative and excluding (%s)', (_, flags, expected) => {
+    withCase()
+    const syms = clipboard().symptoms.slice(0, flags.length)
+    syms.forEach((x, i) => actions.updateSymptom(clipboard().id, x.id, { eliminatory: false, exclusive: false, ...flags[i] }))
+    actions.combineSymptoms(clipboard().id, syms.map(x => x.id), 'union')
+    expect(clipboard().symptoms[0]).toMatchObject(expected)
+    expect(combinedFlags(flags.map(f => ({ eliminatory: false, exclusive: false, ...f })))).toEqual(expected)
   })
 
   it('combine of unlabelled parts has no label', () => {
@@ -268,5 +285,72 @@ describe('toasts', () => {
       expect(vi.getTimerCount()).toBe(0)
       expect(id).toBeTruthy()
     } finally { vi.useRealTimers() }
+  })
+})
+
+describe('undo labels name the symptom edit', () => {
+  it.each([
+    [{ weight: 0 }, 1, 'Set intensity 0'],
+    [{ weight: 3 }, 4, 'Set intensity 3 (4 symptoms)'],
+    [{ eliminatory: true, exclusive: false }, 1, 'Mark eliminative'],
+    [{ eliminatory: false }, 1, 'Clear eliminative'],
+    [{ exclusive: true, eliminatory: false }, 1, 'Mark excluding'],
+    [{ exclusive: false }, 2, 'Clear excluding (2 symptoms)'],
+    [{ causal: true }, 1, 'Mark causal'],
+    [{ group: 'b' }, 1, 'Set group B'],
+    [{ group: null }, 1, 'Clear group'],
+    [{ note: 'x' }, 1, 'Edit note'],
+    [{ note: undefined }, 1, 'Remove note'],
+  ] as const)('%o on %i symptom(s) is "%s"', (patch, n, label) => {
+    expect(symptomEditLabel(patch, n)).toBe(label)
+  })
+
+  it('the history entry and the undo toast carry the label', () => {
+    withCase()
+    actions.updateSymptoms(clipboard().id, [clipboard().symptoms[0].id], { weight: 0 })
+    expect(st().past.at(-1)!.label).toBe('Set intensity 0')
+    actions.updateSymptoms(clipboard().id, [clipboard().symptoms[0].id], { eliminatory: true, exclusive: false })
+    expect(st().past.at(-1)!.label).toBe('Mark eliminative')
+    actions.undo()
+    expect(st().toasts.at(-1)!.text).toBe('Undone: Mark eliminative')
+  })
+})
+
+describe('undo is per record', () => {
+  it('undo writes back only the records the step changed', () => {
+    const { pid, cid } = withCase()
+    actions.addRubrics(['r:9'])
+    // another source replaces an unrelated patient and adds a consultation (e.g. adopted from another tab)
+    const other = { ...st().patients[pid], id: 'p-other', lastName: 'Other', notes: 'from B' }
+    useApp.setState(s => ({ patients: { ...s.patients, [other.id]: other } }))
+    actions.undo()
+    expect(st().patients['p-other']).toBe(other)
+    expect(st().consultations[cid].clipboards[0].symptoms.map(x => x.rubrics[0])).toEqual(['r:1', 'r:2', 'r:3'])
+    actions.redo()
+    expect(st().consultations[cid].clipboards[0].symptoms).toHaveLength(4)
+    expect(st().patients['p-other']).toBe(other)
+  })
+
+  it('pruneHistory drops only the steps that touch replaced records', () => {
+    const { pid, cid } = withCase()
+    actions.addRubrics(['r:9'])
+    actions.updatePatient(pid, { notes: 'mine' })
+    expect(st().past).toHaveLength(2)
+    pruneHistory({ patients: [pid], consultations: [] })
+    expect(st().past.map(e => e.label)).toEqual(['Take rubric'])
+    pruneHistory({ patients: [], consultations: [cid] })
+    expect(st().past).toHaveLength(0)
+  })
+})
+
+describe('lastRepertoryTabId', () => {
+  it('records the repertory tab last activated, not other kinds', () => {
+    useApp.setState({ lastRepertoryTabId: null, tabs: [{ id: 'r1', kind: 'repertory' }, { id: 'm1', kind: 'mm' }, { id: 'r2', kind: 'repertory' }] as unknown as Tab[] })
+    actions.activateTab('r2')
+    expect(st().lastRepertoryTabId).toBe('r2')
+    actions.activateTab('m1')
+    expect(st().lastRepertoryTabId).toBe('r2')
+    actions.activateTab('r1')
+    expect(st().lastRepertoryTabId).toBe('r1')
   })
 })

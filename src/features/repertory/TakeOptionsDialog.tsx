@@ -5,7 +5,7 @@ import type { RubricRef } from '../../data/types'
 import type { Weight } from '../../engine/model'
 import { DEFAULT_TAKE, describeTake } from './take'
 import type { TakeOptions } from './take'
-import { refLabel, resolve, subtreeRefs, takeRefs } from './ops'
+import { clipboardTitle, existingSymptom, refLabel, resolve, subtreeRefs, takeRefs } from './ops'
 
 const GROUPS = 'abdefghijklmnopqrtuvwyz'.split('')
 
@@ -15,15 +15,32 @@ export function TakeOptionsDialog({ onClose, refs = [] }: { onClose: () => void;
   const activeCb = useApp(selectActiveClipboard)
   const clipboards = consultation?.clipboards ?? []
   const activeNo = activeCb ? clipboards.findIndex(c => c.id === activeCb.id) + 1 : 1
-  const [o, setO] = useState<TakeOptions>({ ...DEFAULT_TAKE, clipboard: Math.max(1, activeNo) })
-  const set = (p: Partial<TakeOptions>) => setO(x => ({ ...x, ...p }))
   const first = refs[0] ? resolve(refs[0]) : null
   const subCount = first ? subtreeRefs(first.rep, first.index).length - 1 : 0
+  /** The symptom a single rubric (or, with sub-rubrics, its combined set) already has on clipboard n. */
+  const existingOn = (n: number, sub: boolean) => {
+    if (refs.length !== 1) return null
+    const rubrics = sub && first ? subtreeRefs(first.rep, first.index) : refs
+    return existingSymptom(rubrics, n)
+  }
+  /** Prefill from that symptom, so taking again never silently downgrades it. */
+  const prefill = (base: TakeOptions): TakeOptions => {
+    const ex = existingOn(base.clipboard ?? 1, base.subRubrics)
+    if (!ex) return base
+    const x = ex.symptom
+    return { ...base, weight: x.weight, eliminatory: !!x.eliminatory, exclusive: !!x.exclusive, causal: !!x.causal, group: x.group ?? null }
+  }
+  const [o, setO] = useState<TakeOptions>(() => prefill({ ...DEFAULT_TAKE, clipboard: Math.max(1, activeNo) }))
+  const set = (p: Partial<TakeOptions>) => setO(x => ({ ...x, ...p }))
+  /** Another target clipboard (or the sub-rubrics switch) can hold its own copy of the symptom. */
+  const retarget = (p: Partial<TakeOptions>) => setO(x => prefill({ ...x, ...p }))
+  const already = existingOn(o.clipboard ?? 1, o.subRubrics)
 
   const submit = () => {
     if (!refs.length) return
     onClose()
-    takeRefs(refs, o)
+    // everything in the dialog was chosen: the intensity and qualifications replace the symptom's
+    takeRefs(refs, { ...o, weightSet: true, replace: true })
   }
 
   return (
@@ -32,7 +49,7 @@ export function TakeOptionsDialog({ onClose, refs = [] }: { onClose: () => void;
       footer={<>
         <span className="rtake-summary">{describeTake(o)}</span>
         <button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={submit} disabled={!refs.length}>Take</button>
+        <button className="btn btn-primary" onClick={submit} disabled={!refs.length}>{already ? 'Update' : 'Take'}</button>
       </>}
     >
       <form
@@ -48,6 +65,11 @@ export function TakeOptionsDialog({ onClose, refs = [] }: { onClose: () => void;
           {refs.length === 1 ? refLabel(refs[0]) : `${refs.length} rubrics`}
           {first && <span className="rtake-count">{first.rep.remedyCount(first.index)} remedies</span>}
         </div>
+        {already && (
+          <div className="rtake-already" role="status">
+            Already in {clipboardTitle(already.n, already.name)}: its intensity, qualifications and group are shown; taking again updates them.
+          </div>
+        )}
         <div className="rtake-sec">
           <div className="rtake-label" id="rtake-w-label">Intensity</div>
           <div className="rtake-weights rseg" role="radiogroup" aria-labelledby="rtake-w-label">
@@ -65,7 +87,7 @@ export function TakeOptionsDialog({ onClose, refs = [] }: { onClose: () => void;
           <label><input type="checkbox" checked={o.exclusive} onChange={e => set({ exclusive: e.target.checked, eliminatory: e.target.checked ? false : o.eliminatory })} /> Excluding <small>remedies in this rubric are removed</small></label>
           <label><input type="checkbox" checked={o.causal} onChange={e => set({ causal: e.target.checked })} /> Causal <small>causation / never well since</small></label>
           <label className={subCount < 1 ? 'disabled' : ''}>
-            <input type="checkbox" checked={o.subRubrics} disabled={subCount < 1} onChange={e => set({ subRubrics: e.target.checked })} /> With sub-rubrics
+            <input type="checkbox" checked={o.subRubrics} disabled={subCount < 1} onChange={e => retarget({ subRubrics: e.target.checked })} /> With sub-rubrics
             <small>{subCount > 0 ? `combine with ${subCount} sub-rubric${subCount === 1 ? '' : 's'}` : 'no sub-rubrics with remedies'}</small>
           </label>
         </div>
@@ -77,7 +99,7 @@ export function TakeOptionsDialog({ onClose, refs = [] }: { onClose: () => void;
             </select>
           </label>
           <label className="field">Clipboard
-            <select className="select" value={o.clipboard ?? 1} onChange={e => set({ clipboard: Number(e.target.value) })}>
+            <select className="select" value={o.clipboard ?? 1} onChange={e => retarget({ clipboard: Number(e.target.value) })}>
               {clipboards.length === 0 && <option value={1}>Clipboard 1 (new unsaved case)</option>}
               {clipboards.map((cb, n) => <option key={cb.id} value={n + 1}>{n + 1} · {cb.name} ({cb.symptoms.length})</option>)}
               {clipboards.length > 0 && clipboards.length < MAX_CLIPBOARDS && <option value={clipboards.length + 1}>{clipboards.length + 1} · New clipboard</option>}

@@ -2,9 +2,7 @@ import type { Catalog } from '../../data/catalog'
 import type { Command } from '../../commands/registry'
 import { registerCommands } from '../../commands/registry'
 import { STRATEGIES } from '../../engine/analysis'
-import { registerDialog } from '../../shell/dialogs'
-import type { DialogComponent } from '../../shell/dialogs'
-import { CompareDialog, RemedyFilterDialog } from './dialogs'
+import { registerLazyDialog } from '../../shell/dialogs'
 import * as ops from './ops'
 
 const hasTarget = () => ops.targetConsultationId() !== null
@@ -13,8 +11,8 @@ const VIEW_SCOPE = '.an-view'
 
 export function register(catalog: Catalog) {
   ops.setAnalysisCatalog(catalog)
-  registerDialog(ops.REMEDY_FILTER_DIALOG, RemedyFilterDialog as unknown as DialogComponent)
-  registerDialog(ops.COMPARE_DIALOG, CompareDialog as unknown as DialogComponent)
+  registerLazyDialog(ops.REMEDY_FILTER_DIALOG, () => import('./dialogs'), m => m.RemedyFilterDialog)
+  registerLazyDialog(ops.COMPARE_DIALOG, () => import('./dialogs'), m => m.CompareDialog)
 
   const cmds: Command[] = [
     { id: 'analysis.open', title: 'Analyse case', category: 'Analysis', keys: ['F8'], allowInInput: true, keywords: 'analysis repertorisation result grid', run: () => ops.openAnalysis() },
@@ -24,9 +22,7 @@ export function register(catalog: Catalog) {
     })),
     { id: 'analysis.intensity', title: 'Use symptom intensity', category: 'Analysis', keywords: 'weight', enabled: hasTarget, checked: () => ops.targetOptions()?.useIntensity !== false, run: () => ops.toggleIntensity() },
     { id: 'analysis.showExcluded', title: 'Show excluded remedies in position', category: 'Analysis', keywords: 'greyed eliminated', enabled: hasTarget, checked: () => !!ops.targetOptions()?.showExcluded, run: () => ops.toggleShowExcluded() },
-    // Alias kept for the brief and the toolbar: the family filter when that feature is present
-    // (listed as families.filter), else the remedy picker below. Hidden so the palette has one entry.
-    { id: 'analysis.filter', title: 'Filter analysis…', category: 'Analysis', hidden: true, enabled: hasTarget, run: () => ops.openFilter() },
+    { id: 'analysis.params', title: 'Strategy parameters…', category: 'Analysis', keywords: 'advanced settings threshold factor kent weights polarity prominence reset defaults', enabled: inAnalysis, run: () => ops.toggleParams() },
     { id: 'analysis.remedies', title: 'Include / exclude remedies…', category: 'Analysis', keywords: 'filter limit exclude highlight minimum coverage symptoms already given', enabled: hasTarget, run: () => ops.openRemedyFilter() },
     { id: 'analysis.clearFilter', title: 'Remove all remedy filters', category: 'Analysis', keywords: 'family limit highlight exclude minimum coverage clear reset', enabled: () => ops.hasFilter(), run: () => ops.clearFilter() },
     { id: 'analysis.compare', title: 'Compare remedies…', category: 'Analysis', keywords: 'extract side by side', enabled: hasTarget, run: () => ops.openCompare() },

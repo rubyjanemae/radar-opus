@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AppWindow, Check, ChevronRight, Command as CommandIcon, History, Pill, Search, TextSearch, User, X } from 'lucide-react'
-import { allCommands, displayKey, formatKeys, onCommandsChanged } from '../../commands/registry'
+import { allCommands, displayKey, formatKeys, isEnabled, onCommandsChanged } from '../../commands/registry'
+import type { Command } from '../../commands/registry'
 import { useCatalog } from '../../data/CatalogContext'
 import { actions, useApp } from '../../state/store'
 import { tabTitle } from '../../shell/tabTitle'
@@ -10,8 +11,8 @@ import { highlighter, search } from '../search/engine'
 import { findRemedies } from '../search/remedies'
 import { openRemedySearch, openSearch, prepare, readyTargets, remedyResolver } from '../search/ops'
 import { Highlight, RubricPath, titleIfTruncated } from '../search/components'
-import { markPositions } from './fuzzy'
-import { bindQuerySetter, commandCounts, paletteItems, parseMode, recentCommands, rememberCommand, takeInitialQuery } from './model'
+import { fuzzyIndex, markPositions } from './fuzzy'
+import { bindQuerySetter, commandCounts, lastOf, memoPerCommand, paletteItems, parseMode, recentCommands, rememberCommand, takeInitialQuery } from './model'
 import type { PaletteItem, Section } from './model'
 import './palette.css'
 
@@ -20,7 +21,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const catalog = useCatalog()
   const [query, setQuery] = useState(() => takeInitialQuery())
   const [active, setActive] = useState(0)
-  const [, setCmdVersion] = useState(0)
+  const [cmdVersion, setCmdVersion] = useState(0)
   const [repVersion, setRepVersion] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -49,33 +50,55 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     const { pending } = readyTargets(scopeTab)
     if (!pending.length) return
     let alive = true
-    prepare(pending).then(() => alive && setRepVersion(v => v + 1), () => {})
+    prepare(pending).then(() => { if (alive) startTransition(() => setRepVersion(v => v + 1)) }, () => {})
     return () => { alive = false }
   }, [wantsRubrics, scopeTab])
 
-  const sections: Section[] = useMemo(() => {
+  // Commands and tabs follow every keystroke; remedies, patients and rubrics use a deferred copy of
+  // the query (an interruptible background render), each computed once per query.
+  const deferredQuery = useDeferredValue(query)
+  const slow = parseMode(deferredQuery)
+  const slowText = slow.mode === mode ? slow.text : text
+  const remediesFor = useMemo(() => lastOf(q => findRemedies(catalog, q, mode === 'remedies' ? 50 : 6)), [catalog, mode])
+  const rubricsFor = useMemo(() => {
     const { targets, pending } = readyTargets(scopeTab)
-    return paletteItems({
-      mode, text,
-      commands: allCommands(),
-      recent: recentCommands(),
-      counts: commandCounts(),
-      tabs: tabs.map(t => ({ id: t.id, active: t.id === activeTabId, ...tabTitle(t, catalog, { patients, consultations }) })),
-      patients: Object.values(patients),
-      remedies: q => findRemedies(catalog, q, mode === 'remedies' ? 50 : 6),
-      rubrics: q => {
-        if (!targets.length) return { hits: [], pending: pending.length > 0 }
-        const res = search(q, targets, { prefixLast: true, limit: mode === 'rubrics' ? 60 : 8, resolveRemedy: remedyResolver })
-        return { hits: res.hits.map(h => ({ ref: h.rep.ref(h.index), rep: h.rep, index: h.index })), pending: pending.length > 0 }
-      },
+    return lastOf(q => {
+      if (!targets.length) return { hits: [], pending: pending.length > 0 }
+      const res = search(q, targets, { prefixLast: true, limit: mode === 'rubrics' ? 60 : 8, resolveRemedy: remedyResolver })
+      return { hits: res.hits.map(h => ({ ref: h.rep.ref(h.index), rep: h.rep, index: h.index })), pending: pending.length > 0 }
     })
-  }, [mode, text, tabs, activeTabId, patients, consultations, catalog, scopeTab, repVersion]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, scopeTab, repVersion]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Built once per open (and when the registry changes): folded-title index, command list,
+  // recents/counts from storage, and memoised enabled()/checked() so keystrokes only re-rank.
+  const match = useMemo(() => fuzzyIndex(), [])
+  const perOpen = useMemo(() => ({
+    commands: allCommands(),
+    enabled: memoPerCommand(isEnabled),
+    checked: memoPerCommand((c: Command) => !!c.checked?.()),
+  }), [cmdVersion]) // eslint-disable-line react-hooks/exhaustive-deps
+  const stored = useMemo(() => ({ recent: recentCommands(), counts: commandCounts() }), [])
+  const tabList = useMemo(() => tabs.map(t => ({ id: t.id, active: t.id === activeTabId, ...tabTitle(t, catalog, { patients, consultations }) })), [tabs, activeTabId, catalog, patients, consultations])
+  const patientList = useMemo(() => Object.values(patients), [patients])
+  const itemsFor = (slowText: string) => paletteItems({
+    mode, text, slowText,
+    commands: perOpen.commands,
+    recent: stored.recent,
+    counts: stored.counts,
+    match,
+    enabled: perOpen.enabled,
+    tabs: tabList,
+    patients: patientList,
+    remedies: remediesFor,
+    rubrics: rubricsFor,
+  })
+  const sections: Section[] = useMemo(() => itemsFor(slowText), [mode, text, slowText, tabList, patientList, perOpen, remediesFor, rubricsFor]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const flat = useMemo(() => sections.flatMap(s => s.items), [sections])
   const rubricHl = useMemo(() => {
-    const res = text.trim() ? search(text, [], { prefixLast: true }) : null
+    const res = slowText.trim() ? search(slowText, [], { prefixLast: true }) : null
     return res?.parsed.positive.length ? highlighter(res.parsed) : null
-  }, [text])
+  }, [slowText])
 
   useEffect(() => { setActive(0) }, [query])
   useEffect(() => { listRef.current?.querySelector(`[data-n="${active}"]`)?.scrollIntoView({ block: 'nearest' }) }, [active])
@@ -104,7 +127,13 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => (a - 1 + flat.length) % Math.max(1, flat.length)) }
     else if (e.key === 'PageDown') { e.preventDefault(); setActive(a => Math.min(flat.length - 1, a + 8)) }
     else if (e.key === 'PageUp') { e.preventDefault(); setActive(a => Math.max(0, a - 8)) }
-    else if (e.key === 'Enter') { e.preventDefault(); run(flat[active], e.altKey || e.ctrlKey || e.metaKey) }
+    else if (e.key === 'Enter') {
+      e.preventDefault()
+      // Enter right after typing, before the deferred results caught up: act on the top result for
+      // what is typed now, not on the list for an older query
+      const item = slowText !== text && active === 0 ? itemsFor(text).flatMap(s => s.items)[0] : flat[active]
+      run(item, e.altKey || e.ctrlKey || e.metaKey)
+    }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close() }
     else if (e.key === 'Tab') e.preventDefault()
     else if (e.key === 'Backspace' && !text && mode !== 'all') { e.preventDefault(); setQuery('') }
@@ -148,10 +177,11 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
             }}
           />
         </div>
-        <div className="pal-list" id="pal-list" role="listbox" aria-label="Results" ref={listRef}>
-          {flat.length === 0 && (
-            <div className="pal-empty">{sections.some(s => s.pending) ? 'Loading repertories…' : text.trim() ? `Nothing matches “${text.trim()}”` : 'Nothing here yet'}</div>
-          )}
+        {flat.length === 0 && (
+          // outside the listbox (which holds only options), announced politely
+          <div className="pal-empty" role="status">{sections.some(s => s.pending) || slowText !== text ? 'Searching…' : text.trim() ? `Nothing matches “${text.trim()}”` : 'Nothing here yet'}</div>
+        )}
+        <div className="pal-list" id="pal-list" role="listbox" aria-label="Results" ref={listRef} hidden={flat.length === 0}>
           {sections.map(s => (
             <div key={s.key} role="group" aria-label={s.label}>
               <div className="pal-head">{s.label}{s.pending && <span className="pal-head-note"> · indexing…</span>}</div>
@@ -171,7 +201,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
                     onMouseDown={e => e.preventDefault()}
                     onClick={e => run(item, e.altKey || e.ctrlKey || e.metaKey)}
                   >
-                    <ItemBody item={item} text={text} hl={rubricHl} />
+                    <ItemBody item={item} text={text} hl={rubricHl} checked={perOpen.checked} />
                   </div>
                 )
               })}
@@ -215,12 +245,12 @@ function Marked({ text, positions }: { text: string; positions?: number[] }) {
   return <>{markPositions(text, positions).map((s, i) => s.hit ? <mark key={i} className="pal-mark">{s.text}</mark> : <span key={i}>{s.text}</span>)}</>
 }
 
-function ItemBody({ item, text, hl }: { item: PaletteItem; text: string; hl: ((n: string) => boolean) | null }) {
+function ItemBody({ item, text, hl, checked: isChecked }: { item: PaletteItem; text: string; hl: ((n: string) => boolean) | null; checked: (c: Command) => boolean }) {
   const catalog = useCatalog()
   switch (item.kind) {
     case 'command': {
       const c = item.command
-      const checked = c.checked?.()
+      const checked = isChecked(c)
       return (
         <>
           <span className="pal-ico">{item.recent ? <History size={14} /> : checked ? <Check size={14} /> : <CommandIcon size={14} />}</span>

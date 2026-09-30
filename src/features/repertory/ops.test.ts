@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { Catalog } from '../../data/catalog'
 import { actions, selectActiveConsultation, useApp } from '../../state/store'
 import { DEFAULT_TAKE } from './take'
-import { clipboardMembership, currentRefs, ensureClipboard, subtreeRefs, setRepertoryCatalog, takeRefs, takeToastText, toggleBookmark } from './ops'
+import { clipboardMembership, clipboardTitle, currentRefs, ensureClipboard, existingSymptom, highlightRemedy, openRepertory, remedyMenuItems, subtreeRefs, setRepertoryCatalog, takePatch, takeRefs, takeToastText, takeUndoLabel, toggleBookmark } from './ops'
+import { parseTake } from './take'
+import type { TakeOptions } from './take'
+import { getHighlight } from './highlight'
 import { tinyRepertory } from './fixtures'
 
 const rep = tinyRepertory()
@@ -69,16 +72,22 @@ describe('taking rubrics', () => {
     takeRefs(['t:4'], { ...DEFAULT_TAKE, weight: 2 })
     const toasts = useApp.getState().toasts
     expect(toasts).toHaveLength(1)
-    expect(toasts[0].text).toMatch(/^3 rubrics taken \(into Clipboard 1\) · last: anger \(×2\)$/)
+    expect(toasts[0].text).toMatch(/^3 rubrics taken → Clipboard 1 · last: anger ×2$/)
     expect(toasts[0].action?.label).toBe('Undo last')
   })
   it('a merged toast lists where each take went and names the last rubric, never "last: 2 rubrics"', () => {
     takeRefs(['t:2'], { ...DEFAULT_TAKE })
     takeRefs(['t:3', 't:4'], { ...DEFAULT_TAKE, clipboard: 2 })
     const text = useApp.getState().toasts[0].text
-    expect(text).toMatch(/^3 rubrics taken \(1 → Clipboard 1, 2 → .+\) · last: anger and 1 more \(×1\)$/)
+    expect(text).toMatch(/^3 rubrics taken 1 → Clipboard 1, 2 → .+ · last: anger and 1 more ×1$/)
     expect(text).not.toMatch(/last: \d+ rubrics/)
     expect(takeToastText([{ count: 1, target: 'A', last: 'x' }], 'single')).toBe('single')
+  })
+  it('a single take toast is one line without brackets', () => {
+    takeRefs(['t:2'], { ...DEFAULT_TAKE, weight: 2 })
+    const text = useApp.getState().toasts.at(-1)!.text
+    expect(text).toMatch(/^Taken .+ · ×2 → Clipboard 1/)
+    expect(text).not.toMatch(/[()]/)
   })
   it('records taken rubrics in the Recent list of the repertory tab', () => {
     actions.openTab({ kind: 'repertory', repertory: 't', rubric: 0, back: [], forward: [] }, { reuse: false })
@@ -129,6 +138,84 @@ describe('taking rubrics', () => {
     actions.addRubrics(['t:3'], { clipboardId: c.clipboards[0].id, weight: 1 })
     undo()
     expect(consultation().clipboards[0].symptoms).toHaveLength(3)
+  })
+})
+
+const parsed = (cmd: string): TakeOptions => { const r = parseTake(cmd); if (!r.ok) throw new Error(r.error); return r.options }
+
+describe('taking again never silently downgrades', () => {
+  it('a bare + (or Insert, Ctrl+Enter) on a taken rubric changes nothing and says where it is', () => {
+    takeRefs(['t:2'], parsed('+3'))
+    expect(takeRefs(['t:2'], parsed('+'))).toBe(0)
+    expect(takeRefs(['t:2'], { ...DEFAULT_TAKE })).toBe(0)
+    expect(consultation().clipboards[0].symptoms[0].weight).toBe(3)
+    expect(useApp.getState().toasts.at(-1)?.text).toBe('Already in Clipboard 1: Mind - fear - alone')
+  })
+  it('only an explicit +N changes the intensity, also down', () => {
+    takeRefs(['t:2'], parsed('+3'))
+    expect(takeRefs(['t:2'], parsed('+1'))).toBe(1)
+    expect(consultation().clipboards[0].symptoms[0].weight).toBe(1)
+  })
+  it('the mini-language only adds what it names; it keeps the intensity and other qualifications', () => {
+    takeRefs(['t:2'], parsed('+3a'))
+    expect(takeRefs(['t:2'], parsed('+!'))).toBe(1)
+    expect(consultation().clipboards[0].symptoms[0]).toMatchObject({ weight: 3, group: 'a', eliminatory: true })
+    expect(takeRefs(['t:2'], parsed('+x'))).toBe(1)
+    expect(consultation().clipboards[0].symptoms[0]).toMatchObject({ weight: 3, group: 'a', eliminatory: false, exclusive: true })
+  })
+  it('the F6 dialog (replace) sets everything it shows, clearing what is unticked', () => {
+    takeRefs(['t:2'], parsed('+3!a'))
+    expect(takeRefs(['t:2'], { ...DEFAULT_TAKE, weight: 2, weightSet: true, replace: true })).toBe(1)
+    expect(consultation().clipboards[0].symptoms[0]).toMatchObject({ weight: 2, eliminatory: false, group: null })
+  })
+  it('takePatch lists only real changes', () => {
+    const x = { id: 's', rubrics: ['t:2'], weight: 2, eliminatory: true, group: 'b' } as unknown as Parameters<typeof takePatch>[0]
+    expect(takePatch(x, parsed('+'))).toEqual({})
+    expect(takePatch(x, parsed('+2!b'))).toEqual({})
+    expect(takePatch(x, parsed('+4'))).toEqual({ weight: 4 })
+    expect(takePatch(x, { ...DEFAULT_TAKE, weight: 2, replace: true, weightSet: true, eliminatory: true, group: 'b' })).toEqual({})
+  })
+  it('finds the existing symptom on a given clipboard (for the F6 prefill)', () => {
+    takeRefs(['t:2'], parsed('+2c'))
+    expect(existingSymptom(['t:2'], 1)?.symptom).toMatchObject({ weight: 2, causal: true })
+    expect(existingSymptom(['t:2'], null)?.n).toBe(1)
+    expect(existingSymptom(['t:2'], 2)).toBeNull()
+    expect(existingSymptom(['t:3'], 1)).toBeNull()
+    expect(clipboardTitle(1, 'Clipboard 1')).toBe('Clipboard 1')
+    expect(clipboardTitle(2, 'Particulars')).toBe('Clipboard 2 (Particulars)')
+  })
+  it('labels the undo step with the full rubric path', () => {
+    expect(takeUndoLabel(['t:2'])).toBe('Take Mind - fear, alone')
+    expect(takeUndoLabel(['t:0'])).toBe('Take Mind')
+    expect(takeUndoLabel(['t:2', 't:3'])).toBe('Take 2 rubrics')
+    takeRefs(['t:3'], { ...DEFAULT_TAKE })
+    expect(useApp.getState().past.at(-1)?.label).toBe('Take Mind - fear, night')
+  })
+})
+
+describe('opening repertories and the remedy highlight', () => {
+  it('reuses a tab of the same repertory unless a new tab is asked for', async () => {
+    await openRepertory('t', 3)
+    await openRepertory('t', 4)
+    let tabs = useApp.getState().tabs
+    expect(tabs).toHaveLength(1)
+    expect(tabs[0].kind === 'repertory' && tabs[0].rubric).toBe(4)
+    await openRepertory('t', 2, { reuse: false })
+    tabs = useApp.getState().tabs
+    expect(tabs).toHaveLength(2)
+    expect(useApp.getState().activeTabId).toBe(tabs[1].id)
+  })
+  it('lists the remedies of a rubric with grade and highlights one in its book', () => {
+    actions.openTab({ kind: 'repertory', repertory: 't', rubric: 1, back: [], forward: [] }, { reuse: false })
+    const items = remedyMenuItems('t:1')
+    expect(items.map(x => ('label' in x ? x.label : ''))).toEqual(['Acon.  Aconitum napellus (grade 3)', 'ars.  Arsenicum album (grade 1)'])
+    const tab = useApp.getState().tabs[0]
+    highlightRemedy('t:1', 2)
+    expect(getHighlight(tab.id)).toBe(2)
+    const again = remedyMenuItems('t:1')[1]
+    expect('checked' in again && again.checked).toBe(true)
+    highlightRemedy('t:1', null)
+    expect(getHighlight(tab.id)).toBeNull()
   })
 })
 

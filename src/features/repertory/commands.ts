@@ -1,16 +1,17 @@
 import type { Catalog } from '../../data/catalog'
 import { registerCommands } from '../../commands/registry'
-import { registerDialog } from '../../shell/dialogs'
+import { registerDialog, registerLazyDialog } from '../../shell/dialogs'
 import type { DialogComponent } from '../../shell/dialogs'
 import { actions, useApp } from '../../state/store'
 import { DEFAULT_TAKE } from './take'
 import type { TakeOptions } from './take'
 import {
-  activeRepertoryTab, bookmarkOf, copyRubric, currentRefs, currentRubric, goParent, goToRef, openFind, openNote,
+  activeRepertoryTab, bookmarkOf, copyRubric, currentRefs, currentRubric, featureToast, goParent, goToRef, openFind, openNote,
   openTakeOptions, setRepertoryCatalog, takeRefs, toggleBookmark,
 } from './ops'
-import { FindDialog } from './FindDialog'
-import { TakeOptionsDialog } from './TakeOptionsDialog'
+import { scheduleRemedyChars } from './estimate'
+import { getHighlight, requestRemedyMenu, setHighlight } from './highlight'
+import { selectRubric } from './useBookKeys'
 import { NoteDialog } from './NoteDialog'
 import { BookmarksDialog } from './BookmarksDialog'
 
@@ -20,11 +21,31 @@ export const REPERTORY_SCOPE = '.rv, .rnav'
 const hasRubric = () => currentRefs().length > 0
 const noTextSelection = () => { const sel = window.getSelection(); return !sel || sel.isCollapsed || !sel.toString().trim() }
 const take = (o: Partial<TakeOptions>) => takeRefs(currentRefs(), { ...DEFAULT_TAKE, ...o })
+let catalogOf: () => Catalog | null = () => null
+/** The remedy highlighted in the active book, if any. */
+const highlighted = () => { const t = activeRepertoryTab(); return t ? getHighlight(t.id) : null }
+
+/** Move the book to the next (or previous) rubric of the chapter holding the highlighted remedy. */
+function stepHighlight(dir: 1 | -1) {
+  const c = currentRubric()
+  const id = highlighted()
+  if (!c || id == null) return
+  const { rep, index, tab } = c
+  const first = rep.chapterRoot(index), end = rep.subtreeEndOf(first)
+  for (let i = index + dir; i >= first && i < end; i += dir) {
+    if (rep.gradeOf(i, id)) { selectRubric(tab, rep, i, true); return }
+  }
+  const cat = catalogOf()
+  featureToast('highlight', () => `No ${dir > 0 ? 'further' : 'earlier'} rubric with ${cat ? cat.remedy(id).abbrev : 'this remedy'} in ${rep.text(first)}`, 'info')
+}
 
 export function register(catalog: Catalog) {
   setRepertoryCatalog(catalog)
-  registerDialog('repertory.find', FindDialog as DialogComponent)
-  registerDialog('repertory.take', TakeOptionsDialog as DialogComponent)
+  catalogOf = () => catalog
+  // per-rubric remedy character counts for the book's row estimates, built in idle time after a load
+  catalog.onRepertoryLoaded(rep => scheduleRemedyChars(rep, catalog))
+  registerLazyDialog('repertory.find', () => import('./FindDialog'), m => m.FindDialog)
+  registerLazyDialog('repertory.take', () => import('./TakeOptionsDialog'), m => m.TakeOptionsDialog)
   registerDialog('repertory.note', NoteDialog as DialogComponent)
   registerDialog('repertory.bookmarks', BookmarksDialog as DialogComponent)
 
@@ -55,7 +76,7 @@ export function register(catalog: Catalog) {
       run: () => cycleDisplay(),
     },
     {
-      id: 'repertory.toc', title: 'Repertories (table of contents)', category: 'Repertory', keys: ['Mod+1'], keywords: 'toc library books',
+      id: 'repertory.toc', title: 'Repertories (table of contents)', category: 'Repertory', keys: ['Mod+1'], allowInInput: true, keywords: 'toc library books',
       run: () => actions.openTab({ kind: 'repertories' }),
     },
     {
@@ -76,7 +97,7 @@ export function register(catalog: Catalog) {
       enabled: () => hasRubric() && noTextSelection(), run: () => { const r = currentRefs()[0]; if (r) void copyRubric(r, true) },
     },
     {
-      id: 'rubric.copyText', title: 'Copy rubric text', category: 'Repertory', keys: ['Mod+Shift+C'], scope: REPERTORY_SCOPE,
+      id: 'rubric.copyText', title: 'Copy rubric text', category: 'Repertory', keys: ['Mod+Shift+Y'], scope: REPERTORY_SCOPE,
       enabled: () => hasRubric() && noTextSelection(), run: () => { const r = currentRefs()[0]; if (r) void copyRubric(r, false) },
     },
     {
@@ -87,6 +108,29 @@ export function register(catalog: Catalog) {
     { id: 'rubric.note', title: 'Rubric note…', category: 'Repertory', keys: ['Mod+Shift+M'], enabled: hasRubric, run: () => { const r = currentRefs()[0]; if (r) openNote(r) } },
     { id: 'rubric.openNewTab', title: 'Open rubric in new tab', category: 'Repertory', enabled: hasRubric, run: () => { const r = currentRefs()[0]; if (r) void goToRef(r, { newTab: true }) } },
     { id: 'bookmarks.open', title: 'Bookmarks…', category: 'Repertory', keys: ['Mod+Shift+D'], run: () => actions.openDialog('repertory.bookmarks') },
+
+    // remedy highlight: the keyboard route to what a click on a remedy does
+    {
+      id: 'repertory.remedyMenu', title: 'Remedies of rubric…', category: 'Repertory', keys: ['Alt+R'], keywords: 'highlight remedy open grade',
+      enabled: () => { const c = currentRubric(); return !!c && c.rep.remedyCount(c.index) > 0 },
+      run: () => { const t = activeRepertoryTab(); if (t) requestRemedyMenu(t.id) },
+    },
+    {
+      id: 'repertory.highlightNext', title: 'Next rubric with highlighted remedy', category: 'Repertory', keys: ['Alt+ArrowDown'], scope: '.rv', scopeLabel: 'in the book',
+      enabled: () => highlighted() != null && !!currentRubric(), run: () => stepHighlight(1),
+    },
+    {
+      id: 'repertory.highlightPrev', title: 'Previous rubric with highlighted remedy', category: 'Repertory', keys: ['Alt+ArrowUp'], scope: '.rv', scopeLabel: 'in the book',
+      enabled: () => highlighted() != null && !!currentRubric(), run: () => stepHighlight(-1),
+    },
+    {
+      id: 'repertory.highlightOpen', title: 'Open highlighted remedy', category: 'Repertory',
+      enabled: () => highlighted() != null, run: () => { const id = highlighted(); if (id != null) actions.openTab({ kind: 'remedy', remedyId: id }) },
+    },
+    {
+      id: 'repertory.highlightClear', title: 'Clear remedy highlight', category: 'Repertory', keys: ['Escape'], scope: '.rv-scroll', scopeLabel: 'in the rubric list',
+      enabled: () => highlighted() != null, run: () => { const t = activeRepertoryTab(); if (t) setHighlight(t.id, null) },
+    },
   ])
 }
 

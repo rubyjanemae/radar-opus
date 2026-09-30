@@ -50,10 +50,20 @@ export interface Toast { id: string; text: string; tone: 'info' | 'success' | 'e
 export interface ClosedTab { tab: Tab; index: number }
 
 /**
- * One undo step: the case data before the step, the case focus at that moment and a
+ * Per-record inverse patch of one undo step: for every patient / consultation the step changed, its value
+ * before the step (null: the record did not exist). Undo writes back only these records, so records the
+ * step did not touch (edits adopted from another tab, for example) are never reverted.
+ */
+export interface CaseRecords {
+  patients: Record<string, Patient | null>
+  consultations: Record<string, Consultation | null>
+}
+
+/**
+ * One undo step: the records it changed (their values before the step), the case focus at that moment and a
  * human label ("Take rubric"). Tabs the step closed are reopened on undo and closed again on redo.
  */
-export interface HistoryEntry extends CaseData {
+export interface HistoryEntry extends CaseRecords {
   label: string
   activeConsultationId: string | null
   activeClipboardId: string | null
@@ -66,6 +76,8 @@ export interface AppState extends CaseData {
   // workspace
   tabs: Tab[]
   activeTabId: string | null
+  /** The repertory tab last active (the navigator keeps following it while another kind of tab is active). */
+  lastRepertoryTabId: string | null
   layout: Layout
   settings: Settings
   bookmarks: Bookmark[]
@@ -94,8 +106,47 @@ const UNDO_LIMIT = 200
 /** What a case mutation may change besides case data: focus and tabs it closes (recorded for undo). */
 type CasePatch = Partial<CaseData> & Partial<Pick<AppState, 'activeConsultationId' | 'activeClipboardId' | 'selectedSymptomIds' | 'tabs' | 'activeTabId'>> & { closedTabs?: ClosedTab[] }
 
-function historyEntry(s: AppState, label: string): HistoryEntry {
-  return { label, patients: s.patients, consultations: s.consultations, activeConsultationId: s.activeConsultationId, activeClipboardId: s.activeClipboardId, activeTabId: s.activeTabId }
+function historyEntry(s: AppState, label: string, records: CaseRecords = { patients: {}, consultations: {} }): HistoryEntry {
+  return { label, ...records, activeConsultationId: s.activeConsultationId, activeClipboardId: s.activeClipboardId, activeTabId: s.activeTabId }
+}
+
+/** The records that differ between `before` and `after` (by reference), with their `before` values. */
+function changedRecords<T>(before: Record<string, T>, after: Record<string, T> | undefined, into: Record<string, T | null> = {}): Record<string, T | null> {
+  if (!after || after === before) return into
+  for (const id of Object.keys(after)) if (after[id] !== before[id] && !(id in into)) into[id] = before[id] ?? null
+  for (const id of Object.keys(before)) if (!(id in after) && !(id in into)) into[id] = before[id]
+  return into
+}
+
+/** Apply per-record values (null deletes) onto a collection; returns the collection itself when nothing changes. */
+function applyRecords<T>(cur: Record<string, T>, recs: Record<string, T | null>): Record<string, T> {
+  const ids = Object.keys(recs)
+  if (!ids.length) return cur
+  const out = { ...cur }
+  for (const id of ids) { const v = recs[id]; if (v === null) delete out[id]; else out[id] = v }
+  return out
+}
+
+/** The current values of the records an entry names (the inverse patch for redo / undo). */
+function currentRecords(s: CaseData, e: CaseRecords): CaseRecords {
+  const pick = <T>(cur: Record<string, T>, ids: string[]) => Object.fromEntries(ids.map(id => [id, cur[id] ?? null])) as Record<string, T | null>
+  return { patients: pick(s.patients, Object.keys(e.patients)), consultations: pick(s.consultations, Object.keys(e.consultations)) }
+}
+
+/**
+ * Drop history steps that touch any of the given records (their saved "before" values are stale once the
+ * records were replaced from outside, e.g. adopted from another tab). Steps on other records stay undoable.
+ */
+export function pruneHistory(changed: { patients: Iterable<string>; consultations: Iterable<string> }) {
+  const ps = new Set(changed.patients)
+  const cs = new Set(changed.consultations)
+  if (!ps.size && !cs.size) return
+  const keep = (e: HistoryEntry) => !Object.keys(e.patients).some(id => ps.has(id)) && !Object.keys(e.consultations).some(id => cs.has(id))
+  useApp.setState(s => {
+    const past = s.past.filter(keep)
+    const future = s.future.filter(keep)
+    return past.length === s.past.length && future.length === s.future.length ? {} : { past, future }
+  })
 }
 
 // Transactions: while depth > 0 every case mutation collapses into one history entry.
@@ -125,18 +176,24 @@ function mutateCase(label: string, fn: (s: AppState) => CasePatch | null): boole
     applied = true
     const { closedTabs, ...rest } = patch
     closed = closedTabs ?? []
-    if (txDepth > 0) {
-      if (!txPushed) {
-        txPushed = true
-        const entry: HistoryEntry = { ...(txBase ?? historyEntry(s, label)), label: txLabel ?? label, ...(closed.length ? { closedTabs: closed } : {}) }
-        return { ...rest, past: [...s.past.slice(-UNDO_LIMIT + 1), entry], future: [] }
-      }
-      if (!closed.length) return { ...rest, future: [] }
+    if (txDepth > 0 && txPushed) {
+      // Later mutations of the transaction add the records they change (first "before" value wins).
       const last = s.past[s.past.length - 1]
-      const merged: HistoryEntry = { ...last, closedTabs: [...(last.closedTabs ?? []), ...closed] }
+      const merged: HistoryEntry = {
+        ...last,
+        patients: changedRecords(s.patients, rest.patients, { ...last.patients }),
+        consultations: changedRecords(s.consultations, rest.consultations, { ...last.consultations }),
+        ...(closed.length ? { closedTabs: [...(last.closedTabs ?? []), ...closed] } : {}),
+      }
       return { ...rest, past: [...s.past.slice(0, -1), merged], future: [] }
     }
-    const entry: HistoryEntry = { ...historyEntry(s, label), ...(closed.length ? { closedTabs: closed } : {}) }
+    const records: CaseRecords = { patients: changedRecords(s.patients, rest.patients), consultations: changedRecords(s.consultations, rest.consultations) }
+    let entry: HistoryEntry
+    if (txDepth > 0) {
+      txPushed = true
+      entry = { ...(txBase ?? historyEntry(s, label)), ...records, label: txLabel ?? label }
+    } else entry = historyEntry(s, label, records)
+    if (closed.length) entry.closedTabs = closed
     return { ...rest, past: [...s.past.slice(-UNDO_LIMIT + 1), entry], future: [] }
   })
   if (closed.length) notifyTabsClosed(closed.map(c => c.tab))
@@ -227,6 +284,7 @@ export const useApp = create<AppState>(() => ({
   consultations: {},
   tabs: [],
   activeTabId: null,
+  lastRepertoryTabId: null,
   layout: DEFAULT_LAYOUT,
   settings: DEFAULT_SETTINGS,
   bookmarks: [],
@@ -244,6 +302,12 @@ export const useApp = create<AppState>(() => ({
 }))
 
 const set: Set = fn => useApp.setState(fn)
+
+// activating a repertory tab (by any path: tab strip, undo, hydration) records it as the last repertory tab
+useApp.subscribe((s, prev) => {
+  if (s.activeTabId === prev.activeTabId || s.activeTabId === s.lastRepertoryTabId) return
+  if (s.tabs.some(t => t.id === s.activeTabId && t.kind === 'repertory')) useApp.setState({ lastRepertoryTabId: s.activeTabId })
+})
 const get = () => useApp.getState()
 
 // ───────────────────────── selectors ─────────────────────────
@@ -267,6 +331,44 @@ function armToast(id: string) {
   if (!t || toastsPaused) return
   t.startedAt = Date.now()
   t.handle = setTimeout(() => actions.dismissToast(id), t.remaining)
+}
+
+/**
+ * Undo label naming a symptom edit: "Set intensity 0", "Mark eliminative", "Clear group", with the count
+ * for several symptoms ("Set intensity 3 (4 symptoms)"). A function patch is labelled "Edit symptom".
+ */
+export function symptomEditLabel(patch: Partial<Symptom> | ((s: Symptom) => Partial<Symptom>), count: number): string {
+  const n = count === 1 ? '' : ` (${count} symptoms)`
+  if (typeof patch === 'function') return count === 1 ? 'Edit symptom' : `Edit ${count} symptoms`
+  const flag = (on: boolean | undefined, name: string) => (on ? `Mark ${name}` : `Clear ${name}`)
+  const parts: string[] = []
+  for (const k of Object.keys(patch) as (keyof Symptom)[]) {
+    const v = patch[k]
+    switch (k) {
+      case 'weight': parts.push(`Set intensity ${String(v)}`); break
+      // turning one of eliminative / excluding on turns the other off: the label names the one turned on
+      case 'eliminatory': if (v || !patch.exclusive) parts.push(flag(v as boolean, 'eliminative')); break
+      case 'exclusive': if (v || !patch.eliminatory) parts.push(flag(v as boolean, 'excluding')); break
+      case 'causal': parts.push(flag(v as boolean, 'causal')); break
+      case 'group': parts.push(v ? `Set group ${String(v).toUpperCase()}` : 'Clear group'); break
+      case 'note': parts.push(v ? 'Edit note' : 'Remove note'); break
+      case 'label': parts.push(v ? 'Rename symptom' : 'Clear symptom label'); break
+      case 'combine': parts.push(v === 'intersection' ? 'Combine as intersection' : 'Combine as union'); break
+      case 'opposite': parts.push(v ? 'Set opposite rubric' : 'Clear opposite rubric'); break
+      case 'rubrics': parts.push('Change rubrics'); break
+    }
+  }
+  if (!parts.length) return count === 1 ? 'Edit symptom' : `Edit ${count} symptoms`
+  return parts.join(', ') + n
+}
+
+/**
+ * Eliminative / excluding of a combined symptom (they are mutually exclusive): excluding when every part is
+ * excluding (the combined rubrics still only exclude), otherwise eliminative when any part is eliminative.
+ */
+export function combinedFlags(parts: Pick<Symptom, 'eliminatory' | 'exclusive'>[]): { eliminatory: boolean; exclusive: boolean } {
+  const exclusive = parts.length > 0 && parts.every(p => p.exclusive)
+  return { exclusive, eliminatory: !exclusive && parts.some(p => p.eliminatory) }
 }
 
 /** Symptoms describe the same rubric set (order-independent). */
@@ -295,7 +397,9 @@ export const actions = {
     const s = get()
     const entry = s.past[s.past.length - 1]
     if (!entry) return
-    const redo: HistoryEntry = { ...historyEntry(s, entry.label), ...(entry.closedTabs ? { closedTabs: entry.closedTabs } : {}) }
+    const redo: HistoryEntry = { ...historyEntry(s, entry.label, currentRecords(s, entry)), ...(entry.closedTabs ? { closedTabs: entry.closedTabs } : {}) }
+    const patients = applyRecords(s.patients, entry.patients)
+    const consultations = applyRecords(s.consultations, entry.consultations)
     let tabs = s.tabs
     let activeTabId = s.activeTabId
     if (entry.closedTabs?.length) {
@@ -305,9 +409,9 @@ export const actions = {
       }
       if (entry.activeTabId && tabs.some(t => t.id === entry.activeTabId)) activeTabId = entry.activeTabId
     }
-    const focus = restoreFocus(entry.consultations, entry.activeConsultationId, entry.activeClipboardId)
+    const focus = restoreFocus(consultations, entry.activeConsultationId, entry.activeClipboardId)
     set(() => ({
-      patients: entry.patients, consultations: entry.consultations, ...focus, tabs, activeTabId,
+      patients, consultations, ...focus, tabs, activeTabId,
       selectedSymptomIds: focus.activeClipboardId === s.activeClipboardId ? s.selectedSymptomIds : [],
       past: s.past.slice(0, -1), future: [redo, ...s.future],
     }))
@@ -317,12 +421,14 @@ export const actions = {
     const s = get()
     const entry = s.future[0]
     if (!entry) return
-    const undo: HistoryEntry = { ...historyEntry(s, entry.label), ...(entry.closedTabs ? { closedTabs: entry.closedTabs } : {}) }
+    const undo: HistoryEntry = { ...historyEntry(s, entry.label, currentRecords(s, entry)), ...(entry.closedTabs ? { closedTabs: entry.closedTabs } : {}) }
+    const patients = applyRecords(s.patients, entry.patients)
+    const consultations = applyRecords(s.consultations, entry.consultations)
     const closing = new Set((entry.closedTabs ?? []).map(c => c.tab.id))
     const closeTabs = closing.size ? closeTabsWhere(s, t => closing.has(t.id)) : {}
-    const focus = restoreFocus(entry.consultations, entry.activeConsultationId, entry.activeClipboardId)
+    const focus = restoreFocus(consultations, entry.activeConsultationId, entry.activeClipboardId)
     set(() => ({
-      patients: entry.patients, consultations: entry.consultations, ...focus,
+      patients, consultations, ...focus,
       ...(closeTabs.tabs ? { tabs: closeTabs.tabs, activeTabId: closeTabs.activeTabId } : {}),
       selectedSymptomIds: focus.activeClipboardId === s.activeClipboardId ? s.selectedSymptomIds : [],
       future: s.future.slice(1), past: [...s.past, undo],
@@ -681,7 +787,8 @@ export const actions = {
   },
   /**
    * Combine several symptoms into one (rubrics merged). The combined symptom keeps the first part's
-   * label, note, exclusion and group; weight is the highest, eliminatory/causal if any part was.
+   * label, note and group; weight is the highest, causal if any part was. Eliminative and excluding never
+   * both: excluding only when every part is excluding, otherwise eliminative when any part is (see combinedFlags).
    */
   combineSymptoms(clipboardId: string, symptomIds: string[], mode: 'union' | 'intersection') {
     if (symptomIds.length < 2) return
@@ -693,7 +800,7 @@ export const actions = {
       const head = parts[0]
       const merged: Symptom = {
         id: uid('s'), rubrics: [...new Set(parts.flatMap(p => p.rubrics))], combine: mode,
-        weight: Math.max(...parts.map(p => p.weight)) as Weight, eliminatory: parts.some(p => p.eliminatory), exclusive: head.exclusive,
+        weight: Math.max(...parts.map(p => p.weight)) as Weight, ...combinedFlags(parts),
         group: head.group, causal: parts.some(p => p.causal), addedAt: head.addedAt,
         ...(head.label !== undefined ? { label: head.label } : {}), ...(head.note !== undefined ? { note: head.note } : {}),
       }
@@ -720,7 +827,7 @@ export const actions = {
   updateSymptoms(clipboardId: string, symptomIds: string[], patch: Partial<Symptom> | ((s: Symptom) => Partial<Symptom>)) {
     const ids = new Set(symptomIds)
     if (!ids.size) return
-    mutateCase(ids.size === 1 ? 'Edit symptom' : `Edit ${ids.size} symptoms`, s => updateClipboard(s, clipboardId, cb => {
+    mutateCase(symptomEditLabel(patch, ids.size), s => updateClipboard(s, clipboardId, cb => {
       let changed = false
       const symptoms = cb.symptoms.map(x => {
         if (!ids.has(x.id)) return x

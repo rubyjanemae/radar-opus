@@ -1,9 +1,15 @@
 import { useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { actions, useApp } from '../state/store'
 
 /**
  * Transient notifications. Auto-dismiss pauses while the pointer is over them or focus is inside
  * (so an Undo button can be reached with the keyboard: Alt+N focuses the newest action).
+ *
+ * Announcements go through two live regions that stay in the DOM for the app's lifetime (a region
+ * created together with its text is often not read): a polite status for information and an assertive
+ * alert for errors. They hold only the messages; the Undo and Dismiss buttons live on the visible cards.
+ * Rendered into <body>, outside the app root, so they are still announced while a dialog makes the app inert.
  */
 export function Toasts() {
   const toasts = useApp(s => s.toasts)
@@ -24,12 +30,14 @@ export function Toasts() {
   }, [toasts])
   useEffect(() => () => actions.pauseToasts(false), [])
 
-  return (
+  const polite = toasts.filter(t => t.tone !== 'error')
+  const errors = toasts.filter(t => t.tone === 'error')
+
+  return createPortal(
     <div
       ref={ref}
       className="toasts"
-      role="status"
-      aria-live="polite"
+      role="region"
       aria-label="Notifications"
       onMouseEnter={() => { hover.current = true; sync() }}
       onMouseLeave={() => { hover.current = false; sync() }}
@@ -50,17 +58,25 @@ export function Toasts() {
         else (document.activeElement as HTMLElement | null)?.blur()
       }}
     >
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="false">
+        {polite.map(t => <div key={t.id}>{t.text}</div>)}
+      </div>
+      <div className="sr-only" role="alert" aria-live="assertive" aria-atomic="false">
+        {errors.map(t => <div key={t.id}>{t.text}</div>)}
+      </div>
       {toasts.map(t => (
-        <div key={t.id} className={`toast toast-${t.tone}`}>
-          <span>{t.text}</span>
+        <div key={t.id} className={`toast toast-${t.tone}`} data-toast-id={t.id}>
+          {/* announced through the live regions above; read here when browsing */}
+          <span className="toast-text">{t.text}</span>
           {t.action && (
             <button className="toast-action" aria-keyshortcuts="Alt+N" title="Alt+N focuses this button" onClick={() => { const run = t.action!.run; actions.dismissToast(t.id); run() }}>
               {t.action.label}
             </button>
           )}
-          <button className="toast-x" aria-label="Dismiss" onClick={() => actions.dismissToast(t.id)}>×</button>
+          <button className="toast-x" aria-label={`Dismiss: ${t.text}`} title="Dismiss" onClick={() => actions.dismissToast(t.id)}>×</button>
         </div>
       ))}
-    </div>
+    </div>,
+    document.body,
   )
 }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { Consultation, Patient } from '../../state/patients'
 import { DEFAULT_ANALYSIS } from '../../state/store'
-import { buildCaseFile, caseFileName, CaseFileError, importCaseFile, parseCaseFile } from './casefile'
+import { DEFAULT_PARAMS, DEFAULT_STRATEGY } from '../../engine/model'
+import { buildCaseFile, caseFileName, CaseFileError, findExistingPatient, importCaseFile, parseCaseFile } from './casefile'
 import type { ImportContext } from './casefile'
 
 const patient: Patient = {
@@ -63,11 +64,85 @@ describe('case files', () => {
     expect(res.unresolved).toBe(0)
   })
 
-  it('flags an existing patient with the same name and birth date instead of overwriting', () => {
+  it('replaces an unknown strategy by the default, reports it, and merges params numerically', () => {
+    const raw = JSON.parse(JSON.stringify(file))
+    raw.consultations[0].analysis.strategy = 'made-up'
+    raw.consultations[0].analysis.limit = 'many'
+    raw.consultations[0].analysis.params = { smallRubrics: { threshold: '5', factor: 3 }, segments: { topK: Number.NaN }, kent: { weights: { mental: 9 } }, bogus: { x: 1 } }
+    const parsed = parseCaseFile(JSON.stringify(raw))
+    const a = parsed.consultations[0].analysis
+    expect(a.strategy).toBe(DEFAULT_STRATEGY)
+    expect(a.limit).toBe(DEFAULT_ANALYSIS.limit)
+    expect(a.params).toEqual({
+      ...DEFAULT_PARAMS,
+      smallRubrics: { threshold: DEFAULT_PARAMS.smallRubrics.threshold, factor: 3 },
+      kent: { ...DEFAULT_PARAMS.kent, weights: { ...DEFAULT_PARAMS.kent.weights, mental: 9 } },
+    })
+    expect(parsed.warnings).toEqual(['unknown analysis strategy "made-up" replaced by the default'])
+    // a known strategy passes through without a warning
+    raw.consultations[0].analysis.strategy = 'kent'
+    const ok = parseCaseFile(JSON.stringify(raw))
+    expect(ok.consultations[0].analysis.strategy).toBe('kent')
+    expect(ok.warnings).toBeUndefined()
+    expect(parseCaseFile(JSON.stringify(file)).consultations[0].analysis.params).toBeUndefined()
+  })
+
+  it('finds the patient on file by id, then by name and birth date', () => {
+    const f = parseCaseFile(JSON.stringify(file))
+    expect(findExistingPatient(f, [patient])).toMatchObject({ by: 'id', patient: { id: 'p1' } })
+    const other = { ...patient, id: 'p9', firstName: ' élise ', lastName: 'MARTIN' }
+    expect(findExistingPatient(f, [other])).toMatchObject({ by: 'person', patient: { id: 'p9' } })
+    expect(findExistingPatient(f, [{ ...other, birthDate: '1990-01-01' }])).toBeNull()
+  })
+
+  it('keeps both: a separate record, the name untouched', () => {
     const res = importCaseFile(parseCaseFile(JSON.stringify(file)), ctx({ existing: [patient] }))
+    expect(res.mode).toBe('new')
     expect(res.duplicateOf?.id).toBe('p1')
     expect(res.patient.id).not.toBe('p1')
-    expect(res.patient.lastName).toBe('Martin (imported)')
+    expect(res.patient.lastName).toBe('Martin')
+    expect(res.replaces).toEqual([])
+  })
+
+  it('replace: the record on file takes the file data and consultations', () => {
+    const onFile = { ...patient, occupation: 'Retired', createdAt: 0 }
+    const old = { ...consultation, id: 'old', patientId: 'p1' }
+    const res = importCaseFile(parseCaseFile(JSON.stringify(file)), ctx({ existing: [onFile], existingConsultations: [old] }), 5, 'replace')
+    expect(res.mode).toBe('replace')
+    expect(res.patient).toMatchObject({ id: 'p1', occupation: 'Teacher', createdAt: 0, updatedAt: 5, lastName: 'Martin' })
+    expect(res.replaces).toEqual(['old'])
+    expect(res.consultations.every(c => c.patientId === 'p1' && c.id !== 'c1')).toBe(true)
+  })
+
+  it('merge: adds only the consultations the patient does not have', () => {
+    const second: Consultation = { ...consultation, id: 'c2', date: '2026-03-01', title: 'Follow-up', createdAt: 20 }
+    const two = buildCaseFile(patient, [consultation, second], { rubricPath: r => paths[r] ?? null, remedyAbbrev: id => remedies[id] })
+    const onFile = { ...patient, id: 'p7', occupation: 'Retired' }
+    // c1 came in through an earlier import (fresh id, same visit)
+    const earlier = { ...consultation, id: 'x1', patientId: 'p7' }
+    const res = importCaseFile(parseCaseFile(JSON.stringify(two)), ctx({ existing: [onFile], existingConsultations: [earlier] }), 5, 'merge')
+    expect(res.patient).toBe(onFile)
+    expect(res.skipped).toBe(1)
+    expect(res.consultations.map(c => c.title)).toEqual(['Follow-up'])
+    expect(res.consultations[0].patientId).toBe('p7')
+  })
+
+  it('falls back to a new record when replace or merge has no match', () => {
+    const res = importCaseFile(parseCaseFile(JSON.stringify(file)), ctx(), 5, 'merge')
+    expect(res.mode).toBe('new')
+    expect(res.patient.id).not.toBe('p1')
+  })
+
+  it('keeps symptom addedAt and remaps remedy ids in exclusions, family limit and highlight', () => {
+    const c: Consultation = { ...consultation, analysis: { ...consultation.analysis, excludedRemedies: [945], remedyFilter: [945, 5], highlight: [945] } }
+    const f = buildCaseFile(patient, [c], { rubricPath: r => paths[r] ?? null, remedyAbbrev: id => remedies[id] })
+    f.remedies = { 945: 'Puls', 5: 'Acon' }
+    const res = importCaseFile(parseCaseFile(JSON.stringify(f)), ctx({ remedyAbbrev: id => (id === 945 ? 'Other' : remedies[id] ?? `#${id}`), remedyByAbbrev: ab => (ab === 'Puls' ? 1945 : ab === 'Acon' ? 5 : undefined) }))
+    const a = res.consultations[0].analysis
+    expect(a.excludedRemedies).toEqual([1945])
+    expect(a.remedyFilter).toEqual([1945, 5])
+    expect(a.highlight).toEqual([1945])
+    expect(res.consultations[0].clipboards[0].symptoms.map(s => s.addedAt)).toEqual([1, 2])
   })
 
   it('re-links rubrics whose index moved, by path', () => {

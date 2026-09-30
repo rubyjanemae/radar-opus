@@ -1,33 +1,59 @@
+import { useEffect, useSyncExternalStore } from 'react'
 import type { Repertory } from '../../data/repertory'
 import type { Grade } from '../../data/types'
 
 /**
- * Remedy → rubric index for one repertory, built lazily on first use (one pass over all
- * entries, ~1M for publicum) and cached per repertory. Stored as CSR arrays so a remedy's
- * rubrics are a contiguous slice in book order.
+ * Remedy → rubric index for one repertory, cached per repertory. Stored as CSR arrays so a
+ * remedy's rubrics are a contiguous slice in book order: `rubrics[start[id] .. start[id+1])`.
+ *
+ * Built by a counting sort in two tight passes over the raw entry columns (~1M entries for
+ * publicum, a few ms) and, after a repertory loads, ahead of time in an idle callback
+ * (`warmRemedyIndex`), so views read it with `remedyIndexIfReady` / `useRemedyIndex` and never
+ * build it during render.
  */
 export class RemedyIndex {
   readonly rep: Repertory
   private readonly start: Int32Array
-  private readonly rubrics: Int32Array
-  private readonly grades: Uint8Array
+  /** Rubric ids, grouped by remedy, ascending within a remedy. */
+  readonly rubrics: Int32Array
+  /** Grade (1..4) of each entry of `rubrics`. */
+  readonly grades: Uint8Array
   private readonly statsCache = new Map<number, RemedyStats>()
   /** Highest grade used in this repertory (Kent: 3, some books: 4). */
   readonly maxGrade: Grade
 
   constructor(rep: Repertory) {
     this.rep = rep
-    let maxId = 0, total = 0, maxGrade = 1
-    for (let i = 0; i < rep.size; i++) rep.forEachRemedy(i, (id, g) => { if (id > maxId) maxId = id; if (g > maxGrade) maxGrade = g; total++ })
+    const { offsets, data } = rep.rawEntries()
+    const total = offsets[rep.size] ?? data.length
+    let maxId = 0, maxCode = 0
+    for (let k = 0; k < total; k++) {
+      const v = data[k], id = v >> 2
+      if (id > maxId) maxId = id
+      if ((v & 3) > maxCode) maxCode = v & 3
+    }
     const count = new Int32Array(maxId + 2)
-    for (let i = 0; i < rep.size; i++) rep.forEachRemedy(i, id => { count[id + 1]++ })
-    for (let k = 1; k < count.length; k++) count[k] += count[k - 1]
+    for (let k = 0; k < total; k++) count[(data[k] >> 2) + 1]++
+    for (let id = 1; id < count.length; id++) count[id] += count[id - 1]
     this.start = count
-    this.rubrics = new Int32Array(total)
-    this.grades = new Uint8Array(total)
+    const rubrics = new Int32Array(total), grades = new Uint8Array(total)
     const fill = count.slice(0, maxId + 1)
-    for (let i = 0; i < rep.size; i++) rep.forEachRemedy(i, (id, g) => { const p = fill[id]++; this.rubrics[p] = i; this.grades[p] = g })
-    this.maxGrade = maxGrade as Grade
+    for (let i = 0, n = rep.size; i < n; i++) {
+      for (let k = offsets[i], e = offsets[i + 1]; k < e; k++) {
+        const v = data[k], p = fill[v >> 2]++
+        rubrics[p] = i
+        grades[p] = (v & 3) + 1
+      }
+    }
+    this.rubrics = rubrics
+    this.grades = grades
+    this.maxGrade = (maxCode + 1) as Grade
+  }
+
+  /** The slice of `rubrics` / `grades` that belongs to a remedy: [from, to). */
+  range(remedyId: number): [number, number] {
+    if (remedyId < 0 || remedyId + 1 >= this.start.length) return [0, 0]
+    return [this.start[remedyId], this.start[remedyId + 1]]
   }
 
   rubricCount(remedyId: number): number {
@@ -98,10 +124,64 @@ function computeStats(idx: RemedyIndex, remedyId: number): RemedyStats {
 }
 
 const cache = new WeakMap<Repertory, RemedyIndex>()
+const pending = new WeakMap<Repertory, Promise<RemedyIndex>>()
+const listeners = new Set<() => void>()
+let version = 0
 
-/** The (cached) remedy index of a repertory. */
+/** The (cached) remedy index of a repertory, built now if needed. Prefer `remedyIndexIfReady` in render. */
 export function remedyIndex(rep: Repertory): RemedyIndex {
   let idx = cache.get(rep)
-  if (!idx) { idx = new RemedyIndex(rep); cache.set(rep, idx) }
+  if (!idx) {
+    idx = new RemedyIndex(rep)
+    cache.set(rep, idx)
+    version++
+    for (const fn of listeners) fn()
+  }
   return idx
+}
+
+/** The remedy index if it has been built, else null (never builds). */
+export function remedyIndexIfReady(rep: Repertory): RemedyIndex | null {
+  return cache.get(rep) ?? null
+}
+
+type IdleGlobal = { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }
+
+/**
+ * Build the index off the critical path: in an idle callback, or on the next task when
+ * `urgent` (someone is waiting for it). Resolves with the index; repeated calls share one build.
+ */
+export function warmRemedyIndex(rep: Repertory, urgent = false): Promise<RemedyIndex> {
+  const hit = cache.get(rep)
+  if (hit) return Promise.resolve(hit)
+  let p = pending.get(rep)
+  if (p && !urgent) return p
+  const run = new Promise<RemedyIndex>((resolve, reject) => {
+    const go = () => { try { resolve(remedyIndex(rep)) } catch (e) { reject(e) } }
+    const idle = (globalThis as IdleGlobal).requestIdleCallback
+    if (!urgent && idle) idle(go, { timeout: 3000 })
+    else setTimeout(go, 0)
+  })
+  p = p ? Promise.race([p, run]) : run
+  pending.set(rep, p)
+  void p.finally(() => pending.delete(rep)).catch(() => {})
+  return p
+}
+
+/** Subscribe to "some remedy index finished building" (for useSyncExternalStore). */
+export function onRemedyIndexBuilt(fn: () => void): () => void {
+  listeners.add(fn)
+  return () => { listeners.delete(fn) }
+}
+export function remedyIndexVersion() { return version }
+
+/**
+ * The remedy index of `rep` for a component: null until built (the build is started, off the
+ * render path, when missing); re-renders when it is ready.
+ */
+export function useRemedyIndex(rep: Repertory | null | undefined): RemedyIndex | null {
+  useSyncExternalStore(onRemedyIndexBuilt, remedyIndexVersion, remedyIndexVersion)
+  const ready = rep ? cache.get(rep) ?? null : null
+  useEffect(() => { if (rep && !ready) void warmRemedyIndex(rep, true).catch(() => {}) }, [rep, ready])
+  return ready
 }

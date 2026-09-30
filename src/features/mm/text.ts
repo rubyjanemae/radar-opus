@@ -148,7 +148,7 @@ export interface Relation {
   remedies: number[]
 }
 
-const LABEL = /(^|\n|[.;)]\s+)((?:[A-Z][a-z]+(?: [a-z]+){0,3} )?(?:[Cc]omplementary(?: to)?|[Cc]ompare(?: also| especially| its constituents)?|Also compare|Antidotes?(?: to| for [a-z ]+)?|Antidoted by|Incompatible|Inimical|Compatible|Follows? well(?: after)?|Followed(?: well)? by)(?: in [a-z ,]{1,30})?)\s*(?::|(?=\s*\*))/g
+const LABEL = /(^|\n|[.;)]\s+)((?:[A-Z][a-z]+(?: [a-z]+){0,3} )?(?:[Cc]omplementary(?: to)?|[Cc]ompare(?: also| especially| its constituents)?|Also compare|Antidotes?(?: to| for [a-z ]+)?|Antidoted by|Incompatible|Inimical|Compatible|Follows? well(?: after)?|Followed(?: well)? by)(?: in [a-z ,]{1,30})?)\s*(?:\.?:|;|\.(?=\s+\*?[A-Z])|(?=\s*\*))/g
 
 function kindOf(label: string): RelationKind {
   const l = label.toLowerCase()
@@ -183,11 +183,47 @@ export function parseRelationships(text: string, resolver: RemedyResolver, selfI
     const body = text.slice(m.bodyAt, marks[k + 1]?.at ?? text.length).trim()
     if (!body) continue
     const kind = kindOf(m.label)
-    const spans = parseParagraph(body, resolver, { relationship: true, selfId, inimical: kind === 'Inimical' })
-    const remedies = [...new Set(spans.flatMap(s => s.remedyId !== undefined ? [s.remedyId] : []))]
-    out.push({ kind, context: contextOf(m.label), text: body, remedies })
+    // a list label (Complementary, Inimical, Compatible, Follows well) covers its remedy list only: a
+    // later sentence of prose ("Nux intensifies action.") is a separate remark, kept as a Compare note.
+    // Antidote and Compare clauses are prose by nature ("Nux antidotes the nausea…") and stay whole.
+    const [list, rest] = kind === 'Compare' || kind === 'Antidotes' ? [body, ''] : splitListClause(body, resolver, selfId)
+    out.push(clause(kind, contextOf(m.label), list, resolver, selfId))
+    if (rest) out.push(clause('Compare', '', rest, resolver, selfId))
   }
   return out
+}
+
+function clause(kind: RelationKind, context: string, text: string, resolver: RemedyResolver, selfId: number | null): Relation {
+  const spans = parseParagraph(text, resolver, { relationship: true, selfId, inimical: kind === 'Inimical' })
+  const remedies = [...new Set(spans.flatMap(s => s.remedyId !== undefined ? [s.remedyId] : []))]
+  return { kind, context, text, remedies }
+}
+
+/** Balance emphasis markers of a piece cut out of a longer text. */
+function closeStars(s: string, open: boolean): string {
+  const odd = ((s.match(/\*/g)?.length ?? 0) % 2) === 1
+  return !odd ? s : open ? `*${s}` : `${s}*`
+}
+
+/**
+ * Split a labelled clause into its remedy list and any trailing prose: the list ends before the
+ * first later sentence with two or more ordinary words outside remedy names and parentheses.
+ */
+export function splitListClause(body: string, resolver: RemedyResolver, selfId: number | null): [string, string] {
+  const breaks = [...body.matchAll(/\.\s+(?=\*?[A-Z])/g)].map(b => b.index + 1)
+  for (let k = 0; k < breaks.length; k++) {
+    const at = breaks[k]
+    const sentence = body.slice(at, breaks[k + 1] ?? body.length).replace(/\*/g, '').replace(/\([^)]*\)/g, ' ')
+    const spans = parseParagraph(sentence, resolver, { relationship: true, selfId, inimical: true })
+    const prose = spans.filter(s => s.remedyId === undefined).map(s => s.text).join(' ')
+      .split(/[^A-Za-z]+/).filter(w => w.length > 2 && /^[a-z]/.test(w) && !/^(also|and|the|for|with)$/.test(w))
+    if (prose.length >= 2) {
+      const list = closeStars(body.slice(0, at).trim(), false)
+      const rest = closeStars(body.slice(at).trim(), true)
+      return [list, rest]
+    }
+  }
+  return [body, '']
 }
 
 /** Group relation clauses by kind, remedies de-duplicated, in RELATION_ORDER; kinds naming no remedy are left out. */

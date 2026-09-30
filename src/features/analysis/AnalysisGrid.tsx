@@ -6,6 +6,11 @@ import type { AnalysisResult, AnalysisRow, ResolvedSymptom } from '../../engine/
 import type { MenuItem } from '../../ui/Menu'
 import { useContextMenu } from '../../ui/Menu'
 import { exclusionText } from './labels'
+import { gridLabelWidth } from './gridLayout'
+import { GradeMark, GroupMark } from '../../ui/marks'
+
+// re-exported for existing importers; new code imports the marks from ui/marks
+export { GradeMark, GroupMark }
 
 export interface GridProps {
   result: AnalysisResult
@@ -29,15 +34,24 @@ export interface GridProps {
   label?: string
 }
 
+/* Compact (dock) columns are as wide as the main grid's, so a score like "16/29" is never clipped. */
 const SIZES = {
   normal: { label: 340, col: 36, head: 104, row: 24 },
-  compact: { label: 230, col: 30, head: 78, row: 20 },
+  compact: { label: 230, col: 36, head: 78, row: 20 },
 }
+/** Widest the symptom column grows into width the remedy columns leave unused. */
+const LABEL_MAX = 900
+/** Narrowest the symptom column shrinks to, so symptom names stay readable. */
+const LABEL_MIN = 260
 
-/** Grade mark: bar height (1–4 steps) plus colour, never colour alone. */
-export function GradeMark({ g }: { g: number }) {
-  if (!g) return null
-  return <span className={`an-mark m${g}`} aria-hidden="true" />
+/**
+ * Score as shown in a 36px column header: the full label when it fits (≤ 5 characters), else only the
+ * primary value (the header's title carries the full score).
+ */
+export function columnScore(full: string, row: Pick<AnalysisRow, 'score'>): string {
+  if (full.length <= 5) return full
+  const primary = full.includes('/') ? full.slice(0, full.indexOf('/')) : String(Math.round(row.score))
+  return primary.length <= 5 ? primary : `${Math.round(row.score / 1000)}k`
 }
 
 export function SymptomLabel({ s, color }: { s: ResolvedSymptom; color: string }) {
@@ -46,9 +60,9 @@ export function SymptomLabel({ s, color }: { s: ResolvedSymptom; color: string }
     <>
       <span className="an-swatch" style={{ background: color }} aria-hidden="true" />
       <span className={`an-weight w${w}`} title={w === 0 ? 'Intensity 0: ignored in the analysis' : `Intensity ×${w}`}>{w === 0 ? '0' : `×${w}`}</span>
-      {s.symptom.eliminatory && <span className="an-flag f-e" title="Eliminative: only remedies in this symptom remain">E</span>}
+      {s.eliminative && <span className="an-flag f-e" title={s.eliminativeRule === 'must-cover-strong' ? 'Eliminative (Kent: must cover intensity ≥ 3)' : s.eliminativeRule === 'marked-mental' ? 'Eliminative (Kent: marked mental symptom)' : 'Eliminative: only remedies in this symptom remain'}>E</span>}
       {s.symptom.exclusive && <span className="an-flag f-x" title="Excluding: remedies in this symptom are removed">X</span>}
-      {s.symptom.group && <span className="an-flag f-g" title={`Group ${s.symptom.group}`}>{s.symptom.group}</span>}
+      {s.symptom.group && <GroupMark letter={s.symptom.group} />}
       {s.symptom.causal && <span className="an-flag f-c" title="Causal">C</span>}
       <span className="an-label-text">{s.label}</span>
       {s.missing && <span className="an-flag f-m" title="Repertory not loaded">?</span>}
@@ -167,7 +181,27 @@ const RowCells = memo(function RowCells(p: CellsProps) {
     )
   }
   return <>{out}</>
-})
+}, sameCells)
+
+/**
+ * RowCells re-renders only when a cell it draws would change: a new analysis (an intensity key, another
+ * strategy) keeps most cells as they were, so only the columns whose remedy or grade moved are rebuilt.
+ */
+function sameCells(a: CellsProps, b: CellsProps): boolean {
+  if (a.from !== b.from || a.to !== b.to || a.abs !== b.abs || a.i !== b.i || a.label !== b.label || a.col !== b.col || a.activeC !== b.activeC
+    || a.selectedSymptom !== b.selectedSymptom || a.highlight !== b.highlight || a.pinned !== b.pinned || a.catalog !== b.catalog) return false
+  if (a.rows === b.rows && a.s === b.s) return true
+  const sa = a.s, sb = b.s
+  if (sa.label !== sb.label || sa.baseGrades !== sb.baseGrades || sa.generals.length !== sb.generals.length) return false
+  const i = a.i, sel = a.selectedSymptom
+  for (let j = Math.max(0, a.from - 1); j < a.to; j++) {
+    const x = a.rows[j], y = b.rows[j]
+    if (x === y) continue
+    if (!x || !y || x.remedyId !== y.remedyId || x.grades[i] !== y.grades[i] || !x.excluded !== !y.excluded) return false
+    if (sel != null && !x.grades[sel] !== !y.grades[sel]) return false
+  }
+  return true
+}
 
 interface RowProps {
   s: ResolvedSymptom
@@ -247,6 +281,7 @@ const HeadCells = memo(function HeadCells(p: HeadCellsProps) {
     if (pinned) cls += ' pinned'
     if (pinned && !p.pinned!.has(rows[j - 1]?.remedyId)) cls += ' pin-first'
     const score = formatScore(result.strategy, row)
+    const shown = columnScore(score, row)
     out.push(
       <div
         key={row.remedyId}
@@ -262,7 +297,7 @@ const HeadCells = memo(function HeadCells(p: HeadCellsProps) {
         <span className="an-rank">{row.rank || '–'}</span>
         {pinned && <span className="sr-only">pinned beyond the limit</span>}
         <span className="an-abbrev">{rem.abbrev}</span>
-        <span className="an-score">{score}</span>
+        <span className="an-score">{shown}</span>
       </div>,
     )
   }
@@ -341,7 +376,28 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
   useEffect(() => { boxRect.current = null }, [vp.width, vp.height])
-  const wantLabel = vp.width && !p.compact ? Math.round(Math.max(200, Math.min(base.label, vp.width * 0.4))) : base.label
+  // sideways scrolling comes to rest on whole remedy columns (the label width leaves a whole number of them
+  // visible, so the right edge never cuts a column). Done on scrollend: CSS scroll snapping would need snap
+  // areas for every column, and the columns are virtualised.
+  const colW = S.col
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onEnd = () => {
+      const x = el.scrollLeft, max = el.scrollWidth - el.clientWidth
+      const r = x % colW
+      if (r < 0.5 || colW - r < 0.5 || x >= max - 0.5) return
+      const still = document.documentElement.dataset.reduceMotion === 'true' || matchMedia('(prefers-reduced-motion: reduce)').matches
+      el.scrollTo({ left: Math.min(max, Math.round(x / colW) * colW), behavior: still ? 'instant' : 'smooth' })
+    }
+    el.addEventListener('scrollend', onEnd)
+    return () => el.removeEventListener('scrollend', onEnd)
+  }, [colW])
+  // narrow panes: the label shrinks so more remedy columns stay visible; few remedies: it grows into the unused width
+  // overflowing columns: the label takes up the remainder so the last visible column is whole
+  const wantLabel = p.compact
+    ? gridLabelWidth(vp.width, nc, { base: base.label, col: base.col, min: base.label, max: base.label })
+    : gridLabelWidth(vp.width, nc, { base: base.label, col: base.col, min: LABEL_MIN, max: LABEL_MAX })
   useLayoutEffect(() => { if (wantLabel !== labelW) setLabelW(wantLabel) }, [wantLabel, labelW])
   const [active, setActive] = useState<{ r: number; c: number }>({ r: 0, c: 0 })
   const focusWithin = useRef(false)

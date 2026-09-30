@@ -23,11 +23,17 @@
   --text-3: #5c6370;
   /* count/meta text on a --bg-selected row (--text-3 is too light there) */
   --text-3-on-selected: #4b5260;
+  /* weak selection fill (the current book row): keeps grade colours at AA contrast */
+  --sel-weak: #f0f4fc;
   --accent: #2459c9;
   --accent-2: #1d4aa9;
   --accent-soft: #e5edfb;
   /* text and icons on an accent background (same in both themes) */
   --on-accent: #fff;
+  /* printed-page surface (case report preview) */
+  --paper: #fff;
+  /* secondary text on filled accent surfaces */
+  --on-accent-muted: rgba(255, 255, 255, .8);
   --accent-fill: #2459c9;
   --accent-fill-2: #1d4aa9;
   /* keyboard-active item in menus and listboxes: white text at >= 4.5:1 in both themes */
@@ -38,6 +44,7 @@
   --danger: #c8372d;
   --success: #23864f;
   --warning: #b77905;
+  --on-warning: #16130b;
 
   --g1: #3d4450;
   --g2: #1c55b8;
@@ -62,13 +69,17 @@
   /* control sizes shared by the menubar and toolbars */
   --ctl-h-sm: 24px;
   --ctl-h: 28px;
+  --ctl-h-lg: 28px;
 
   /* stacking order */
   --z-pane: 60;
   --z-dropdown: 800;
   --z-overlay: 850;
   --z-dialog: 900;
+  --z-palette: 950;
+  --z-report: 950;
   --z-menu: 1000;
+  --z-tooltip: 1050;
   --z-toast: 1100;
   --z-tour: 1200;
 
@@ -91,6 +102,7 @@
     --text-2: #aab1bd;
     --text-3: #949cab;
     --text-3-on-selected: #aab1bd;
+    --sel-weak: #1f2633;
     --accent: #6d9cf5;
     --accent-2: #8fb2f7;
     --accent-soft: #1f2f4d;
@@ -100,13 +112,15 @@
     --focus: #6d9cf5;
     --danger: #ef6b61;
     --success: #4cc27f;
+    --paper: #fff;
     --warning: #e3a936;
+    --on-warning: #16130b;
     --g1: #c3c9d3;
     --g2: #7ea8f7;
     --g3: #f47a6e;
     --g4: #ff9d8f;
     --shadow-2: 0 8px 28px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4);
-    --scrim: rgba(0, 0, 0, .5);
+    --scrim: rgba(0, 0, 0, .55);
     --scrim-strong: rgba(0, 0, 0, .62);
     --inverse-bg: #2b313c;
     color-scheme: dark;
@@ -128,6 +142,7 @@
   --text-2: #aab1bd;
   --text-3: #949cab;
   --text-3-on-selected: #aab1bd;
+  --sel-weak: #1f2633;
   --accent: #6d9cf5;
   --accent-2: #8fb2f7;
   --accent-soft: #1f2f4d;
@@ -136,13 +151,15 @@
   --focus: #6d9cf5;
   --danger: #ef6b61;
   --success: #4cc27f;
+  --paper: #fff;
   --warning: #e3a936;
+  --on-warning: #16130b;
   --g1: #c3c9d3;
   --g2: #7ea8f7;
   --g3: #f47a6e;
   --g4: #ff9d8f;
   --shadow-2: 0 8px 28px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4);
-  --scrim: rgba(0, 0, 0, .5);
+  --scrim: rgba(0, 0, 0, .55);
   --scrim-strong: rgba(0, 0, 0, .62);
   --inverse-bg: #2b313c;
   color-scheme: dark;
@@ -162,12 +179,11 @@ body {
 }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: default; }
-:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 /* focusable scroll panes (lists, trees, grids, document bodies): their active item shows where the
    keyboard is, so the pane itself gets a quiet inset ring instead of a heavy rectangle */
 .scroll-pane:focus-visible, [data-pane]:focus-visible,
 [role="tree"]:focus-visible, [role="listbox"]:focus-visible, [role="grid"]:focus-visible, [role="tabpanel"]:focus-visible {
-  outline: none; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--focus) 40%, transparent);
+  outline: none; box-shadow: inset 0 1px 0 0 var(--accent);
 }
 ::selection { background: var(--bg-selected); }
 
@@ -188,4 +204,40 @@ button { cursor: default; }
 .kbd {
   font: 500 10.5px/1 var(--font-ui); color: var(--text-3);
   border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px; padding: 2px 4px; background: var(--bg-elev);
+}
+
+/* ───────── focus rings: visible, high contrast ───────── */
+:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+button:focus-visible, a:focus-visible, [role="tab"]:focus-visible, [role="radio"]:focus-visible, .btn:focus-visible {
+  outline: 2px solid var(--focus); outline-offset: 1px;
+}
+input[type="range"]:focus-visible, input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (prefers-contrast: more) {
+  :root { --border: #8d94a1; --border-strong: #5e6572; --text-3: #4b5260; --focus: #0b4fd6; }
+  :focus-visible, button:focus-visible { outline-width: 3px; }
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --border: #5a616d; --border-strong: #7a8190; --text-3: #aab1bd; --focus: #9cc0ff; }
+}
+@media (forced-colors: active) {
+  :focus-visible, button:focus-visible { outline: 3px solid Highlight; outline-offset: 1px; }
+  .seg-btn:is([aria-checked="true"], [aria-pressed="true"], .on) { outline: 2px solid Highlight; }
+}
+
+/* ───────── segmented control (shared): a strip of buttons, the chosen one tinted with the accent ───────── */
+.seg { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-sunken); }
+.seg-btn {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px; border: 0; border-radius: 4px;
+  background: transparent; color: var(--text-2); font-size: var(--fs-sm); font-weight: 500;
+}
+.seg-btn:hover { color: var(--text); background: var(--bg-hover); }
+.seg-btn:is([aria-checked="true"], [aria-pressed="true"], .on) { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+/* ───────── reduced motion (system preference or the setting) ───────── */
+@media (prefers-reduced-motion: reduce) {
+  html, body, *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+  .skeleton, .boot-bar span, .spin, .spin-dot { animation: none !important; }
+}
+:root[data-reduce-motion="true"], :root[data-reduce-motion="true"] *, :root[data-reduce-motion="true"] *::before, :root[data-reduce-motion="true"] *::after {
+  animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important;
 }

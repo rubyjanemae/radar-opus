@@ -58,8 +58,17 @@ export function registerCoreCommands(catalog: Catalog) {
     // Tabs. Browser-safe keys first: the browser keeps Ctrl+W, Ctrl+Tab and Ctrl+PageUp/PageDown for its own tabs
     // (menus show the first key a page can receive; the Mod variants still work where the browser lets them through).
     { id: 'tab.close', title: 'Close tab', category: 'View', keys: ['Alt+W', 'Mod+W'], enabled: () => !!st().activeTabId, run: () => { const id = st().activeTabId; if (id) actions.closeTab(id) } },
-    { id: 'tab.next', title: 'Next tab', category: 'View', keys: ['Alt+PageDown', 'Mod+PageDown'], enabled: () => st().tabs.length > 1, run: () => actions.cycleTab(1) },
-    { id: 'tab.prev', title: 'Previous tab', category: 'View', keys: ['Alt+PageUp', 'Mod+PageUp'], enabled: () => st().tabs.length > 1, run: () => actions.cycleTab(-1) },
+    { id: 'tab.next', title: 'Next tab', category: 'View', keys: ['Alt+PageDown', 'Mod+PageDown'], allowInInput: true, enabled: () => st().tabs.length > 1, run: () => actions.cycleTab(1) },
+    // Ctrl+1..5 open the documents (RadarOpus); Ctrl+6..8 go to that tab and Ctrl+9 to the last, as in a browser
+    ...[6, 7, 8].map(n => ({
+      id: `tab.goto.${n}`, title: `Go to tab ${n}`, category: 'View', keys: [`Mod+${n}`], allowInInput: true, keywords: 'switch tab number',
+      enabled: () => st().tabs.length >= n, run: () => { const t = st().tabs[n - 1]; if (t) actions.activateTab(t.id) },
+    })),
+    {
+      id: 'tab.last', title: 'Go to last tab', category: 'View', keys: ['Mod+9'], allowInInput: true, keywords: 'switch tab number',
+      enabled: () => st().tabs.length > 0, run: () => { const t = st().tabs[st().tabs.length - 1]; if (t) actions.activateTab(t.id) },
+    },
+    { id: 'tab.prev', title: 'Previous tab', category: 'View', keys: ['Alt+PageUp', 'Mod+PageUp'], allowInInput: true, enabled: () => st().tabs.length > 1, run: () => actions.cycleTab(-1) },
 
     // Repertories: each opens in its own tab (loading, errors and retry are handled by the repertory feature)
     ...catalog.repertoryInfos.map(r => ({
@@ -68,7 +77,7 @@ export function registerCoreCommands(catalog: Catalog) {
     })),
 
     // App
-    { id: 'app.palette', title: 'Command palette', category: 'Tools', keys: ['Mod+K', 'Mod+Shift+P'], allowInInput: true, run: () => actions.setCommandPalette(!st().commandPaletteOpen) },
+    { id: 'app.palette', title: 'Command palette', category: 'Tools', keys: ['Mod+K', 'Mod+Shift+P'], allowInInput: true, inModal: '.pal', run: () => actions.setCommandPalette(!st().commandPaletteOpen) },
   ])
   registerFeatureCommands(catalog)
 }

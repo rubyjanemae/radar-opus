@@ -9,4 +9,7 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 export default defineConfig({
   plugins: [react()],
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
+  // keep function names in production: readable component stacks in error reports, and the e2e
+  // render-count test identifies components by name against a production build too
+  build: { rolldownOptions: { output: { keepNames: true } } },
 })

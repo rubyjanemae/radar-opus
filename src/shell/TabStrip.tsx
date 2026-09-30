@@ -8,12 +8,19 @@ import type { Catalog } from '../data/catalog'
 import type { AppState } from '../state/store'
 import { useContextMenu } from '../ui/Menu'
 import type { MenuItem } from '../ui/Menu'
-import { tabTitle } from './tabTitle'
+import { splitTabTitle, tabTitle } from './tabTitle'
+import { cancelDocumentFocus, focusActiveDocument, focusDocumentWhenReady } from './TabHost'
 
 const ICONS = {
   repertory: BookOpen, repertories: Library, analysis: BarChart3, 'materia-medica': BookText, remedy: FlaskConical,
   patients: Users, patient: User, search: Search, families: Network,
 } as const
+
+function TabTitleText({ kind, title }: { kind: Tab['kind']; title: string }) {
+  const parts = splitTabTitle(kind, title)
+  if (!parts) return <span className="tab-title">{title}</span>
+  return <span className="tab-title tab-title-split"><span className="tab-title-head">{parts[0]}</span><span className="tab-title-tail">{parts[1]}</span></span>
+}
 
 /** The single tab panel every tab controls (rendered by the shell around the active document). */
 export const TAB_PANEL_ID = 'document-panel'
@@ -30,6 +37,9 @@ const parseKey = (k: string): TabView => {
   const [id, kind, pinned, title, subtitle] = k.split(SEP)
   return { id, kind: kind as Tab['kind'], pinned: pinned === '1', title, subtitle: subtitle || undefined }
 }
+/** The system setting or the app's own Reduce motion setting (WorkspaceChrome sets data-reduce-motion on <html>). */
+const reducedMotion = () => document.documentElement.dataset.reduceMotion === 'true' || !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+
 /** The full tab record, read when an action needs it (duplicate) rather than subscribed to. */
 const fullTab = (id: string) => useApp.getState().tabs.find(t => t.id === id)
 
@@ -40,6 +50,7 @@ export const TabStrip = memo(function TabStrip() {
   const tabs = useMemo(() => keys.map(parseKey), [keys])
   const activeId = useApp(s => s.activeTabId)
   const cm = useContextMenu()
+  const all = useContextMenu()
   const [drag, setDrag] = useState<{ id: string; over: number } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const [overflow, setOverflow] = useState({ left: false, right: false })
@@ -70,7 +81,7 @@ export const TabStrip = memo(function TabStrip() {
 
   const scrollBy = (dir: -1 | 1) => {
     const el = listRef.current
-    if (el) el.scrollBy({ left: dir * Math.max(120, el.clientWidth * 0.7), behavior: 'smooth' })
+    if (el) el.scrollBy({ left: dir * Math.max(120, el.clientWidth * 0.7), behavior: reducedMotion() ? 'auto' : 'smooth' })
   }
 
   const menuFor = (t: TabView): MenuItem[] => [
@@ -100,6 +111,7 @@ export const TabStrip = memo(function TabStrip() {
         onKeyDown={e => {
           if (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'Home' || e.key === 'End') {
             e.preventDefault()
+            cancelDocumentFocus()
             if (e.key === 'Home' || e.key === 'End') { const t = tabs[e.key === 'Home' ? 0 : tabs.length - 1]; if (t) actions.activateTab(t.id) }
             else actions.cycleTab(e.key === 'ArrowRight' ? 1 : -1)
             requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus())
@@ -124,6 +136,8 @@ export const TabStrip = memo(function TabStrip() {
               onDrop={e => { e.preventDefault(); if (drag) actions.moveTab(drag.id, i); setDrag(null) }}
               onDragEnd={() => setDrag(null)}
               onMouseDown={e => { if (e.button === 1) { e.preventDefault(); actions.closeTab(t.id) } else if (e.button === 0) actions.activateTab(t.id) }}
+              // a click on a tab (the active one too) continues in its document, as switching with a command does
+              onClick={e => { if (e.button === 0) focusDocumentWhenReady() }}
               onContextMenu={e => cm.open(e, menuFor(t))}
             >
               <div
@@ -136,11 +150,12 @@ export const TabStrip = memo(function TabStrip() {
                 tabIndex={active ? 0 : -1}
                 onKeyDown={e => {
                   if (e.key === 'Delete') { e.preventDefault(); actions.closeTab(t.id) }
+                  if (e.key === 'Enter' && active) { e.preventDefault(); focusActiveDocument() }
                   if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') { e.preventDefault(); cm.openAt(e.currentTarget, menuFor(t)) }
                 }}
               >
                 <Icon size={13} className="tab-icon" aria-hidden />
-                <span className="tab-title">{title}</span>
+                <TabTitleText kind={t.kind} title={title} />
                 {showSub && <span className="tab-sub">{subtitle}</span>}
                 {t.pinned && <Pin size={11} className="tab-pin" aria-label="Pinned" />}
               </div>
@@ -159,7 +174,7 @@ export const TabStrip = memo(function TabStrip() {
           <button className="tab-scroll icon-btn" aria-label="Scroll tabs right" title="Scroll tabs right" tabIndex={-1} disabled={!overflow.right} onClick={() => scrollBy(1)}>
             <ChevronRight size={14} aria-hidden />
           </button>
-          <button className="tab-all icon-btn" aria-label={`All ${tabs.length} tabs`} title="All tabs" aria-haspopup="menu" onClick={e => cm.openAt(e.currentTarget, allTabsMenu())}>
+          <button className="tab-all icon-btn" aria-label={`All ${tabs.length} tabs`} title="All tabs" aria-haspopup="menu" aria-expanded={all.isOpen} onClick={e => all.openAt(e.currentTarget, allTabsMenu())}>
             <ChevronDown size={14} aria-hidden />
           </button>
         </>
@@ -169,6 +184,7 @@ export const TabStrip = memo(function TabStrip() {
         <Plus size={14} aria-hidden />
       </button>
       {cm.element}
+      {all.element}
     </div>
   )
 })

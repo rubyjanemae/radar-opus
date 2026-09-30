@@ -1,8 +1,9 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { History, Loader2, Pill, Search, SearchCode, X } from 'lucide-react'
 import { formatKeys, isMac } from '../../commands/registry'
 import { useCatalog } from '../../data/CatalogContext'
 import type { Repertory } from '../../data/repertory'
+import { useShallow } from 'zustand/react/shallow'
 import { actions, useApp } from '../../state/store'
 import { goToRef, takeRefs } from '../repertory/ops'
 import { DEFAULT_TAKE } from '../repertory/take'
@@ -29,11 +30,12 @@ export function QuickFind() {
   const catalog = useCatalog()
   const recent = useApp(s => s.recentSearches)
   // the repertory tab the user last worked in, for its recent rubrics
-  const recentTab = useApp(s => {
+  // only the fields recentRubrics reads, so unrelated tab changes (scroll, selection) do not re-render the toolbar
+  const recentTab = useApp(useShallow((s): RecentSource => {
     const a = s.tabs.find(t => t.id === s.activeTabId)
     const t = a?.kind === 'repertory' ? a : s.tabs.find(x => x.kind === 'repertory')
-    return t?.kind === 'repertory' ? t : null
-  })
+    return t?.kind === 'repertory' ? { repertory: t.repertory, recent: t.recent, back: t.back } : { repertory: null, recent: undefined, back: undefined }
+  }))
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
@@ -53,7 +55,8 @@ export function QuickFind() {
     let alive = true
     const { pending } = readyTargets(tabLike)
     if (!pending.length) return
-    prepare(pending).then(() => alive && setVersion(v => v + 1), e => alive && setError(e instanceof Error ? e.message : String(e)))
+    // the first results after indexing render in a transition, so typing stays responsive meanwhile
+    prepare(pending).then(() => { if (alive) startTransition(() => setVersion(v => v + 1)) }, e => alive && setError(e instanceof Error ? e.message : String(e)))
     return () => { alive = false }
   }, [open, tabLike])
 
@@ -63,6 +66,8 @@ export function QuickFind() {
     const flat: Item[] = []
     let total = 0
     const push = (g: Group, item: Item) => { g.items.push({ item, n: flat.length }); flat.push(item) }
+    // closed: nothing is shown, so nothing is searched (keeps typing elsewhere free of this work)
+    if (!open) return { groups, flat, total, pending: [] as string[] }
     const { targets, pending } = readyTargets(tabLike)
     if (!q) {
       if (recent.length) {
@@ -111,7 +116,7 @@ export function QuickFind() {
     push(g, { kind: 'search', query: deferred })
     groups.push(g)
     return { groups, flat, total, pending }
-  }, [deferred, q, tabLike, recent, recentTab, catalog, version]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, deferred, q, tabLike, recent, recentTab, catalog, version]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const hl = useMemo(() => {
     const res = q ? search(deferred, [], { prefixLast: true }) : null
@@ -291,11 +296,13 @@ function OptionBody({ item, hl, total }: { item: Item; hl: ((n: string) => boole
   )
 }
 
-function recentRubrics(catalog: Catalog, tab: RepertoryTab | null): { rep: Repertory | undefined; items: number[] } {
-  if (!tab) return { rep: undefined, items: [] }
+type RecentSource = { repertory: string | null; recent: RepertoryTab['recent']; back: RepertoryTab['back'] | undefined }
+
+function recentRubrics(catalog: Catalog, tab: RecentSource): { rep: Repertory | undefined; items: number[] } {
+  if (!tab.repertory) return { rep: undefined, items: [] }
   const rep = catalog.repertory(tab.repertory)
   if (!rep) return { rep, items: [] }
-  const src = tab.recent?.length ? tab.recent : [...tab.back].reverse()
+  const src = tab.recent?.length ? tab.recent : [...(tab.back ?? [])].reverse()
   const seen = new Set<number>()
   const items: number[] = []
   for (const i of src) {

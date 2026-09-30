@@ -3,7 +3,6 @@
  *
  *   const idx = await loadFamilies()          // fetches public/data/families.json once
  *   groupsOfRemedy(id)                        // [] until loaded; primary group first, kingdom last
- *   remediesOfGroup('plant:family:Solanaceae') // [] until loaded
  *
  * Group ids are stable strings: `k:<kingdom>`, `plant:family:<Family>`, `plant:order:<Order>`,
  * `mineral:el:<Symbol>`, `mineral:salt:<salt>`, `animal:<group>`, `nosode:<type>`, `theme:<id>` …
@@ -42,9 +41,6 @@ export function familiesIfLoaded(): FamilyIndex | null { return index }
 
 /** Groups containing a remedy, most useful first (primary group, other leaves, lineage, kingdom). Empty until loaded. */
 export function groupsOfRemedy(remedyId: number): Node[] { return index ? index.groupsOfRemedy(remedyId) : [] }
-
-/** All remedies of a group (sub-groups included). Empty until loaded or for an unknown id. */
-export function remediesOfGroup(groupId: string): number[] { return index ? index.remediesOf(groupId) : [] }
 
 export function onFamiliesChanged(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn) } }
 

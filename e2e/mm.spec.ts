@@ -56,9 +56,14 @@ test('materia medica: full-text search with hits and next/previous', async ({ pa
   const hits = page.getByRole('listbox', { name: 'Search results' })
   await expect(hits.getByRole('option').first()).toBeVisible()
   await expect(hits).toContainText('Nat-m')
+  // the search box names the results region it drives
+  await expect(box).toHaveAttribute('aria-controls', 'mm-results')
+  await expect(page.locator('#mm-results')).toContainText('Nat-m')
   // Enter goes to the first hit and marks it
   await box.press('Enter')
   await expect(reader(page).locator('mark.mm-hit.current')).toBeVisible()
+  // the current hit's text colour comes from the --on-warning token
+  expect(await reader(page).locator('mark.mm-hit.current').first().evaluate(el => getComputedStyle(el).color)).toBe('rgb(22, 19, 11)')
   const first = await reader(page).locator('.mm-head h1').textContent()
   const count = page.locator('.mm-search-count')
   await expect(count).toHaveText(/^1\/\d+$/)
@@ -84,7 +89,7 @@ test('remedy picker (Ctrl+4) and the remedy information window', async ({ page }
   await expect(dlg.getByRole('option').first()).toContainText('Nat-m')
   await page.keyboard.press('Enter')
   await expect(dlg).toBeHidden()
-  const view = page.locator('.ri-view')
+  const view = page.locator('.tab-doc[data-active] .ri-view')
   await expect(view.locator('h1')).toHaveText('Natrium Muriaticum')
   await expect(view).toContainText('Boericke keynotes')
 
@@ -113,7 +118,7 @@ test('remedy picker (Ctrl+4) and the remedy information window', async ({ page }
   await kn.focus()
   await page.keyboard.press('Enter')
   await expect(page.locator('.tab.active, [role="tab"][aria-selected="true"]').first()).toBeVisible()
-  await expect(page.locator('.ri-view')).toBeHidden()
+  await expect(page.locator('.tab-doc[data-active] .ri-view')).toBeHidden()
 
   // Open in MM from the remedy window
   await page.keyboard.press('Control+4')
@@ -127,7 +132,7 @@ test('remedy without a monograph shows a helpful state', async ({ page }) => {
   await page.keyboard.press('Control+4')
   await page.keyboard.type('Accipiter')
   await page.keyboard.press('Enter')
-  const view = page.locator('.ri-view')
+  const view = page.locator('.tab-doc[data-active] .ri-view')
   await expect(view.locator('.ri-nomono')).toContainText('No monograph in Boericke')
   await expect(view.getByRole('button', { name: /Open in MM/ })).toBeDisabled()
 })
@@ -232,7 +237,7 @@ test.describe('remedy information window at 1152x720', () => {
     await page.keyboard.press('Control+4')
     await page.keyboard.type('sulphur')
     await page.keyboard.press('Enter')
-    const view = page.locator('.ri-view')
+    const view = page.locator('.tab-doc[data-active] .ri-view')
     await expect(view.locator('h1')).toHaveText('Sulphur')
     // name and actions on their own rows, secondary actions in a More menu
     const head = await view.locator('.ri-head').boundingBox()
@@ -259,7 +264,7 @@ test.describe('remedy information window at 1152x720', () => {
     await page.getByRole('tab', { name: /Mind/ }).first().click()
     await page.getByRole('tab', { name: /Sulph/ }).first().click()
     await page.keyboard.press('2')
-    await expect(page.locator('.ri-view').getByRole('tab', { name: /Relationships/ })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.locator('.tab-doc[data-active] .ri-view').getByRole('tab', { name: /Relationships/ })).toHaveAttribute('aria-selected', 'true')
     const compare = page.locator('.ri-relgroup', { hasText: 'Compare' }).first()
     for (const ab of ['Lyc', 'Sep', 'Puls', 'Calc']) await expect(compare.locator('.ri-chip b', { hasText: new RegExp(`^${ab}$`) })).toBeVisible()
     // chip abbreviations never wrap
@@ -270,7 +275,7 @@ test.describe('remedy information window at 1152x720', () => {
 
 test('relationships that trailed other sections are parsed (Ars, Lyc→Calc, Calc inimical Sulph)', async ({ page }) => {
   await openApp(page)
-  const view = page.locator('.ri-view')
+  const view = page.locator('.tab-doc[data-active] .ri-view')
   const open = async (q: string, name: string) => {
     await page.keyboard.press('Control+4')
     await page.keyboard.type(q)
@@ -410,7 +415,7 @@ test('remedy window: families expand into a virtual grid; sources and notes', as
   await page.keyboard.press('Control+4')
   await page.keyboard.type('puls')
   await page.keyboard.press('Enter')
-  const view = page.locator('.ri-view')
+  const view = page.locator('.tab-doc[data-active] .ri-view')
   await view.getByRole('tab', { name: 'Families' }).click()
   const plants = view.locator('.ri-relgroup', { hasText: /Kingdom: Plant/i })
   const total = Number((await plants.locator('h3 .badge').textContent())!.replace(/\D/g, ''))
@@ -432,4 +437,89 @@ test('remedy window: families expand into a virtual grid; sources and notes', as
   await expect(view.locator('.ri-facts')).toContainText('Weeps telling her symptoms.')
   await view.getByRole('tab', { name: 'Sources & notes' }).click()
   await expect(note).toHaveValue('Weeps telling her symptoms.')
+})
+
+test('materia medica: Alt+←/→ from a remedy link keep focus in the view; short tab title', async ({ page }) => {
+  await openMM(page)
+  await page.getByRole('textbox', { name: 'Filter remedies' }).fill('nat-m')
+  await page.keyboard.press('Enter')
+  await expect(reader(page).locator('.mm-head h1')).toHaveText('NATRIUM MURIATICUM')
+  await expect(page.locator('.tabstrip [role=tab][aria-selected=true]')).toHaveText(/Materia medica\s*Nat-m/)
+  const rel = reader(page).locator('section.mm-sec', { has: page.locator('h2', { hasText: 'Relationship' }) })
+  await rel.locator('button.mm-rem', { hasText: 'Sepia' }).focus()
+  await page.keyboard.press('Enter')
+  await expect(reader(page).locator('.mm-head h1')).toHaveText('SEPIA OFFICINALIS')
+  // the focused link belongs to the page being replaced: focus moves to the reader, not the document
+  await reader(page).locator('button.mm-rem').first().focus()
+  await page.keyboard.press('Alt+ArrowLeft')
+  await expect(reader(page).locator('.mm-head h1')).toHaveText('NATRIUM MURIATICUM')
+  await expect(reader(page)).toBeFocused()
+  await page.keyboard.press('Alt+ArrowRight')
+  await expect(reader(page).locator('.mm-head h1')).toHaveText('SEPIA OFFICINALIS')
+  expect(await page.evaluate(() => !!document.activeElement?.closest('.mm-view'))).toBe(true)
+})
+
+test('remedy picker: announces the count, list is focusable, Esc gives focus back', async ({ page }) => {
+  await openMM(page)
+  const list = page.getByRole('listbox', { name: 'Boericke remedies' })
+  await expect(list).toBeFocused()
+  await page.keyboard.press('Control+4')
+  const dlg = page.getByRole('dialog', { name: 'Remedies' })
+  await page.keyboard.type('nat')
+  await expect(dlg.getByRole('status')).toHaveText(/^\d+ remedies match$/)
+  // the list is a tab stop and navigable itself
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Tab')
+  await expect(dlg.getByRole('listbox', { name: 'Remedies' })).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(dlg.locator('.rp-row.on .rp-abbr')).toHaveText('Nat-c')
+  await dlg.getByRole('textbox', { name: 'Search remedies' }).fill('zzqqx')
+  await expect(dlg.getByRole('status')).toHaveText('No remedy matches')
+  await page.keyboard.press('Escape')
+  await expect(dlg).toBeHidden()
+  await expect(list).toBeFocused()
+})
+
+test('relationships: labels ending in “.”, “;” or “.:” (Apis, Nux-v) and prose kept out of lists (Sep)', async ({ page }) => {
+  await openApp(page)
+  const view = page.locator('.tab-doc[data-active] .ri-view')
+  const open = async (q: string, name: RegExp) => {
+    await page.keyboard.press('Control+4')
+    await page.keyboard.type(q)
+    await page.keyboard.press('Enter')
+    await expect(view.locator('h1')).toHaveText(name)
+    await view.getByRole('tab', { name: 'Relationships' }).click()
+  }
+  const chips = (kind: string) => view.locator(`.ri-rel-${kind} .ri-chip b`)
+  await open('apis', /^Apis Mellif/)
+  await expect(chips('inimical')).toHaveText(['Rhus-t'])
+  await expect(chips('complementary')).toHaveText(['Nat-m'])
+  await open('nux-v', /^Nux Vomica/)
+  await expect(chips('complementary')).toHaveText(['Sulph', 'Sep'])
+  await open('sep', /^Sepia/)
+  await expect(chips('complementary')).toContainText(['Nat-m'])
+  await expect(chips('complementary').filter({ hasText: /^Nux-v$/ })).toHaveCount(0)
+})
+
+test('materia medica: active option on focus, plain subtitles, results active descendant, one main', async ({ page }) => {
+  await openMM(page)
+  expect(await page.locator('main main, main [role=main]').count()).toBe(0)
+  const list = page.getByRole('listbox', { name: 'Boericke remedies' })
+  await list.focus()
+  const first = await list.getAttribute('aria-activedescendant')
+  expect(first).toMatch(/^mm-opt-\d+$/)
+  await page.keyboard.press('Shift+F10')
+  await expect(page.getByRole('menu')).toBeVisible()
+  await page.keyboard.press('Escape')
+  // no markdown emphasis in the list subtitles
+  await page.getByRole('textbox', { name: 'Filter remedies' }).fill('eosin')
+  await expect(page.locator('.mm-row-common').first()).toHaveText('(EOSIN)')
+  // full-text results: ArrowDown sets the active descendant
+  await page.keyboard.press('/')
+  await page.getByRole('textbox', { name: 'Search the materia medica' }).fill('craving salt')
+  const hits = page.getByRole('listbox', { name: 'Search results' })
+  await expect(hits.getByRole('option').first()).toBeVisible()
+  await hits.focus()
+  await page.keyboard.press('ArrowDown')
+  await expect(hits).toHaveAttribute('aria-activedescendant', /^mm-hit-\d+$/)
 })

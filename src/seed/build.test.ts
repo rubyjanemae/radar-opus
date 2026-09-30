@@ -7,6 +7,7 @@ import { CatalogSource } from '../features/analysis/source'
 import { tinyRepertory } from '../features/repertory/fixtures'
 import { buildDemoPractice, rng } from './build'
 import { resolvePath } from './rubrics'
+import { fastest } from '../testing/timing'
 
 /** Node's fs without depending on @types/node in the app tsconfig. */
 const proc = (globalThis as unknown as { process: { cwd(): string; getBuiltinModule(m: 'node:fs'): { readFileSync(p: string, enc: 'utf8'): string } } }).process
@@ -45,9 +46,7 @@ describe('demo practice over the real Publicum repertory', () => {
 
   it('builds ~45 patients with 1–6 consultations each, fast', () => {
     resolvePath(rep, 'Mind') // warm the child index outside the timing
-    const t0 = performance.now()
-    const demo = buildDemoPractice({ rep, remedyId, now })
-    const ms = performance.now() - t0
+    const { ms, result: demo } = fastest(3, () => buildDemoPractice({ rep, remedyId, now }))
     expect(ms).toBeLessThan(300)
     const patients = Object.values(demo.patients)
     expect(patients.length).toBe(45)

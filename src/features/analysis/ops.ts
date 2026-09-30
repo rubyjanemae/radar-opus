@@ -5,6 +5,7 @@ import { actions, selectActiveConsultation, selectActiveTab, useApp } from '../.
 import type { AnalysisTab, AnalysisViewMode } from '../../state/workspace'
 import { getDialog } from '../../shell/dialogs'
 import { downloadBlob } from '../../ui/files'
+import { openPrescription } from '../patients/ops'
 import type { ExportMeta } from './labels'
 import { sourceFor } from './source'
 import { analyzeCached, repertoriesOf } from './useAnalysis'
@@ -35,11 +36,11 @@ export function activeAnalysisTab(): AnalysisTab | null {
  * another case says so in a banner (see AnalysisView), and its own toolbar acts on its own case.
  * Shared by the families feature, so the family filter and the analysis filters always agree.
  */
-export function targetConsultationId(): string | null {
-  const s = st()
+export function targetConsultationId(s: ReturnType<typeof st> = st()): string | null {
   const c = selectActiveConsultation(s)
   if (c) return c.id
-  const t = activeAnalysisTab()
+  const a = selectActiveTab(s)
+  const t = a?.kind === 'analysis' ? a : null
   if (t && s.consultations[t.consultationId]) return t.consultationId
   for (let i = s.tabs.length - 1; i >= 0; i--) {
     const x = s.tabs[i]
@@ -95,10 +96,19 @@ export function requestFocus(tabId: string) {
   focusListeners.forEach(fn => fn(tabId))
 }
 export function takeFocus(tabId: string): boolean { return pendingFocus.delete(tabId) }
-export function hasPendingFocus(tabId: string): boolean { return pendingFocus.has(tabId) }
 export function onFocusRequest(fn: (tabId: string) => void) {
   focusListeners.add(fn)
   return () => { focusListeners.delete(fn) }
+}
+
+/* Strategy parameter drawer requests (analysis.params): toggle the "Advanced" drawer of an analysis tab. */
+const paramsListeners = new Set<(tabId: string) => void>()
+export function toggleParams(tabId = activeAnalysisTab()?.id) {
+  if (tabId) paramsListeners.forEach(fn => fn(tabId))
+}
+export function onParamsRequest(fn: (tabId: string) => void) {
+  paramsListeners.add(fn)
+  return () => { paramsListeners.delete(fn) }
 }
 
 /* Reveal requests: a remedy to select, pin (when beyond the limit), scroll to and focus in an analysis tab. */
@@ -165,7 +175,7 @@ export function familyFilterDialog(): string | null {
   return FAMILY_FILTER_DIALOGS.find(k => getDialog(k)) ?? null
 }
 
-/** analysis.filter: the family filter when available, else the remedy picker. */
+/** Toolbar filter button: the family filter when available, else the remedy picker. */
 export function openFilter(id = targetConsultationId()) {
   if (!id) return
   actions.openDialog(familyFilterDialog() ?? REMEDY_FILTER_DIALOG, { consultationId: id })
@@ -191,6 +201,20 @@ export function openCompare(remedies?: number[], id = targetConsultationId()) {
   if (id) actions.openDialog(COMPARE_DIALOG, { consultationId: id, initial: remedies })
 }
 
+/**
+ * Prescribe a remedy from the analysis: the patients package's add-prescription flow shows the case's
+ * new-prescription form with the remedy filled in and focused.
+ */
+export function prescribe(remedyId: number, consultationId = targetConsultationId()) {
+  if (!consultationId || !st().consultations[consultationId]) return
+  openPrescription(consultationId, remedyId)
+}
+
+/** Strategy parameters of a case (§6): a full set replaces the saved one; null restores the defaults. */
+export function setParams(params: AnalysisOptions['params'] | null, consultationId = targetConsultationId()) {
+  setOptions({ params: params ?? undefined }, consultationId)
+}
+
 export function openRemedyTab(remedyId: number) { actions.openTab({ kind: 'remedy', remedyId }) }
 export function openMateriaMedica(remedyId: number) { actions.openTab({ kind: 'materia-medica', remedyId, query: '' }) }
 
@@ -209,7 +233,7 @@ export async function computeTarget(id = outputConsultationId()): Promise<Comput
   const cat = catalog()
   await Promise.all(repertoriesOf(c0.clipboards).map(a => cat.loadRepertory(a).catch(() => null)))
   const c = st().consultations[c0.id] ?? c0
-  const result = analyzeCached(sourceFor(cat), cat, c.clipboards, c.analysis)
+  const result = analyzeCached(sourceFor(cat), cat, c.clipboards, c.analysis, { minGrade: st().settings.minGradeShown ?? 1 })
   const p = st().patients[c.patientId]
   const title = `${p ? `${p.lastName}${p.firstName ? `, ${p.firstName}` : ''}` : 'Case'} · ${c.title} · ${c.date}`
   const meta: ExportMeta = {

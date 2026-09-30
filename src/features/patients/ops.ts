@@ -6,12 +6,15 @@ import { actions, selectActiveConsultation, selectActiveTab, useApp } from '../.
 import type { Consultation, Patient } from '../../state/patients'
 import type { PatientTab } from '../../state/workspace'
 import { downloadBlob, pickFile } from '../../ui/files'
-import { buildCaseFile, caseFileName, CaseFileError, importCaseFile, parseCaseFile } from './casefile'
-import { consultationsOf, duplicatePatient, followUpFrom, nextFollowUpIndex, patientName, today } from './logic'
+import { create } from 'zustand'
+import { buildCaseFile, caseFileName, CaseFileError, findExistingPatient, importCaseFile, parseCaseFile } from './casefile'
+import type { CaseFile, ImportMode } from './casefile'
+import { consultationsOf, duplicatePatient, followUpFrom, formatDate, nextFollowUpIndex, patientName, today } from './logic'
 
 export const NEW_PATIENT_DIALOG = 'patients.new'
 export const CONFIRM_DIALOG = 'patients.confirm'
 export const REPORT_DIALOG = 'patients.report'
+export const IMPORT_CONFLICT_DIALOG = 'patients.importConflict'
 
 let catalogRef: Catalog | null = null
 export function setCatalog(c: Catalog) { catalogRef = c }
@@ -57,13 +60,34 @@ export function contextConsultationId(): string | null {
 
 // ───────────────────────── navigation ─────────────────────────
 
-export function openPatients() {
+/**
+ * Show the patients list. Keyboard flow (Mod+3, then type or ↓ and Enter) puts the caret in the
+ * search box; `focus: 'table'` focuses the table instead (after a delete, so Ctrl+Z is the app's undo).
+ * The request is picked up by the list when it mounts or is shown again (its code may still be
+ * loading), or right away when it is already on screen. Switching to the list from the tab strip
+ * makes no request, so the list leaves focus to the tab strip.
+ */
+export function openPatients(opts: { focus?: 'search' | 'table' } = {}) {
+  listFocusRequest = { focus: opts.focus ?? 'search', at: Date.now() }
   actions.openTab({ kind: 'patients' })
-  // Keyboard flow (Mod+3, then type or ↓ and Enter): put the caret in the list's search box.
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    const list = document.querySelector('.pt-list')
-    if (list && !list.contains(document.activeElement) && !document.querySelector('[role="dialog"]')) list.querySelector<HTMLElement>('.pt-search-input')?.focus()
+    const list = document.querySelector<HTMLElement>('.tab-doc[data-active] .pt-list')
+    if (list) applyListFocus(list)
   }))
+}
+
+/** The pending focus request of openPatients; it lapses after a few seconds (a list that never showed). */
+let listFocusRequest: { focus: 'search' | 'table'; at: number } | null = null
+
+/** Focus the list as the pending openPatients request asked (once); called by PatientsView when shown. */
+export function applyListFocus(list: HTMLElement) {
+  const req = listFocusRequest
+  listFocusRequest = null
+  if (!req || Date.now() - req.at > 3000) return
+  const want = req.focus
+  if (document.querySelector('[role="dialog"]')) return
+  if (want === 'table') list.querySelector<HTMLElement>('.pt-table')?.focus()
+  else if (!list.contains(document.activeElement)) list.querySelector<HTMLElement>('.pt-search-input')?.focus()
 }
 
 export function openPatient(patientId: string, consultationId?: string | null, section?: PatientTab['section']) {
@@ -83,18 +107,24 @@ export function selectConsultation(tabId: string, consultationId: string) {
 export function newPatient() { actions.openDialog(NEW_PATIENT_DIALOG) }
 
 export function createPatient(fields: Partial<Patient>, startConsultation: boolean): string {
-  const id = actions.createPatient(fields)
   const name = patientName({ firstName: fields.firstName ?? '', lastName: fields.lastName ?? '' })
   if (startConsultation) {
-    const cid = actions.createConsultation(id, { title: 'First consultation', kind: 'first', date: today() })
+    // one undo step: undoing removes the patient together with its first consultation
+    const { id, cid } = actions.transaction(() => {
+      const id = actions.createPatient(fields)
+      const cid = actions.createConsultation(id, { title: 'First consultation', kind: 'first', date: today() })
+      return { id, cid }
+    }, 'New patient')
     openPatient(id, cid, 'consultations')
     actions.toast(`Patient ${name} created; the first consultation is now the active case`, 'success')
-    focusEditorTitle()
-  } else {
-    openPatient(id, null, 'details')
-    actions.toast(`Patient ${name} created`, 'success')
-    focusLater('.pt-details input[name="firstName"]')
+    // the title is already filled in: the next thing to record is the complaint
+    focusLater('.pt-ed-complaint-input')
+    return id
   }
+  const id = actions.createPatient(fields)
+  openPatient(id, null, 'details')
+  actions.toast(`Patient ${name} created`, 'success')
+  focusLater('.pt-details input[name="firstName"]')
   return id
 }
 
@@ -123,7 +153,10 @@ export function deletePatient(patientId: string) {
   const s = st()
   const wasActive = s.activeConsultationId ? s.consultations[s.activeConsultationId]?.patientId === patientId : false
   const activeId = s.activeConsultationId
+  const fromOwnPage = activePatientTab()?.patientId === patientId
   actions.deletePatient(patientId) // also closes the patient's tabs (undo reopens them)
+  // deleted from its own page: land on the list (the table, so Ctrl+Z undoes the delete)
+  if (fromOwnPage) openPatients({ focus: 'table' })
   const entry = st().past[st().past.length - 1]
   actions.toast(`Deleted ${patientName(snap.patient)}`, 'info', {
     label: 'Undo',
@@ -172,55 +205,97 @@ export function newFollowUp(fromId = contextConsultationId()) {
   focusEditorTitle()
 }
 
+/**
+ * Focus an element of the active document once it has rendered (the patient page's code may still be
+ * loading on first use): tries every frame for about a second, never while a dialog is open.
+ */
 function focusLater(selector: string) {
-  requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector<HTMLElement>(selector)?.focus()))
+  let frames = 0
+  const tick = () => {
+    const el = document.querySelector('[role="dialog"]') ? null : document.querySelector<HTMLElement>(`.tab-doc[data-active] ${selector}`)
+    if (el && frames >= 1) { el.focus(); return }
+    if (++frames < 60) requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
 }
 
 function focusEditorTitle() { focusLater('.pt-ed-title-input') }
 
-/** Show a consultation in its patient tab and put the caret in the new-prescription row. */
-export function focusPrescription(consultationId: string) {
+/**
+ * Pending "add prescription" request, read by the consultation editor's prescription form:
+ * `remedyId` prefills the remedy, 'top' asks the form to use the top-ranked remedy of the analysis.
+ */
+export interface PrescriptionRequest { consultationId: string; remedyId: number | 'top' | null; seq: number }
+let prescriptionSeq = 0
+export const usePrescriptionRequest = create<{ request: PrescriptionRequest | null }>(() => ({ request: null }))
+
+/** Remedy selected in an analysis of this consultation (the active tab first, then any open analysis tab). */
+export function selectedAnalysisRemedy(consultationId: string): number | null {
+  const s = st()
+  const tabs = [selectActiveTab(s), ...s.tabs]
+  for (const t of tabs) if (t?.kind === 'analysis' && t.consultationId === consultationId && typeof t.remedy === 'number') return t.remedy
+  return null
+}
+
+/**
+ * Show a consultation in its patient tab with the new-prescription form in view and focused.
+ * The remedy is prefilled with `remedyId`, else the remedy selected in its analysis, else the
+ * analysis' top-ranked remedy. Other features may call this (e.g. "Prescribe" from an analysis).
+ */
+export function openPrescription(consultationId: string, remedyId?: number | null) {
   const c = st().consultations[consultationId]
   if (!c) return
+  const remedy = remedyId ?? selectedAnalysisRemedy(consultationId) ?? 'top'
   openPatient(c.patientId, consultationId, 'consultations')
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    const el = document.querySelector<HTMLInputElement>('.pt-rx-form .pt-combo-input')
-    el?.scrollIntoView({ block: 'nearest' })
-    el?.focus()
-  }))
+  usePrescriptionRequest.setState({ request: { consultationId, remedyId: remedy, seq: ++prescriptionSeq } })
 }
 
 export function makeActive(consultationId: string) {
   const c = st().consultations[consultationId]
   if (!c) return
   actions.setActiveConsultation(consultationId)
-  actions.toast(`Active case: ${patientName(st().patients[c.patientId] ?? { firstName: '', lastName: '' })}, ${c.title || 'consultation'} (${c.date})`, 'success')
+  actions.toast(`Active case: ${patientName(st().patients[c.patientId] ?? { firstName: '', lastName: '' })}, ${c.title || 'consultation'} (${formatDate(c.date)})`, 'success')
 }
 
 export function confirmDeleteConsultation(consultationId: string) {
-  const c = st().consultations[consultationId]
+  const s = st()
+  const c = s.consultations[consultationId]
   if (!c) return
   const n = c.clipboards.reduce((k, cb) => k + cb.symptoms.length, 0)
+  const active = s.activeConsultationId === consultationId
+  const analysisOpen = s.tabs.some(t => t.kind === 'analysis' && t.consultationId === consultationId)
+  const what = `Delete "${c.title || 'Consultation'}" of ${formatDate(c.date)}${n ? ` with ${n} symptom${n === 1 ? '' : 's'}` : ''}${c.prescriptions.length ? ` and ${c.prescriptions.length} prescription${c.prescriptions.length === 1 ? '' : 's'}` : ''}?`
+  const notes = [
+    active ? 'It is the active case: afterwards no case is active until you choose one.' : '',
+    analysisOpen ? 'Its analysis tab will close.' : '',
+  ].filter(Boolean)
   actions.openDialog(CONFIRM_DIALOG, {
     title: 'Delete consultation',
-    message: `Delete "${c.title || 'Consultation'}" of ${c.date}${n ? ` with ${n} symptom${n === 1 ? '' : 's'}` : ''}${c.prescriptions.length ? ` and ${c.prescriptions.length} prescription${c.prescriptions.length === 1 ? '' : 's'}` : ''}?`,
+    message: [what, ...notes].join(' '),
     confirmLabel: 'Delete consultation',
     danger: true,
     onConfirm: () => deleteConsultation(consultationId),
   })
 }
 
+/**
+ * Delete a consultation. Deleting the active case leaves no active case (the clipboards say so)
+ * rather than silently switching to another consultation; one undo step restores both.
+ */
 export function deleteConsultation(consultationId: string) {
   const s = st()
   const c = s.consultations[consultationId]
   if (!c) return
   const wasActive = s.activeConsultationId === consultationId
-  actions.deleteConsultation(consultationId) // also closes its analysis tab (undo reopens it)
+  actions.transaction(() => {
+    actions.deleteConsultation(consultationId) // also closes its analysis tab (undo reopens it)
+    if (wasActive) actions.setActiveConsultation(null)
+  }, 'Delete consultation')
   const entry = st().past[st().past.length - 1]
   for (const t of st().tabs) {
     if (t.kind === 'patient' && t.consultationId === consultationId) actions.updateTab<PatientTab>(t.id, { consultationId: null })
   }
-  actions.toast(`Deleted consultation of ${c.date}`, 'info', {
+  actions.toast(`Deleted consultation of ${formatDate(c.date)}${wasActive ? '; no case is active now' : ''}`, 'info', {
     label: 'Undo',
     run: () => {
       if (st().consultations[consultationId] || !st().patients[c.patientId]) return
@@ -254,9 +329,30 @@ export async function exportCase(patientId = contextPatientId()) {
   actions.toast(`Exported case file for ${patientName(snap.patient)}`, 'success')
 }
 
-/** Import from text; returns the new patient id (throws CaseFileError on invalid input). */
-export async function importCaseText(text: string): Promise<string> {
+/**
+ * Import from text; returns the patient id, or null when the user is asked how to treat a patient
+ * already on file (the choice finishes the import). Throws CaseFileError on invalid input.
+ */
+export async function importCaseText(text: string, mode?: ImportMode): Promise<string | null> {
   const file = parseCaseFile(text)
+  const existing = findExistingPatient(file, Object.values(st().patients))
+  if (existing && !mode) {
+    const have = consultationsOf(st().consultations, existing.patient.id).length
+    actions.openDialog(IMPORT_CONFLICT_DIALOG, {
+      name: patientName(existing.patient), birthDate: existing.patient.birthDate, sameRecord: existing.by === 'id',
+      fileConsultations: file.consultations.length, haveConsultations: have,
+      onChoose: (m: ImportMode) => { void finishImport(file, m).catch(reportImportError) },
+    })
+    return null
+  }
+  return finishImport(file, mode ?? 'new')
+}
+
+function reportImportError(e: unknown) {
+  actions.toast(e instanceof CaseFileError ? e.message : `Import failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+}
+
+async function finishImport(file: CaseFile, mode: ImportMode): Promise<string> {
   await loadRepertoriesOf([...Object.keys(file.rubrics), ...file.consultations.flatMap(c => c.clipboards.flatMap(cb => cb.symptoms.flatMap(s => s.rubrics)))])
   const cat = catalog()
   const res = importCaseFile(file, {
@@ -265,24 +361,33 @@ export async function importCaseText(text: string): Promise<string> {
     remedyByAbbrev: ab => cat.remedyByAbbrev.get(ab.toLowerCase())?.id,
     remedyAbbrev: id => cat.remedy(id).abbrev,
     existing: Object.values(st().patients),
-  })
-  actions.insertCaseData([res.patient], res.consultations)
-  openPatient(res.patient.id)
+    existingConsultations: Object.values(st().consultations),
+  }, Date.now(), mode)
+  actions.transaction(() => {
+    for (const id of res.replaces) actions.deleteConsultation(id)
+    actions.insertCaseData(res.mode === 'merge' ? [] : [res.patient], res.consultations)
+  }, res.mode === 'replace' ? 'Replace patient from case file' : res.mode === 'merge' ? 'Merge case file' : 'Import case file')
+  openPatient(res.patient.id, null)
+  const n = res.consultations.length
+  const cons = `${n} consultation${n === 1 ? '' : 's'}`
   const notes = [
-    res.duplicateOf ? 'a patient with the same name existed, imported as a separate record' : '',
+    res.mode === 'new' && res.duplicateOf ? 'kept as a separate record next to the patient on file' : '',
+    res.skipped ? `${res.skipped} consultation${res.skipped === 1 ? ' was' : 's were'} already on file` : '',
     res.remapped ? `${res.remapped} rubric${res.remapped === 1 ? '' : 's'} re-linked` : '',
     res.unresolved ? `${res.unresolved} rubric${res.unresolved === 1 ? '' : 's'} could not be verified` : '',
+    ...(file.warnings ?? []),
   ].filter(Boolean)
-  actions.toast(`Imported ${patientName(res.patient)} (${res.consultations.length} consultation${res.consultations.length === 1 ? '' : 's'})${notes.length ? `: ${notes.join('; ')}` : ''}`, res.unresolved ? 'info' : 'success')
+  const head = res.mode === 'replace' ? `Replaced ${patientName(res.patient)} from the case file (${cons})`
+    : res.mode === 'merge' ? `Merged ${cons} into ${patientName(res.patient)}`
+    : `Imported ${patientName(res.patient)} (${cons})`
+  actions.toast(`${head}${notes.length ? `: ${notes.join('; ')}` : ''}`, res.unresolved || file.warnings?.length ? 'info' : 'success')
   return res.patient.id
 }
 
 export async function importCase() {
   const f = await pickFile('.json,application/json')
   if (!f) return
-  try { await importCaseText(await f.text()) } catch (e) {
-    actions.toast(e instanceof CaseFileError ? e.message : `Import failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
-  }
+  try { await importCaseText(await f.text()) } catch (e) { reportImportError(e) }
 }
 
 // ───────────────────────── report ─────────────────────────

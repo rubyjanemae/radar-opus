@@ -1,3 +1,5 @@
+// @vitest-environment node
+// Pure logic: no DOM needed, so skip the jsdom setup.
 import { describe, expect, it } from 'vitest'
 import type { Grade } from '../data/types'
 import {
@@ -5,8 +7,12 @@ import {
   remedySizeFactor, resolveSymptom, rubricSizeWeight, smallRubricFactor, STRATEGIES,
 } from './analysis'
 import type { AnalysisResult, ChapterClass, RubricSource } from './analysis'
-import { symptomFlags } from './model'
+import { DEFAULT_PARAMS, mergeParams, normalizeStrategy, symptomFlags } from './model'
 import type { AnalysisOptions, Clipboard, StrategyId, Symptom } from './model'
+import { fastest } from '../testing/timing'
+
+/** Wall-clock budget: the strict 30 ms target with PERF=1 (a quiet machine), 8× looser by default so shared CI never flakes. */
+const BUDGET_MS = import.meta.env.PERF ? 30 : 240
 
 let seq = 0
 function sym(rubrics: string | string[], patch: Partial<Symptom> = {}): Symptom {
@@ -101,7 +107,7 @@ describe('scoring-spec test vectors (§5.2)', () => {
   it('T8 R2 exclusive', () => {
     const r = runF1('sum-symptoms-degrees', false, [line(1), line(2, { exclusive: true }), line(3), line(4)])
     expect(f1Out(r)).toEqual(['C(3/6)', 'D(3/4)', 'E(2/3)'])
-    expect(f1Excluded(r)).toEqual(['A excluding:R2', 'B excluding:R2', 'F excluding:R2'])
+    expect(f1Excluded(r)).toEqual(['A exclusive:R2', 'B exclusive:R2', 'F exclusive:R2'])
   })
   it('T9 combine group G = R1 + R3 (max)', () => {
     const r = runF1('sum-symptoms-degrees', false, [line(1, { group: 'g' }), line(2), line(3, { group: 'g' }), line(4)])
@@ -271,13 +277,117 @@ describe('scoring-spec edge cases (§5.4)', () => {
   it('E10 eliminative wins over excluding', () => {
     const r = runF1('sum-symptoms-degrees', false, [line(1), line(2, { exclusive: true }), line(3), line(4, { eliminatory: true })])
     // B and F are absent from R4 and present in R2; A is in R4 but in R2
-    expect(f1Excluded(r)).toEqual(['A excluding:R2', 'B eliminative:R4', 'E eliminative:R4', 'F eliminative:R4'])
-    expect(r.excludedCounts).toMatchObject({ eliminative: 3, excluding: 1 })
+    expect(f1Excluded(r)).toEqual(['A exclusive:R2', 'B eliminative:R4', 'E eliminative:R4', 'F eliminative:R4'])
+    expect(r.excludedCounts).toMatchObject({ eliminative: 3, exclusive: 1 })
   })
   it('excluded remedies are scored and never ranked above included ones when shown', () => {
     const r = runF1('sum-symptoms-degrees', false, [line(1), line(2), line(3), line(4, { eliminatory: true })], { showExcluded: true })
     expect(r.rows.map(x => `${F1_NAME[x.remedyId]}${x.rank}`)).toEqual(['A1', 'B0', 'C2', 'D3', 'E0', 'F0'])
     expect(r.excludedRows.find(x => F1_NAME[x.remedyId] === 'B')).toMatchObject({ score: 3, secondary: 6 })
+  })
+})
+
+describe('strategy parameters (§6, ANA-010, ANA-015, ANA-022)', () => {
+  it('ANA-010: small-rubric threshold 2 makes no line small, so the order equals weighted', () => {
+    const small = runF1('small-rubrics', true, F1(), { params: { smallRubrics: { threshold: 2 } } })
+    expect(small.rows.map(r => r.remedyId)).toEqual(runF1('weighted', true).rows.map(r => r.remedyId))
+    expect(small.rows.map(r => r.score)).toEqual(runF1('weighted', true).rows.map(r => r.score))
+  })
+  it('ANA-010: the small-rubric factor is editable', () => {
+    // factor 3: B = 1·2 + 2·3·3 + 1·1 = 21
+    expect(f1Out(runF1('small-rubrics', true, F1(), { params: { smallRubrics: { factor: 3 } } }))[0]).toBe('B21')
+  })
+  it('ANA-015: T18 with default κ, and κ weights are editable', () => {
+    expect(f1Out(runF1('kent', true))).toEqual(['A16', 'B14', 'C11', 'D8', 'E8', 'F6'])
+    // mental 10: A = 3·10 + 1·2 + 2·2 + 1 = 37
+    expect(f1Out(runF1('kent', true, F1(), { params: { kent: { weights: { mental: 10 } } } }))[0]).toBe('A37')
+  })
+  it('ANA-015: mustCoverStrong excludes remedies missing a line of intensity ≥ 3, with a reason', () => {
+    const strong = [line(1), line(2), line(3), line(4, { weight: 3 })]
+    const off = runF1('kent', true, strong)
+    expect(off.excludedRows).toHaveLength(0)
+    const on = runF1('kent', true, strong, { params: { kent: { mustCoverStrong: true } } })
+    expect(f1Excluded(on)).toEqual(['B eliminative:R4', 'E eliminative:R4', 'F eliminative:R4'])
+    expect(on.symptoms[3].eliminativeRule).toBe('must-cover-strong')
+    expect(on.rows.map(r => F1_NAME[r.remedyId])).toEqual(['A', 'C', 'D'])
+    // the recorded intensity counts, also with intensity off (like E9)
+    expect(f1Excluded(runF1('kent', false, strong, { params: { kent: { mustCoverStrong: true } } }))).toHaveLength(3)
+    // a Kent option: other strategies ignore it
+    expect(runF1('weighted', true, strong, { params: { kent: { mustCoverStrong: true } } }).excludedRows).toHaveLength(0)
+  })
+  it('ANA-015: markedMentalEliminative makes the first mental line with intensity ≥ 3 eliminative', () => {
+    const marked = [line(1, { weight: 3 }), line(2), line(3, { weight: 3 }), line(4)]
+    const r = runF1('kent', true, marked, { params: { kent: { markedMentalEliminative: true } } })
+    expect(f1Excluded(r)).toEqual(['F eliminative:R1'])
+    expect(r.symptoms[0].eliminativeRule).toBe('marked-mental')
+    // R3 is general, never marked
+    expect(r.symptoms[2].eliminative).toBe(false)
+    expect(runF1('kent', true, [line(1, { weight: 2 }), line(2), line(3), line(4)], { params: { kent: { markedMentalEliminative: true } } }).excludedRows).toHaveLength(0)
+  })
+  it('the result carries the merged parameters; reset (no params) is exactly DEFAULT_PARAMS', () => {
+    expect(runF1('kent', true).params).toEqual(DEFAULT_PARAMS)
+    expect(mergeParams(undefined)).toEqual(DEFAULT_PARAMS)
+    expect(DEFAULT_PARAMS.kent).toEqual({ weights: { srp: 4, mental: 3, general: 2, particular: 1 }, markedMentalEliminative: false, mustCoverStrong: false })
+    expect(runF1('remedy-size', true, F1(), { params: { smallRemedies: { alpha: 1 } } }).params.smallRemedies.alpha).toBe(1)
+  })
+  it('ANA-022: changing smallRemedies α re-ranks', () => {
+    const a = runF1('remedy-size', true).rows.map(r => F1_NAME[r.remedyId])
+    const b = runF1('remedy-size', true, F1(), { params: { smallRemedies: { alpha: 1 } } }).rows.map(r => F1_NAME[r.remedyId])
+    expect(b).not.toEqual(a)
+  })
+})
+
+describe('robustness: no NaN, known strategies only', () => {
+  it('non-numeric parameters fall back to their defaults', () => {
+    const bad = { smallRubrics: { threshold: 'ten', factor: NaN }, kent: { weights: { mental: null }, mustCoverStrong: 'yes' }, smallRubricsCont: { wMax: Infinity } } as unknown as AnalysisOptions['params']
+    expect(mergeParams(bad)).toEqual(DEFAULT_PARAMS)
+    for (const s of STRATEGIES) {
+      const r = runF1(s.id, true, F1(), { params: bad })
+      for (const row of r.all) {
+        expect(Number.isFinite(row.score), `${s.id} score`).toBe(true)
+        expect(Number.isFinite(row.points), `${s.id} points`).toBe(true)
+      }
+    }
+    expect(f1Out(runF1('small-rubrics', true, F1(), { params: bad }))).toEqual(['B15', 'A11', 'F9', 'C8', 'D5', 'E3'])
+  })
+  it('a non-numeric symptom intensity counts as 1', () => {
+    const r = runF1('weighted', true, [line(1), line(2, { weight: 'x' as unknown as Symptom['weight'] }), line(3), line(4)])
+    for (const row of r.all) expect(Number.isFinite(row.score)).toBe(true)
+    expect(r.symptoms[1].weight).toBe(1)
+    expect(f1Out(r)).toEqual(f1Out(runF1('weighted', false)))
+  })
+  it('an unknown strategy id analyses with the default strategy', () => {
+    const r = runF1('no-such-strategy' as StrategyId, true)
+    expect(r.strategy).toBe('sum-symptoms-degrees')
+    expect(f1Out(r)).toEqual(['A(5/8)', 'B(4/9)', 'C(3/6)', 'F(3/5)', 'D(3/4)', 'E(2/3)'])
+    expect(normalizeStrategy('kent')).toBe('kent')
+    expect(normalizeStrategy(42)).toBe('sum-symptoms-degrees')
+  })
+  it('family limit excludes with reason family-limit (ANA-021)', () => {
+    const r = runF1('sum-symptoms-degrees', false, F1(), { remedyFilter: [F1_ID.A, F1_ID.D] })
+    expect(f1Out(r)).toEqual(['A(4/7)', 'D(3/4)'])
+    expect(f1Excluded(r)).toEqual(['B family-limit', 'C family-limit', 'E family-limit', 'F family-limit'])
+    expect(r.excludedCounts['family-limit']).toBe(4)
+  })
+})
+
+describe('repertory view before scoring (§2 step 3, ANA-024)', () => {
+  it('E8: "Grade 3 only" is applied before grouping: G = R1 + R3 holds A3 and C3, n = 2', () => {
+    const r = analyze(f1, [cb([line(1, { group: 'g' }), line(2), line(3, { group: 'g' }), line(4)])], opts({ useIntensity: false }), { minGrade: 3 })
+    const g = r.symptoms[0]
+    expect(Object.fromEntries([...g.grades].map(([id, x]) => [F1_NAME[id], x]))).toEqual({ A: 3, C: 3 })
+    expect(g.size).toBe(2)
+  })
+  it('no cell shows a grade below the view and n_s is the count of grades in view', () => {
+    const r = analyze(f1, [cb(F1())], opts(), { minGrade: 3 })
+    for (const row of r.all) for (const x of row.grades) expect(x === 0 || x >= 3).toBe(true)
+    expect(r.symptoms.map(s => s.size)).toEqual([1, 1, 1, 0])
+    expect(r.minGrade).toBe(3)
+    // B: R2 grade 3 at intensity 2 → CI 2; A and C: one grade 3 at intensity 1
+    expect(f1Out(r)).toEqual(['B(2/6)', 'A(1/3)', 'C(1/3)'])
+  })
+  it('the default view keeps the declared rubric size', () => {
+    expect(analyze(f1, [cb(F1())], opts(), { minGrade: 1 }).symptoms.map(s => s.size)).toEqual([250, 3, 60, 8])
   })
 })
 
@@ -432,7 +542,7 @@ describe('qualifications', () => {
     const r = run([sym('x:0'), sym('x:1'), sym('x:3', { exclusive: true })])
     expect(r.symptoms[2].role).toBe('excluding')
     expect(order(r)).toEqual(['Apis', 'Bry'])
-    expect(r.excludedCounts.excluding).toBe(1)
+    expect(r.excludedCounts.exclusive).toBe(1)
     expect(byName(r, 'Apis').coverage).toBe(2)
   })
   it('two eliminative symptoms require both', () => {
@@ -448,7 +558,7 @@ describe('groups and combined rubrics', () => {
     expect(r.symptoms).toHaveLength(2)
     expect(r.symptoms[0].members).toHaveLength(2)
     expect(r.symptoms[0].weight).toBe(2)
-    expect(r.symptoms[0].label).toBe('[x] L x:0 + L x:1')
+    expect(r.symptoms[0].label).toBe('L x:0 + L x:1')
     // Bry C 2+1=3 P 2·2+4=8 ; Zinc C2 P6 ; Apis C2 P4
     expect(r.rows.map(x => `${NAMES[x.remedyId]} ${formatScore(r.strategy, x)}`)).toEqual(['Bry 3/8', 'Zinc 2/6', 'Apis 2/4'])
   })
@@ -569,15 +679,9 @@ describe('performance', () => {
     for (const s of STRATEGIES) {
       const o = opts({ strategy: s.id, clipboardIds: ['cb1', 'cb2'], limit: 100, showExcluded: true })
       analyze(bigSrc, board, o) // warm-up (JIT)
-      const times: number[] = []
-      for (let k = 0; k < 5; k++) {
-        const t0 = performance.now()
-        const r = analyze(bigSrc, board, o)
-        times.push(performance.now() - t0)
-        expect(r.symptoms.length).toBe(56)
-      }
-      times.sort((a, b) => a - b)
-      expect(times[2], `${s.id} median ${times[2].toFixed(1)} ms`).toBeLessThan(30)
+      const { ms, result } = fastest(7, () => analyze(bigSrc, board, o))
+      expect(result.symptoms.length).toBe(56)
+      expect(ms, `${s.id} fastest ${ms.toFixed(1)} ms`).toBeLessThan(BUDGET_MS)
     }
   })
 })

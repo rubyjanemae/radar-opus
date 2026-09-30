@@ -1,12 +1,12 @@
-import { useMemo, useRef, useState } from 'react'
-import { Activity, BarChart3, CheckCircle2, CopyPlus, FileText, Pill, Plus, Target, Trash2, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Activity, BarChart3, CheckCircle2, CopyPlus, FileText, Filter, Pill, Plus, Target, Trash2, X } from 'lucide-react'
 import { useCatalog } from '../../data/CatalogContext'
 import { formatScore } from '../../engine/analysis'
 import { actions, useApp } from '../../state/store'
 import type { Consultation } from '../../state/patients'
 import { useAnalysis } from '../analysis/useAnalysis'
-import { rubricLabel } from '../clipboard/labels'
-import { consultationsOf, formatDate, formatScoreSigned, GHHOS, ghhosLabel, KIND_LABEL, previousPrescription, symptomCount } from './logic'
+import { combineJoiner, symptomLabel } from '../clipboard/labels'
+import { analysisFilterNotes, consultationsOf, formatDate, formatDateTime, formatScoreSigned, GHHOS, ghhosLabel, KIND_LABEL, previousPrescription, symptomCount } from './logic'
 import { RemedyInput } from './RemedyInput'
 import { useDraft } from './useDraft'
 import * as ops from './ops'
@@ -27,7 +27,11 @@ function TextField({ value, onCommit, label, className, multiline, rows, placeho
   )
 }
 
-export function ConsultationEditor({ consultation: c }: { consultation: Consultation }) {
+/**
+ * The consultation form. `prescribeRemedy` prefills the new-prescription form with a remedy (for
+ * callers that render the editor directly; commands use ops.openPrescription).
+ */
+export function ConsultationEditor({ consultation: c, prescribeRemedy }: { consultation: Consultation; prescribeRemedy?: number | null }) {
   const isActive = useApp(s => s.activeConsultationId === c.id)
   const update = (patch: Partial<Consultation>) => actions.updateConsultation(c.id, patch)
   const n = symptomCount(c)
@@ -59,13 +63,13 @@ export function ConsultationEditor({ consultation: c }: { consultation: Consulta
             </select>
           </label>
         </div>
-        <TextField key={`c${c.id}`} label="Chief complaint" value={c.complaint} onCommit={v => update({ complaint: v })} placeholder="Main complaint in the patient's words" />
+        <TextField key={`c${c.id}`} label="Chief complaint" className="pt-ed-complaint" value={c.complaint} onCommit={v => update({ complaint: v })} placeholder="Main complaint in the patient's words" />
         <TextField key={`n${c.id}`} label="Case notes" className="pt-ed-notes" multiline rows={12} value={c.notes} onCommit={v => update({ notes: v })} placeholder="History, modalities, mentals, generals, particulars, observations…" />
         <TextField key={`a${c.id}`} label="Assessment" multiline rows={3} value={c.assessment} onCommit={v => update({ assessment: v })} placeholder="Analysis of the case, differential, plan" />
 
         <ResponseCard consultation={c} />
 
-        <Prescriptions consultation={c} />
+        <Prescriptions consultation={c} prefillRemedy={prescribeRemedy} />
 
         <div className="pt-cards">
           <section className="pt-card">
@@ -77,14 +81,13 @@ export function ConsultationEditor({ consultation: c }: { consultation: Consulta
             <TopRemedies consultationId={c.id} />
           </section>
         </div>
-        <div className="pt-ed-foot">Created {new Date(c.createdAt).toLocaleString()} · last saved {new Date(c.updatedAt).toLocaleString()}</div>
+        <div className="pt-ed-foot">Created {formatDateTime(c.createdAt)} · last saved {formatDateTime(c.updatedAt)}</div>
       </div>
     </div>
   )
 }
 
 function SymptomList({ consultation: c }: { consultation: Consultation }) {
-  const catalog = useCatalog()
   const [expanded, setExpanded] = useState(false)
   const all = c.clipboards.flatMap(cb => cb.symptoms.map(s => ({ cb, s })))
   if (!all.length) {
@@ -102,17 +105,7 @@ function SymptomList({ consultation: c }: { consultation: Consultation }) {
           <li key={s.id} title={cb.name}>
             <span className="pt-sym-dot" style={{ background: cb.color }} aria-hidden />
             <span className={`pt-sym-w${s.weight === 0 ? ' off' : ''}`}>{s.weight === 0 ? '0' : `×${s.weight}`}</span>
-            <span className="pt-sym-label">
-              {s.rubrics.map((r, k) => {
-                const l = rubricLabel(catalog, r)
-                return (
-                  <span key={r} title={l.full}>
-                    {k > 0 && <span className="pt-sym-op"> + </span>}
-                    {l.loaded ? <><span className="pt-sym-ch">{l.chapter}</span>{l.rest && <span className="pt-sym-rest">{l.rest}</span>}</> : <span className="pt-dim">{l.full}</span>}
-                  </span>
-                )
-              })}
-            </span>
+            <SymptomText symptom={s} />
             {(s.eliminatory || s.exclusive || s.causal || s.group) && (
               <span className="pt-sym-flags">{[s.eliminatory && 'E', s.exclusive && 'X', s.causal && 'C', s.group?.toUpperCase()].filter(Boolean).join(' ')}</span>
             )}
@@ -124,36 +117,88 @@ function SymptomList({ consultation: c }: { consultation: Consultation }) {
   )
 }
 
-function TopRemedies({ consultationId }: { consultationId: string }) {
-  const { result, load, catalog } = useAnalysis(consultationId)
-  if (load.status === 'loading') return <div className="pt-card-empty"><span className="skeleton" style={{ display: 'block', height: 60 }} /></div>
-  if (load.status === 'error') return <div className="pt-card-empty">Could not load {load.failed.join(', ')}. <button className="btn btn-sm" onClick={load.retry}>Retry</button></div>
-  const top = result?.rows.filter(r => !r.excluded).slice(0, 5) ?? []
-  if (!result || !top.length) return <div className="pt-card-empty">No analysis yet: add symptoms to see the leading remedies.</div>
-  const max = top[0].points || 1
+/** A symptom as the clipboard and analysis show it: its own label, else its rubrics joined with ∪ / ∩. */
+function SymptomText({ symptom: s }: { symptom: Consultation['clipboards'][number]['symptoms'][number] }) {
+  const catalog = useCatalog()
+  const l = symptomLabel(catalog, s)
+  if (s.label) return <span className="pt-sym-label" title={l.parts.map(p => p.full).join(combineJoiner(s))}>{s.label}</span>
   return (
-    <ol className="pt-top">
-      {top.map(r => (
-        <li key={r.remedyId}>
-          <span className="pt-top-rank">{r.rank}</span>
-          <span className="pt-top-abbrev" title={catalog.remedy(r.remedyId).name}>{catalog.remedy(r.remedyId).abbrev}</span>
-          <span className="pt-top-bar"><span style={{ width: `${Math.max(3, (r.points / max) * 100)}%` }} /></span>
-          <span className="pt-top-score">{formatScore(result.strategy, r)}</span>
-        </li>
+    <span className="pt-sym-label" title={l.full}>
+      {l.parts.map((p, k) => (
+        <span key={k}>
+          {k > 0 && <span className="pt-sym-op" title={s.combine === 'intersection' ? 'and (intersection)' : 'or (union)'}>{combineJoiner(s)}</span>}
+          {p.loaded ? <><span className="pt-sym-ch">{p.chapter}</span>{p.rest && <span className="pt-sym-rest">{p.rest}</span>}</> : <span className="pt-dim">{p.full}</span>}
+        </span>
       ))}
-    </ol>
+    </span>
   )
 }
 
-function Prescriptions({ consultation: c }: { consultation: Consultation }) {
+function TopRemedies({ consultationId }: { consultationId: string }) {
+  const { result, load, catalog, consultation } = useAnalysis(consultationId)
+  if (load.status === 'loading') return <div className="pt-card-empty"><span className="skeleton" style={{ display: 'block', height: 60 }} /></div>
+  if (load.status === 'error') return <div className="pt-card-empty">Could not load {load.failed.join(', ')}. <button className="btn btn-sm" onClick={load.retry}>Retry</button></div>
+  const options = consultation?.analysis
+  const notes = options ? analysisFilterNotes(options, id => catalog.remedy(id).abbrev) : []
+  const noteEl = notes.length > 0 && <p className="pt-top-notes" data-testid="top-filters"><Filter size={11} aria-hidden />{notes.join(' · ')}</p>
+  const top = result?.rows.filter(r => !r.excluded).slice(0, 5) ?? []
+  if (!result || !top.length) return <>{noteEl}<div className="pt-card-empty">{notes.length && symptomCount(consultation!) ? 'No remedy passes the analysis filters.' : 'No analysis yet: add symptoms to see the leading remedies.'}</div></>
+  const max = top[0].points || 1
+  const hl = new Set(options?.highlight ?? [])
+  return (
+    <>
+      {noteEl}
+      <ol className="pt-top">
+        {top.map(r => (
+          <li key={r.remedyId} className={hl.has(r.remedyId) ? 'hl' : undefined}>
+            <span className="pt-top-rank">{r.rank}</span>
+            <span className="pt-top-abbrev" title={`${catalog.remedy(r.remedyId).name}${hl.has(r.remedyId) ? ' (highlighted)' : ''}`}>{catalog.remedy(r.remedyId).abbrev}{hl.has(r.remedyId) && <span className="pt-top-hl" aria-label="highlighted"> ◆</span>}</span>
+            <span className="pt-top-bar"><span style={{ width: `${Math.max(3, (r.points / max) * 100)}%` }} /></span>
+            <span className="pt-top-score">{formatScore(result.strategy, r)}</span>
+          </li>
+        ))}
+      </ol>
+    </>
+  )
+}
+
+/** New-prescription form and the prescriptions of a consultation; `prefillRemedy` fills in the remedy. */
+export function Prescriptions({ consultation: c, prefillRemedy = null }: { consultation: Consultation; prefillRemedy?: number | null }) {
   const catalog = useCatalog()
-  const [remedy, setRemedy] = useState<number | null>(null)
+  const [remedy, setRemedy] = useState<number | null>(prefillRemedy)
+  // a new prefill (another remedy prescribed from the analysis) replaces the form's remedy
+  const [prefilled, setPrefilled] = useState(prefillRemedy)
+  if (prefilled !== prefillRemedy) { setPrefilled(prefillRemedy); if (prefillRemedy !== null) setRemedy(prefillRemedy) }
   const [potency, setPotency] = useState('30C')
   const [dosage, setDosage] = useState('')
   const [date, setDate] = useState('')
   const [note, setNote] = useState('')
   const remedyRef = useRef<HTMLInputElement>(null)
+  const section = useRef<HTMLElement>(null)
   const canAdd = remedy !== null && potency.trim() !== ''
+  // "Add prescription" (Ctrl+Alt+P, ops.openPrescription): prefill, bring the whole form into view, focus the remedy
+  const request = ops.usePrescriptionRequest(s => (s.request?.consultationId === c.id ? s.request : null))
+  const wantsTop = request?.remedyId === 'top'
+  const { result, load } = useAnalysis(wantsTop ? c.id : null)
+  const topReady = !!result && load.status !== 'loading'
+  const handled = useRef(0)
+  useEffect(() => {
+    if (!request || handled.current === request.seq) return
+    let id: number | null = typeof request.remedyId === 'number' ? request.remedyId : null
+    if (request.remedyId === 'top') {
+      if (!topReady) return // wait for the analysis (and its repertories)
+      id = result!.rows.find(r => !r.excluded)?.remedyId ?? null
+    }
+    handled.current = request.seq
+    if (id !== null) setRemedy(id)
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const form = section.current?.querySelector<HTMLElement>('.pt-rx-form')
+      form?.scrollIntoView({ block: 'nearest' })
+      remedyRef.current?.focus({ preventScroll: true })
+      remedyRef.current?.select()
+    }))
+    ops.usePrescriptionRequest.setState(s => (s.request?.seq === request.seq ? { request: null } : s))
+  }, [request, result, topReady])
   const add = () => {
     if (!canAdd) { if (remedy === null) remedyRef.current?.focus(); return }
     actions.addPrescription(c.id, { remedyId: remedy!, potency: potency.trim(), dosage: dosage.trim(), date: date || c.date, note: note.trim() })
@@ -162,7 +207,7 @@ function Prescriptions({ consultation: c }: { consultation: Consultation }) {
   }
   const onEnter = (e: React.KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); add() } }
   return (
-    <section className="pt-rx" aria-label="Prescriptions">
+    <section ref={section} className="pt-rx" aria-label="Prescriptions">
       <header className="pt-rx-head"><Pill size={14} aria-hidden />Prescriptions <span className="badge">{c.prescriptions.length}</span></header>
       {c.prescriptions.length > 0 && (
         <div className="pt-rx-table" role="table" aria-label="Prescriptions of this consultation">

@@ -1,14 +1,16 @@
-import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, Download, FileUp, Search, UserPlus, Users, X } from 'lucide-react'
 import { useCatalog } from '../../data/CatalogContext'
-import { displayKey, formatKeys, getCommand } from '../../commands/registry'
+import { displayKey, formatKeys, getCommand, runCommand } from '../../commands/registry'
 import { useApp } from '../../state/store'
 import { rubricLabel } from '../clipboard/labels'
 import { useContextMenu } from '../../ui/Menu'
 import type { MenuItem } from '../../ui/Menu'
 import { useFixedVirtual } from '../repertory/virtual'
 import { filterRows, formatDate, patientRows, relativeDate, SEX_SHORT, sortRows, tagCounts } from './logic'
-import type { PatientRow, Sort, SortKey } from './logic'
+import type { PatientRow, RowText, Sort, SortKey } from './logic'
+import type { Catalog } from '../../data/catalog'
+import type { Consultation, Patient } from '../../state/patients'
 import * as ops from './ops'
 import './patients.css'
 
@@ -23,6 +25,46 @@ const COLUMNS: { key: SortKey; label: string; short?: string; title?: string; cl
 ]
 
 const ROW_H = 28
+/** Text sources per catalog, stable across mounts: rows are memoised per patient against them (see patientRows). */
+const sources = new WeakMap<Catalog, { abbrev: (id: number) => string; text: RowText }>()
+function rowSources(catalog: Catalog) {
+  let s = sources.get(catalog)
+  if (!s) {
+    s = {
+      abbrev: id => catalog.remedy(id).abbrev,
+      text: {
+        remedyName: id => catalog.remedy(id).name,
+        rubricText: ref => { const l = rubricLabel(catalog, ref); return l.loaded ? `${l.chapter} ${l.rest}` : null },
+      },
+    }
+    sources.set(catalog, s)
+  }
+  return s
+}
+
+const DAY_MS = 86_400_000
+/** Last built row list and last filtered/sorted view, kept at module level so they survive tab switches. */
+const listCache = (() => {
+  let allKey: unknown[] = []
+  let allVal: PatientRow[] = []
+  let rowsKey: unknown[] = []
+  let rowsVal: PatientRow[] = []
+  const same = (a: unknown[], b: unknown[]) => a.length === b.length && a.every((x, i) => x === b[i])
+  return {
+    all(patients: Record<string, Patient>, consultations: Record<string, Consultation>, abbrev: (id: number) => string, text: RowText): PatientRow[] {
+      const now = Date.now()
+      const key = [patients, consultations, abbrev, text, Math.floor(now / DAY_MS)]
+      if (!same(key, allKey)) { allVal = patientRows(patients, consultations, abbrev, now, text); allKey = key }
+      return allVal
+    },
+    rows(all: PatientRow[], query: string, tags: string[], sort: Sort, abbrev: (id: number) => string): PatientRow[] {
+      const key = [all, query, tags.join('\u0000'), sort.key, sort.dir, abbrev]
+      if (!same(key, rowsKey)) { rowsVal = sortRows(filterRows(all, query, tags), sort, abbrev); rowsKey = key }
+      return rowsVal
+    },
+  }
+})()
+
 let remembered: { query: string; tags: string[]; sort: Sort; selected: string | null } = { query: '', tags: [], sort: { key: 'lastVisit', dir: -1 }, selected: null }
 
 export function PatientsView() {
@@ -35,18 +77,18 @@ export function PatientsView() {
   const [sort, setSort] = useState<Sort>(remembered.sort)
   const [selected, setSelected] = useState<string | null>(remembered.selected)
   const deferredQuery = useDeferredValue(query)
-  const scroller = useRef<HTMLDivElement>(null)
+  // the table is its own scroll region (sticky header row), so the focusable grid is what scrolls
   const grid = useRef<HTMLDivElement>(null)
+  const scroller = grid
   const search = useRef<HTMLInputElement>(null)
   const cm = useContextMenu()
-  const abbrev = useCallback((id: number) => catalog.remedy(id).abbrev, [catalog])
+  const { abbrev, text } = rowSources(catalog)
 
-  const all = useMemo(() => patientRows(patients, consultations, abbrev, Date.now(), {
-    remedyName: id => catalog.remedy(id).name,
-    rubricText: ref => { const l = rubricLabel(catalog, ref); return l.loaded ? `${l.chapter} ${l.rest}` : null },
-  }), [patients, consultations, abbrev, catalog])
+  // memoised across mounts on the store's identities, so reactivating the tab with thousands of
+  // patients reuses the built, filtered and sorted list instead of rebuilding it
+  const all = listCache.all(patients, consultations, abbrev, text)
   const tagList = useMemo(() => tagCounts(Object.values(patients)), [patients])
-  const rows = useMemo(() => sortRows(filterRows(all, deferredQuery, tags), sort, abbrev), [all, deferredQuery, tags, sort, abbrev])
+  const rows = listCache.rows(all, deferredQuery, tags, sort, abbrev)
   const index = rows.findIndex(r => r.patient.id === selected)
   const v = useFixedVirtual(scroller, rows.length, ROW_H)
 
@@ -56,12 +98,18 @@ export function PatientsView() {
   useEffect(() => {
     if (rows.length && index < 0) setSelected(rows[0].patient.id)
   }, [rows, index])
-  useEffect(() => { if (index >= 0) v.scrollToIndex(index) }, [index]) // eslint-disable-line react-hooks/exhaustive-deps
-  // Opening or switching to the list puts the caret in the search box (unless focus is already somewhere meaningful).
+  // keep the selected row in view below the sticky header row
   useEffect(() => {
-    const a = document.activeElement as HTMLElement | null
-    if (!a || a === document.body || a.closest('[role="tablist"], .menubar, .toolbar')) search.current?.focus()
-  }, [])
+    const el = grid.current
+    if (!el || index < 0) return
+    const top = (index + 1) * ROW_H, bottom = top + ROW_H
+    if (top - ROW_H < el.scrollTop) el.scrollTop = top - ROW_H
+    else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight
+  }, [index])
+  // Focus moves into the list only when a command asked for it (Mod+3, after a delete): switching to the
+  // tab from the tab strip leaves focus on the tab, and Enter or Tab from there moves into the panel.
+  const root = useRef<HTMLDivElement>(null)
+  useEffect(() => { if (root.current) ops.applyListFocus(root.current) }, [])
 
   const move = (to: number) => {
     if (!rows.length) return
@@ -109,20 +157,29 @@ export function PatientsView() {
   }
 
   const toggleTag = (t: string) => setTags(ts => (ts.includes(t) ? ts.filter(x => x !== t) : [...ts, t]))
-  const clickHeader = (key: SortKey, defaultDir: 1 | -1) => setSort(s => (s.key === key ? { key, dir: (s.dir * -1) as 1 | -1 } : { key, dir: defaultDir }))
+  const clickHeader = (key: SortKey, defaultDir: 1 | -1) => startTransition(() => setSort(s => (s.key === key ? { key, dir: (s.dir * -1) as 1 | -1 } : { key, dir: defaultDir })))
+  /** Search text when the field got focus: Ctrl+Z on an unchanged (or empty) field is the app's undo, not the field's. */
+  const focusQuery = useRef<string | null>(null)
   const total = all.length
   const filtered = query.trim() !== '' || tags.length > 0
   const keyHint = (id: string) => { const k = displayKey(getCommand(id)?.keys); return k ? ` (${formatKeys(k)})` : '' }
 
   return (
-    <div className="pt-list" data-testid="patients-view">
+    <div ref={root} className="pt-list" data-testid="patients-view">
       <div className="pt-list-toolbar">
         <div className="pt-search">
           <Search size={14} aria-hidden />
           <input
-            ref={search} className="pt-search-input" placeholder="Search name, notes, symptom, remedy…" title="Searches names, contact details, notes, complaints, assessments, prescribed remedies and rubrics" aria-label="Search patients" value={query}
+            ref={search} className="pt-search-input" aria-controls="pt-grid" placeholder="Search name, notes, symptom, remedy…" title="Searches names, contact details, notes, complaints, assessments, prescribed remedies and rubrics" aria-label="Search patients" value={query}
             onChange={e => setQuery(e.target.value)}
+            onFocus={() => { focusQuery.current = query }}
+            onBlur={() => { focusQuery.current = null }}
             onKeyDown={e => {
+              if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'z' && (query === '' || query === focusQuery.current)) {
+                e.preventDefault()
+                runCommand(e.shiftKey ? 'edit.redo' : 'edit.undo')
+                return
+              }
               if (e.key === 'ArrowDown') { e.preventDefault(); grid.current?.focus(); if (query) move(0) }
               if (e.key === 'Enter' && rows.length) { e.preventDefault(); const r = rows[index] ?? rows[0]; ops.openPatient(r.patient.id) }
               if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery('') }
@@ -146,7 +203,7 @@ export function PatientsView() {
         </div>
       )}
       <div
-        ref={grid} className="pt-table" role="grid" aria-label="Patients" aria-rowcount={rows.length + 1} tabIndex={0}
+        ref={grid} id="pt-grid" className="pt-table" role="grid" aria-label="Patients" aria-rowcount={rows.length + 1} tabIndex={0}
         aria-activedescendant={index >= 0 ? `pt-row-${rows[index].patient.id}` : undefined}
         onKeyDown={onKeyDown}
       >
@@ -160,7 +217,7 @@ export function PatientsView() {
             </div>
           ))}
         </div>
-        <div ref={scroller} className="pt-body" role="rowgroup">
+        <div className="pt-body" role="rowgroup">
           {rows.length === 0 ? (
             total === 0 ? (
               <div className="empty-state">
@@ -201,7 +258,7 @@ export function PatientsView() {
                     <TagCell tags={p.tags} />
                     <div role="gridcell" className="pt-cell c-visit" title={r.lastVisit ? relativeDate(r.lastVisit) : undefined}>{formatDate(r.lastVisit)}</div>
                     <div role="gridcell" className="pt-cell c-count num">{r.consultations || ''}</div>
-                    <div role="gridcell" className="pt-cell c-rx" title={r.lastRx ? `${catalog.remedy(r.lastRx.remedyId).name} ${r.lastRx.potency}, ${formatDate(r.lastRx.date)}` : undefined}>{r.lastRx && <><b>{abbrev(r.lastRx.remedyId)}</b> {r.lastRx.potency}<span className="pt-dim pt-rx-name"> · {catalog.remedy(r.lastRx.remedyId).name}</span></>}</div>
+                    <div role="gridcell" className="pt-cell c-rx" title={r.lastRx ? `${catalog.remedy(r.lastRx.remedyId).name} ${r.lastRx.potency}, ${formatDate(r.lastRx.date)}` : undefined}>{r.lastRx && <><b>{abbrev(r.lastRx.remedyId)}</b> {r.lastRx.potency}</>}</div>
                   </div>
                 )
               })}
@@ -212,7 +269,9 @@ export function PatientsView() {
       <div className="pt-list-status" aria-live="polite">
         {filtered ? `${rows.length} of ${total} patients` : `${total} patient${total === 1 ? '' : 's'}`}
         <span className="grow" />
-        <span className="pt-dim pt-keys-hint">↑↓ select · Enter open · Shift+F10 menu · Del delete · type to search</span>
+        <span className="pt-dim pt-keys-hint">
+          <kbd className="kbd">↑</kbd><kbd className="kbd">↓</kbd> select · <kbd className="kbd">Enter</kbd> open · <kbd className="kbd">Shift+F10</kbd> menu · <kbd className="kbd">Del</kbd> delete · type to search
+        </span>
       </div>
       {cm.element}
     </div>

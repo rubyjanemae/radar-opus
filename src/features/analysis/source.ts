@@ -64,12 +64,14 @@ export class CatalogSource implements RubricSource {
     return c
   }
 
-  remedyStats(repertory: string): RemedyStats | null {
-    if (this.statsCache.has(repertory)) return this.statsCache.get(repertory)!
+  /** m_r per remedy under the view (grades ≥ minGrade), computed once per repertory and view. */
+  remedyStats(repertory: string, minGrade = 1): RemedyStats | null {
+    const key = minGrade > 1 ? `${repertory}|${minGrade}` : repertory
+    if (this.statsCache.has(key)) return this.statsCache.get(key)!
     const rep = this.catalog.repertory(repertory)
     if (!rep) return null
-    const stats = computeRemedyStats(rep)
-    this.statsCache.set(repertory, stats)
+    const stats = computeRemedyStats(rep, minGrade)
+    this.statsCache.set(key, stats)
     return stats
   }
 
@@ -163,11 +165,12 @@ export function findOpposite(rep: Pick<Repertory, 'parent' | 'children' | 'text'
   return null
 }
 
-/** Count, for every remedy, the rubrics it appears in. */
-export function computeRemedyStats(rep: Pick<Repertory, 'size' | 'forEachRemedy'>): RemedyStats {
+/** Count, for every remedy, the rubrics it appears in (at grade ≥ minGrade: the repertory view). */
+export function computeRemedyStats(rep: Pick<Repertory, 'size' | 'forEachRemedy'>, minGrade = 1): RemedyStats {
   let counts = new Int32Array(4096)
   for (let i = 0; i < rep.size; i++) {
-    rep.forEachRemedy(i, id => {
+    rep.forEachRemedy(i, (id, g) => {
+      if (g < minGrade) return
       if (id >= counts.length) { const n = new Int32Array(Math.max(id + 1, counts.length * 2)); n.set(counts); counts = n }
       counts[id]++
     })

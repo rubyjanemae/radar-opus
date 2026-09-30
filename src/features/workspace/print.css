@@ -18,7 +18,7 @@
   html, body, #root { background: #fff !important; height: auto !important; overflow: visible !important; }
 
   /* the document flows across pages: undo the fixed-height app frame down to the active view */
-  .shell, .shell-main, .pane-center, .pane-center-body, .tab-content, .tab-content > *,
+  .shell, .shell-main, .pane-center, .pane-center-body, .tab-content, .tab-content > *, .tab-doc > *,
   .rv, .rv-bodywrap, .rv-scroll {
     display: block !important; height: auto !important; min-height: 0 !important; max-height: none !important;
     overflow: visible !important; contain: none !important; position: static !important;

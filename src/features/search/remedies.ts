@@ -1,4 +1,5 @@
 import type { Catalog } from '../../data/catalog'
+import type { Repertory } from '../../data/repertory'
 import type { Remedy } from '../../data/types'
 import { fold } from './text'
 
@@ -20,6 +21,39 @@ function entries(catalog: Catalog): Entry[] {
 }
 
 const repCounts = new WeakMap<object, Map<number, number>>()
+const partial = new WeakMap<object, { next: number; counts: Map<number, number> }>()
+
+/** Count each remedy's rubrics in one repertory, until `deadline()` says stop; true when done. */
+function countRemedies(rep: Repertory, deadline?: () => boolean): boolean {
+  if (repCounts.has(rep)) return true
+  let st = partial.get(rep)
+  if (!st) { st = { next: 0, counts: new Map() }; partial.set(rep, st) }
+  const c = st.counts
+  const add = (id: number) => c.set(id, (c.get(id) ?? 0) + 1)
+  while (st.next < rep.size) {
+    const end = Math.min(rep.size, st.next + 4096)
+    for (let i = st.next; i < end; i++) rep.forEachRemedy(i, add)
+    st.next = end
+    if (end < rep.size && deadline?.()) return false
+  }
+  repCounts.set(rep, c)
+  partial.delete(rep)
+  return true
+}
+
+type IdleDeadlineLike = { timeRemaining(): number; didTimeout: boolean }
+type IdleGlobal = { requestIdleCallback?: (cb: (d: IdleDeadlineLike) => void, o?: { timeout: number }) => number }
+
+/** Precount a freshly loaded repertory's remedies in idle slices, so the first remedy lookup (QuickFind, F5) is instant. */
+export function warmRemedyPopularity(rep: Repertory): void {
+  const ric = (globalThis as IdleGlobal).requestIdleCallback
+  if (!ric) return
+  const step = (d: IdleDeadlineLike) => {
+    const t0 = performance.now()
+    if (!countRemedies(rep, () => performance.now() - t0 > 12 || (!d.didTimeout && d.timeRemaining() < 2))) ric(step, { timeout: 3000 })
+  }
+  ric(step, { timeout: 3000 })
+}
 
 /** How many rubrics each remedy appears in across the loaded repertories (for tie-breaking). */
 function popularity(catalog: Catalog): Map<number, number> {
@@ -27,14 +61,8 @@ function popularity(catalog: Catalog): Map<number, number> {
   for (const info of catalog.repertoryInfos) {
     const rep = catalog.repertory(info.abbrev)
     if (!rep) continue
-    let counts = repCounts.get(rep)
-    if (!counts) {
-      const c = new Map<number, number>()
-      for (let i = 0; i < rep.size; i++) rep.forEachRemedy(i, id => c.set(id, (c.get(id) ?? 0) + 1))
-      counts = c
-      repCounts.set(rep, counts)
-    }
-    for (const [id, n] of counts) total.set(id, (total.get(id) ?? 0) + n)
+    countRemedies(rep)
+    for (const [id, n] of repCounts.get(rep)!) total.set(id, (total.get(id) ?? 0) + n)
   }
   return total
 }

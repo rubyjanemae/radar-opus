@@ -3,7 +3,8 @@ import type { Page } from '@playwright/test'
 import { openApp } from './helpers'
 
 const crumbs = (page: Page) => page.locator('.rv-crumbs')
-const current = (page: Page) => page.locator('.rv-row.rv-current')
+// open documents stay mounted (hidden) when another tab is active: look inside the active one
+const current = (page: Page) => page.locator('.tab-doc[data-active] .rv-row.rv-current')
 
 async function openBook(page: Page) {
   await openApp(page)
@@ -123,7 +124,13 @@ test('book keys: Space only on the list, Alt+PageDown switches tabs, concise acc
   const mode = await seg.locator('[aria-checked=true]').getAttribute('aria-label')
   await page.keyboard.press('Space')
   expect(await seg.locator('[aria-checked=true]').getAttribute('aria-label')).not.toBe(mode)
-  if (await current(page).locator('.rv-rem').count()) await expect(current(page).locator('.rv-rem').first()).toContainText(/grade [1-4]/)
+  // options: position in the whole chapter, not the rendered window
+  await expect(current(page)).toHaveAttribute('aria-posinset', '2')
+  const size = Number(await current(page).getAttribute('aria-setsize'))
+  expect(size).toBeGreaterThan(1000)
+  await page.keyboard.press('End')
+  await expect(current(page)).toHaveAttribute('aria-posinset', String(size))
+  await page.keyboard.press('Home')
   const active = page.locator('[role=tab][aria-selected=true]').first()
   const title = await active.textContent()
   await page.keyboard.press('Alt+PageDown')
@@ -134,7 +141,7 @@ test('opening a repertory shows a loading tab, then an error with Retry; other b
   let release!: () => void
   const gate = new Promise<void>(r => { release = r })
   let fail = true
-  await page.route('**/rep-kent-de.json', async route => { await gate; if (fail) await route.abort(); else await route.continue() })
+  await page.route(/rep-kent-de\.json/, async route => { await gate; if (fail) await route.abort(); else await route.continue() })
   await openBook(page)
   await page.getByRole('combobox', { name: 'Repertory' }).first().selectOption('kent-de')
   await expect(page.locator('.rv-loading')).toBeVisible()
@@ -145,11 +152,11 @@ test('opening a repertory shows a loading tab, then an error with Retry; other b
   await expect(page.locator('.toast').filter({ hasText: /Could not open Kent/ })).toBeVisible()
   fail = false
   await alert.getByRole('button', { name: 'Retry' }).click()
-  await expect(page.locator('.rv-row').first()).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('.tab-doc[data-active] .rv-row').first()).toBeVisible({ timeout: 20_000 })
   // the Publicum tab is still open next to the Kent tab
   await expect(page.locator('[role=tab]').filter({ hasText: 'Mind' })).toHaveCount(1)
   // take into a new clipboard, then the toast's Undo removes exactly that take
-  await page.locator('.rv-scroll').focus()
+  await page.locator('.tab-doc[data-active] .rv-scroll').focus()
   await page.keyboard.press('ArrowDown')
   await page.keyboard.type('+1>5')
   await page.keyboard.press('Enter')
@@ -236,7 +243,8 @@ test('drag a rubric onto a toolbar clipboard chip', async ({ page }) => {
   const chip = page.locator('.clip-chip').first()
   await expect(chip).toBeVisible()
   await page.locator('.rv-row[data-rubric="3"]').dragTo(chip)
-  await expect(page.locator('.toast').filter({ hasText: /Added 1 rubric/ })).toBeVisible()
+  // a drop is the standard take into that chip's clipboard
+  await expect(page.locator('.toast').last()).toContainText(/forenoon/)
   await expect(page.locator('.rv-row[data-rubric="3"] .rv-clip')).toHaveText('1')
 })
 
@@ -249,8 +257,8 @@ test('Ctrl+1 opens the repertories table of contents', async ({ page }) => {
 })
 
 const inView = (page: Page) => page.evaluate(() => {
-  const c = document.querySelector('.rv-current')!.getBoundingClientRect()
-  const s = document.querySelector('.rv-scroll')!.getBoundingClientRect()
+  const c = document.querySelector('.tab-doc[data-active] .rv-current')!.getBoundingClientRect()
+  const s = document.querySelector('.tab-doc[data-active] .rv-scroll')!.getBoundingClientRect()
   return { top: Math.round(c.top - s.top), fully: c.top >= s.top - 1 && c.bottom <= s.bottom + 1 }
 })
 
@@ -262,7 +270,8 @@ test('display changes keep the current rubric where it was', async ({ page }) =>
   const before = await inView(page)
   expect(before.fully).toBe(true)
   await page.locator('.rv-seg button', { hasText: 'Abbrev' }).click()
-  await expect.poll(() => inView(page)).toEqual(before)
+  // the row stays where it was (to the pixel: the new heights are fractional, scroll positions whole)
+  await expect.poll(async () => { const now = await inView(page); return now.fully && Math.abs(now.top - before.top) <= 1 }).toBe(true)
   await page.locator('.rv-scroll').focus()
   for (const _ of [1, 2, 3]) {
     await page.keyboard.press('Space')
@@ -322,4 +331,138 @@ test('recent list fills from reading and acting; navigator marks the menu row', 
   await expect(row).toHaveClass(/menu-target/)
   await page.keyboard.press('Escape')
   await expect(page.locator('.rnav-row.menu-target')).toHaveCount(0)
+})
+
+test('taking again never downgrades; F6 shows what is already on the clipboard', async ({ page }) => {
+  await openBook(page)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.type('+3a')
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.toast').last()).toContainText('Taken Mind - morning')
+  // a bare + and Insert leave it as it is
+  await page.keyboard.type('+')
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.toast').last()).toContainText('Already in Clipboard 1')
+  await page.keyboard.press('Insert')
+  await expect(page.locator('.toast').last()).toContainText('Already in Clipboard 1')
+  // F6 prefills intensity and group from the symptom
+  await page.keyboard.press('F6')
+  const dlg = page.getByRole('dialog', { name: 'Take with options' })
+  await expect(dlg.locator('.rtake-already')).toContainText('Already in Clipboard 1')
+  await expect(dlg.locator('input[name="rtake-w"][value="3"]')).toBeChecked()
+  await expect(dlg.getByRole('combobox').first()).toHaveValue('a')
+  await expect(dlg.getByRole('button', { name: 'Update' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  // an explicit +1 does change it
+  await page.locator('.rv-scroll').focus()
+  await page.keyboard.type('+1')
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.toast').last()).toContainText('Updated Mind - morning')
+})
+
+test('Find: Esc and Go to after opening a level land on the opened rubric', async ({ page }) => {
+  await openBook(page)
+  await page.keyboard.press('F2')
+  const dlg = page.getByRole('dialog', { name: 'Find rubric' })
+  await page.keyboard.type('mi')
+  await page.keyboard.press('Enter') // opens Mind: its first rubric is highlighted by Find, not by the reader
+  await page.keyboard.type('weep')
+  await page.keyboard.press('Enter') // opens "weeping"
+  await expect(dlg.locator('.rfind-crumb.on')).toHaveText(/weeping/)
+  await page.keyboard.press('Escape')
+  await expect(dlg).toBeHidden()
+  await expect(crumbs(page).locator('.rv-crumb-last')).toHaveText(/^weeping/)
+  // Go to, same rule; once the reader moves inside the level, the highlighted rubric wins
+  await page.keyboard.press('F3')
+  const here = page.getByRole('dialog', { name: 'Find from current rubric' })
+  await page.keyboard.press('ArrowDown')
+  const second = (await here.locator('.rfind-row.active .rfind-text').textContent())!
+  await here.getByRole('button', { name: 'Go to' }).click()
+  await expect(crumbs(page).locator('.rv-crumb-last')).toHaveText(second)
+})
+
+test('remedy highlight from the keyboard: Remedies menu, next rubric, Esc clears', async ({ page }) => {
+  await openBook(page)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Alt+r')
+  const menu = page.getByRole('menu').first()
+  await expect(menu).toContainText('Remedies of morning')
+  await expect(menu.getByRole('menuitem').first()).toContainText(/\(grade [1-4]\)/)
+  await page.keyboard.press('ArrowRight') // submenu of the first remedy
+  await page.getByRole('menuitem', { name: 'Highlight in book' }).click()
+  const bar = page.getByRole('region', { name: 'Remedy highlight' })
+  await expect(bar).toBeVisible()
+  await expect(page.locator('.rv-scroll')).toBeFocused()
+  const before = await crumbs(page).locator('.rv-crumb-last').textContent()
+  await page.keyboard.press('Alt+ArrowDown')
+  await expect(crumbs(page).locator('.rv-crumb-last')).not.toHaveText(before!)
+  await page.keyboard.press('Escape')
+  await expect(bar).toBeHidden()
+  // the context menu has the same Remedies submenu
+  await current(page).locator('.rv-text').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: /^Remedies \(\d+\)/ }).hover()
+  await expect(page.getByRole('menuitem', { name: /\(grade [1-4]\)/ }).first()).toBeVisible()
+})
+
+test('count display badges every rubric; tree items carry level and position', async ({ page }) => {
+  await openBook(page)
+  await page.locator('.rv-seg button', { hasText: 'Count' }).click()
+  await expect(page.locator('.rv-count-zero').first()).toHaveText('–')
+  const tree = page.getByRole('tree')
+  const head = tree.getByRole('treeitem', { name: /^Head/ })
+  await expect(head).toHaveAttribute('aria-level', '1')
+  const setsize = Number(await head.getAttribute('aria-setsize'))
+  expect(setsize).toBeGreaterThan(20)
+  await expect(tree.getByRole('treeitem', { name: /^Mind/ })).toHaveAttribute('aria-posinset', '1')
+  const w = (el: Element) => getComputedStyle(el).fontWeight
+  expect(await head.evaluate(w)).toBe('500')
+  expect(await tree.getByRole('treeitem', { name: /^Mind/ }).evaluate(w)).toBe('700')
+})
+
+test('navigator and repertory dialogs pass axe (list roles, contrast) in both themes', async ({ page }) => {
+  const { default: AxeBuilder } = await import('@axe-core/playwright')
+  for (const scheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: scheme })
+    await openBook(page)
+    await page.keyboard.press('ArrowDown')
+    // Bookmarks is empty on a first run: its hint must not sit inside a role=list
+    await expect(page.getByRole('region', { name: 'Bookmarks' }).locator('.rnav-hint')).toBeVisible()
+    const nav = await new AxeBuilder({ page }).include('.rnav').include('.tab-doc[data-active] .rv-row.rv-current')
+      .withRules(['aria-required-children', 'aria-required-parent', 'color-contrast']).analyze()
+    expect(nav.violations.map(v => `${v.id}: ${v.nodes.map(n => n.target.join(' ')).join(', ')}`)).toEqual([])
+    await page.keyboard.press('F2')
+    const find = page.getByRole('dialog', { name: 'Find rubric' })
+    await expect(find.locator('.rfind-row.active .rfind-count')).toBeVisible()
+    const fr = await new AxeBuilder({ page }).include('.rfind-list').withRules(['color-contrast']).analyze()
+    expect(fr.violations.map(v => v.id)).toEqual([])
+    await page.keyboard.press('Escape')
+    await expect(find).toBeHidden()
+    await page.locator('.rv-scroll').focus()
+    await page.keyboard.press('Control+Shift+M')
+    await expect(page.locator('.rnote-keys')).toBeVisible()
+    const note = await new AxeBuilder({ page }).include('.rnote-keys').withRules(['color-contrast']).analyze()
+    expect(note.violations.map(v => v.id)).toEqual([])
+    await page.keyboard.press('Escape')
+  }
+})
+
+test('ArrowDown in the book stays under a frame budget (p95 < 33 ms)', async ({ page }) => {
+  await openBook(page)
+  const times = await page.evaluate(async () => {
+    const el = document.querySelector<HTMLElement>('.tab-doc[data-active] .rv-scroll')!
+    const out: number[] = []
+    for (let n = 0; n < 60; n++) {
+      // the key's work: its synchronous render, plus the style and layout it leaves to the next frame
+      const t = performance.now()
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', bubbles: true, cancelable: true }))
+      const handled = performance.now() - t
+      await new Promise<void>(r => requestAnimationFrame(() => { const a = performance.now(); void el.offsetHeight; out.push(handled + performance.now() - a); r() }))
+      await new Promise(r => setTimeout(r, 30))
+    }
+    return out
+  })
+  const sorted = times.slice(10).sort((a, b) => a - b)
+  const p95 = sorted[Math.floor(sorted.length * 0.95)]
+  console.log(`ArrowDown p95 ${p95.toFixed(1)} ms`)
+  expect(p95).toBeLessThan(33)
 })

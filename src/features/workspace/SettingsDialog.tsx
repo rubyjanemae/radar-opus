@@ -118,7 +118,7 @@ function Row({ label, hint, children, htmlFor }: { label: string; hint?: ReactNo
 function Segmented<T extends string | number>({ label, value, options, onChange }: { label: string; value: T; options: { value: T; label: string; icon?: typeof Sun }[]; onChange: (v: T) => void }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([])
   return (
-    <div className="ws-seg" role="radiogroup" aria-label={label}>
+    <div className="seg ws-seg" role="radiogroup" aria-label={label}>
       {options.map((o, i) => (
         <button
           key={String(o.value)}
@@ -126,7 +126,7 @@ function Segmented<T extends string | number>({ label, value, options, onChange 
           role="radio"
           aria-checked={value === o.value}
           tabIndex={value === o.value ? 0 : -1}
-          className="ws-seg-btn"
+          className="seg-btn ws-seg-btn"
           onClick={() => onChange(o.value)}
           onKeyDown={e => {
             const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0

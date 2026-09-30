@@ -56,6 +56,22 @@ describe('remedy resolver', () => {
     expect(abbrevOf('Nux')).toBe('Nux-v')
     expect(abbrevOf('Nux vom.')).toBe('Nux-v')
   })
+  it('prefers the remedy with a monograph and rejects look-alike words', () => {
+    const rems: Remedy[] = [
+      { id: 1, abbrev: 'Digin', name: 'Digitalinum', altName: null },
+      { id: 2, abbrev: 'Dig', name: 'Digitalis Purpurea', altName: null },
+      { id: 3, abbrev: 'Lil-s', name: 'Lilium Superbum', altName: null },
+      { id: 4, abbrev: 'Lil-t', name: 'Lilium Tigrinum', altName: null },
+      { id: 5, abbrev: 'Per', name: 'Coqueluchinum', altName: '{Pertussinum}' },
+      { id: 6, abbrev: 'Tab', name: 'Tabacum', altName: null },
+    ]
+    const r = new RemedyResolver(rems, [[2, 'DIGITALIS PURPUREA'], [4, 'LILIUM TIGRINUM'], [5, 'PERTUSSINUM'], [6, 'TABACUM']])
+    expect(r.resolve('Digit')?.abbrev).toBe('Dig')
+    expect(r.resolve('Lilium')?.abbrev).toBe('Lil-t')
+    expect(r.resolve('Peru')).toBeNull()
+    expect(r.resolve('Tabes')).toBeNull()
+    expect(r.resolve('Tabac')?.abbrev).toBe('Tab')
+  })
   it('rejects prose', () => {
     expect(abbrevOf('Gnawing, hungry, faint feeling')).toBeNull()
     expect(abbrevOf('in')).toBeNull()
@@ -89,6 +105,15 @@ describe('relationships', () => {
     expect(rel[0].remedies).toEqual([17, 16, 15])
     expect(rel[1].remedies).toEqual([10, 15, 16, 20])
     expect(rel[2].remedies).toEqual([18, 7])
+  })
+  it('reads labels ending in “.”, “;” and “.:”', () => {
+    const rel = parseRelationships('Complementary.: *Puls*. Inimical. *Phos*.\nCompatible; *Bry; Merc*.', resolver, 1)
+    expect(rel.map(r => [r.kind, r.remedies])).toEqual([['Complementary', [3]], ['Inimical', [7]], ['Compatible', [8, 5]]])
+  })
+  it('ends a list clause before a sentence of prose', () => {
+    const rel = parseRelationships('Complementary: *Puls; Phos. Bry* intensifies its action.', resolver, 1)
+    expect(rel[0]).toMatchObject({ kind: 'Complementary', remedies: [3, 7] })
+    expect(rel[1]).toMatchObject({ kind: 'Compare', remedies: [8] })
   })
   it('keeps the qualifier as context and groups by kind', () => {
     const rel = parseRelationships('Compare: *Puls*. In albuminuria compare: *Merc cor*. Inimical: *Phos*.', resolver, 1)

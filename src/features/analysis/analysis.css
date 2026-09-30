@@ -6,11 +6,15 @@
 
 /* toolbar */
 .an-toolbar {
-  flex: none; display: flex; align-items: center; gap: 4px; row-gap: 3px; min-height: 34px; padding: 5px 8px; flex-wrap: wrap;
+  flex: none; display: flex; align-items: center; gap: 4px; row-gap: 3px; min-height: 34px; padding: 5px 8px; flex-wrap: nowrap;
   border-bottom: 1px solid var(--border); background: var(--chrome); font-size: var(--fs-sm);
 }
 /* every toolbar control shares one 24px height */
 .an-toolbar > *, .an-toolbar .icon-btn { flex: none; }
+/* on a narrow toolbar the strategy button and the jump box give up width before anything wraps */
+.an-toolbar > .an-strategy { flex: none; min-width: 120px; }
+.an-toolbar > .an-rbox { flex: 0 6 auto; min-width: 64px; }
+.an-toolbar > .an-rbox .an-rbox-input { min-width: 0; flex: 1; }
 .an-toolbar .icon-btn { width: 24px; height: 24px; }
 .an-sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
 .an-tb-btn {
@@ -19,12 +23,18 @@
 }
 .an-tb-btn:hover { background: var(--bg-hover); }
 .an-strategy svg:first-child { color: var(--accent); flex: none; }
-.an-strategy { min-width: 110px; max-width: 220px; }
+.an-strategy { max-width: 220px; }
+.an-strategy-custom { flex: none; color: var(--accent); }
 .an-strategy-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .an-strategy > svg:last-child { flex: none; }
 /* clipboard chips: the strip scrolls sideways inside the toolbar (never wraps it); "All" stays outside the scroller */
 .an-toolbar > .an-chipbar { flex: 1 1 80px; min-width: 80px; max-width: max-content; display: flex; align-items: center; gap: 3px; }
-.an-chips { flex: 0 1 auto; min-width: 0; display: flex; gap: 3px; align-items: center; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; }
+.an-chips {
+  flex: 0 1 auto; min-width: 0; display: flex; gap: 3px; align-items: center; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain;
+  /* scrolling stops on whole chips, never half a chip at the edge */
+  scroll-snap-type: x mandatory; scroll-padding: 0;
+}
+.an-chips > .an-chip { scroll-snap-align: start; }
 .an-chips::-webkit-scrollbar { display: none; }
 .an-chips.fade-r { mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
 .an-chips.fade-l { mask-image: linear-gradient(to left, #000 calc(100% - 22px), transparent); }
@@ -54,13 +64,13 @@
 .an-pill { min-width: 0; max-width: 260px; flex: 0 1 auto; }
 .an-pill > svg, .an-pill > button { flex: none; }
 .an-pill.pin { background: var(--bg-sunken); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.an-pill.view { background: var(--bg-sunken); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.an-pill .an-pill-text { display: inline-flex; align-items: center; gap: 4px; width: auto; height: 20px; padding: 0 2px; border-radius: 3px; font: inherit; }
 .an-pillbar { flex: none; display: flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border-bottom: 1px solid var(--border); background: var(--bg-elev); overflow: hidden; }
 .an-pill-clear { margin-left: auto; flex: none; height: 20px; }
 .an-split { display: inline-flex; align-items: center; border-radius: var(--radius); }
 .an-split .icon-btn { border-radius: var(--radius) 0 0 var(--radius); }
-.an-split .an-split-more { width: 20px; min-width: 20px; padding: 0; border-radius: 0 var(--radius) var(--radius) 0; position: relative; }
-/* the narrow half still offers a 24px target */
-.an-split .an-split-more::after { content: ''; position: absolute; inset: 0 -2px; }
+.an-split .an-split-more { width: 24px; min-width: 24px; height: 24px; padding: 0; border-radius: 0 var(--radius) var(--radius) 0; }
 .an-split.on { background: var(--accent-soft); }
 .an-split.on .icon-btn { color: var(--accent); }
 .an-count { color: var(--text-2); white-space: nowrap; font-size: var(--fs-xs); }
@@ -73,6 +83,12 @@
 .an-seg button:hover { background: var(--bg-hover); }
 .an-seg button.on { background: var(--bg-active); color: var(--accent); font-weight: 600; }
 
+/* compare / export / print: separate buttons on wide toolbars, one "More" menu below ~1200px */
+.an-toolbar .an-tb-more { display: none; }
+@container anview (max-width: 1200px) {
+  .an-toolbar .an-tb-wide { display: none; }
+  .an-toolbar .an-tb-more { display: inline-grid; }
+}
 /* narrow analysis tabs: icons instead of labels so the toolbar keeps its height */
 @container anview (max-width: 1080px) {
   .an-seg-label { display: none; }
@@ -84,6 +100,23 @@
   .an-count-word { display: none; }
   .an-toolbar .an-rbox-input { width: 96px; }
   .an-toolbar .an-sep { margin: 0 1px; }
+  .an-toolbar { gap: 3px; }
+  .an-toolbar .an-select { padding: 0 1px; }
+}
+/* low-priority toggles (also in the method menu) move into "More" before the method button would shrink */
+@container anview (max-width: 760px) {
+  .an-toolbar .an-tb-low { display: none; }
+}
+/* the clipboard chips collapse into a menu button when the toolbar is too narrow to show them whole */
+.an-toolbar > .an-cb-menu { display: none; gap: 4px; padding: 0 6px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.an-cb-dots { display: inline-flex; gap: 2px; }
+@container anview (max-width: 720px) {
+  .an-toolbar > .an-chipbar { display: none; }
+  .an-toolbar > .an-cb-menu { display: inline-flex; }
+}
+/* very narrow tabs (side-by-side panes): the toolbar may wrap rather than clip */
+@container anview (max-width: 560px) {
+  .an-toolbar { flex-wrap: wrap; }
 }
 
 /* remedy box */
@@ -116,6 +149,9 @@
 
 .an-body { flex: 1; display: flex; min-height: 0; }
 .an-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+/* displays stay mounted once shown (KeepAlive); hidden ones keep their layout and scroll position */
+.an-keep { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.an-keep:not(.on) { position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
 .an-loading { padding: 16px; display: grid; gap: 8px; }
 .an-loading-msg { display: flex; align-items: center; gap: 8px; color: var(--text-2); font-size: var(--fs-sm); margin-bottom: 6px; }
 .an-skel { height: 18px; }
@@ -129,11 +165,16 @@
 
 /* grid */
 .an-grid-wrap { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; position: relative; }
-.an-grid { flex: 1; min-height: 0; overflow: auto; position: relative; outline: none; font-size: var(--fs-sm); background: var(--bg-elev); }
+.an-grid {
+  flex: 1; min-height: 0; overflow: auto; position: relative; outline: none; font-size: var(--fs-sm); background: var(--bg-elev);
+  /* the horizontal scrollbar is how most people discover the hidden columns: give it a visible track */
+  scrollbar-color: var(--text-3) var(--bg-sunken);
+}
 /* right-edge shadow while more remedy columns lie to the right */
 .an-grid-fade {
-  position: absolute; top: 0; width: 24px; pointer-events: none; z-index: 8;
-  background: linear-gradient(to right, transparent, color-mix(in srgb, var(--text) 14%, transparent));
+  position: absolute; top: 0; width: 28px; pointer-events: none; z-index: 8;
+  background: linear-gradient(to right, transparent, color-mix(in srgb, var(--text) 28%, transparent));
+  border-right: 2px solid color-mix(in srgb, var(--text) 35%, transparent);
 }
 .an-grid-inner { position: relative; }
 .an-hrow { position: sticky; top: 0; z-index: 3; height: var(--an-head); background: var(--chrome); border-bottom: 1px solid var(--border-strong); }
@@ -186,7 +227,14 @@
 .an-flag { flex: none; display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 2px; border-radius: 3px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .f-e { background: color-mix(in srgb, var(--success) 20%, transparent); color: var(--success); }
 .f-x { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
-.f-g { background: color-mix(in srgb, var(--warning) 22%, transparent); color: var(--warning); }
+/* group letter: a small orange rounded square with the lowercase letter (the clipboard uses the same marker) */
+.an-flag.f-g {
+  min-width: 14px; height: 14px; padding: 0 3px; border-radius: 3px; text-transform: none; font-size: 10.5px; line-height: 1;
+  background: var(--an-grp-bg); color: var(--an-grp-fg);
+}
+.an-view, .an-dock, .dialog { --an-grp-bg: color-mix(in srgb, var(--warning) 82%, var(--text)); --an-grp-fg: var(--bg-elev); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) :is(.an-view, .an-dock, .dialog) { --an-grp-bg: var(--warning); --an-grp-fg: var(--bg); } }
+:root[data-theme="dark"] :is(.an-view, .an-dock, .dialog) { --an-grp-bg: var(--warning); --an-grp-fg: var(--bg); }
 .f-c { background: var(--bg-sunken); color: var(--text-2); }
 .f-m { background: var(--danger); color: #fff; }
 .an-label-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -291,12 +339,14 @@
 .an-cap { padding: 6px 12px; font-size: var(--fs-xs); border-top: 1px solid var(--border); }
 
 /* drill-down panel */
-.an-panel { flex: none; width: clamp(300px, 34%, 380px); min-width: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--bg); }
+.an-panel { flex: none; width: min(var(--an-panel-w, 400px), 60%); min-width: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--bg); }
+.an-body > .splitter-vertical { align-self: stretch; }
 /* narrow tabs: the drill-down goes under the grid so every remedy column stays visible */
 @container anview (max-width: 760px) {
   .an-body { flex-direction: column; }
   .an-main { flex: 1 1 55%; min-height: 150px; }
   .an-panel { width: auto; flex: 0 1 45%; min-height: 170px; border-left: 0; border-top: 2px solid var(--border-strong); }
+  .an-body > .splitter { display: none; }
   .an-panel-head { grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; padding: 6px 10px; gap: 4px 12px; }
   .an-panel-title, .an-panel-name, .an-panel-excl { grid-column: 1; }
   .an-panel-stats { grid-column: 2; grid-row: 1 / span 2; }
@@ -314,7 +364,7 @@
 .an-panel-stats > div { display: grid; padding: 5px 8px; border-radius: 5px; background: var(--bg-sunken); }
 .an-stat-v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .an-stat-k { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
-.an-panel-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.an-panel-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
 .an-panel-actions .btn { justify-content: center; min-width: 0; overflow: hidden; white-space: nowrap; }
 .an-panel-body { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; }
 .an-panel-body > * { min-width: 0; }
@@ -325,19 +375,28 @@
 .an-note { color: var(--warning); }
 .an-terms { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); table-layout: fixed; }
 .an-terms th { text-align: left; font-weight: 600; color: var(--text-3); padding: 3px 4px; border-bottom: 1px solid var(--border); font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em; }
-.an-terms th:nth-child(2) { width: 38px; }
-.an-terms th:nth-child(3) { width: 84px; }
-.an-terms th:nth-child(4) { width: 40px; }
+.an-terms col.an-terms-g { width: 28px; }
+.an-terms col.an-terms-ig { width: 36px; }
+.an-terms col.an-terms-pts { width: 32px; }
+.an-terms th.num, .an-terms td.num { padding: 0 2px; }
 .an-terms abbr { text-decoration: none; cursor: help; }
 .an-terms tbody td { height: 24px; box-sizing: border-box; }
+.an-terms tbody td.an-term-label { padding-top: 3px; padding-bottom: 3px; }
 .an-terms td { padding: 0 4px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); vertical-align: middle; }
 .an-terms tbody tr:hover { background: var(--bg-hover); }
 .an-terms tbody tr.selected { background: var(--bg-selected); }
 .an-terms tfoot th { text-transform: none; letter-spacing: 0; color: var(--text-2); border-top: 1px solid var(--border-strong); border-bottom: 0; }
 .an-terms .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.an-term-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.an-term-calc { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.an-term-calc sub { font-size: 8.5px; color: var(--text-3); }
+/* breakdown label: up to two lines, the path shortened in the middle, the full text in the title */
+.an-term-label { overflow: hidden; line-height: 1.3; }
+.an-term-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.an-term-text .an-flag { display: inline-grid; vertical-align: 1px; margin-right: 4px; }
+.an-term-ch { margin-right: 4px; font-size: 9.5px; font-weight: 700; letter-spacing: .02em; color: var(--text-3); }
+.an-term-f { display: flex; flex-wrap: wrap; gap: 0 6px; font-family: var(--font-mono); font-size: 10px; color: var(--text-2); }
+.an-term-f sub { font-size: 8.5px; color: var(--text-3); }
+.an-term-g { white-space: nowrap; }
+.an-term-g .an-mark { margin-right: 2px; transform: scale(.8); }
+.an-term-calc { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; }
 .an-term-pts { font-weight: 700; }
 .an-legend-note { margin: -4px 0 0; font-size: 10.5px; color: var(--text-3); display: flex; flex-wrap: wrap; gap: 8px; }
 .an-missing h4 { margin: 0 0 4px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .04em; color: var(--text-2); display: flex; gap: 6px; align-items: center; }
@@ -345,6 +404,7 @@
 .an-missing p { margin: 0; font-size: var(--fs-xs); }
 .an-link { display: flex; align-items: center; gap: 4px; width: 100%; min-width: 0; padding: 2px 4px; border: 0; border-radius: 3px; background: transparent; text-align: left; font-size: var(--fs-xs); color: var(--text); overflow: hidden; white-space: nowrap; }
 .an-missing li { min-width: 0; }
+.an-link .an-ellipsis .an-flag { display: inline-grid; vertical-align: 1px; margin-right: 4px; }
 .an-link:hover { background: var(--bg-hover); }
 .an-link.on { background: var(--bg-selected); }
 
@@ -362,6 +422,7 @@
 .an-cmp .num { text-align: center; font-variant-numeric: tabular-nums; }
 .an-cmp-label { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
 .an-cmp-label .an-weight { display: inline-block; margin-right: 6px; }
+.an-cmp-label .an-flag { display: inline-grid; vertical-align: 1px; margin-right: 6px; }
 .an-cmp tfoot th[scope="row"] { text-align: right; padding-right: 12px; color: var(--text-2); }
 .an-absent { color: var(--text-3); }
 .an-cov { display: inline-block; min-width: 44px; padding: 1px 4px; border-radius: 3px; background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 22%, transparent) var(--p), transparent var(--p)); }
@@ -384,10 +445,12 @@
 .an-dock-head .btn { text-transform: none; letter-spacing: 0; }
 .an-dock-count { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-3); }
 .an-dock-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.an-dock-bars { flex: none; display: flex; gap: 2px; height: 40px; padding: 2px 8px 0 calc(var(--an-dock-label, 230px) + 1px); border-bottom: 1px solid var(--border); overflow: hidden; }
+/* one bar per grid column below: 34px bar + 2px gap = the 36px compact column */
+.an-dock-bars { flex: none; display: flex; gap: 2px; height: 40px; margin: 0; padding: 2px 8px 0 calc(var(--an-dock-label, 230px) + 1px); list-style: none; border-bottom: 1px solid var(--border); overflow: hidden; }
+.an-dock-item { flex: none; display: flex; width: 34px; }
 .an-dock-bar {
-  position: relative; flex: none; width: 28px; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch;
-  padding: 0 5px; border: 0; border-radius: 3px; background: transparent; overflow: hidden; cursor: pointer;
+  position: relative; flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch;
+  padding: 0 7px; border: 0; border-radius: 3px; background: transparent; overflow: hidden; cursor: pointer;
 }
 .an-dock-bar:hover { background: var(--bg-hover); }
 .an-dock-bar:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
@@ -420,3 +483,22 @@
   .an-print .an-mark { margin-right: 1pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .an-print .g1 { color: #333; } .an-print .g2 { color: #1c55b8; } .an-print .g3 { color: #c2261b; } .an-print .g4 { color: #8a1911; }
 }
+
+/* strategy parameters drawer ("Advanced", scoring-spec §6) */
+.an-params { flex: none; max-height: 45%; overflow: auto; border-bottom: 1px solid var(--border); background: var(--bg); font-size: var(--fs-xs); }
+.an-params-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 3px 8px 3px 12px; background: var(--chrome); border-bottom: 1px solid var(--border); }
+.an-params-head > svg { flex: none; color: var(--accent); }
+.an-params-head > strong { flex: none; font-size: var(--fs-sm); }
+.an-params-head > .an-muted { flex: 0 1 auto; }
+.an-params-head .btn { flex: none; height: 24px; }
+.an-params-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; padding: 8px 12px 10px; }
+.an-params-group { margin: 0; padding: 4px 8px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elev); display: grid; gap: 2px; min-width: 0; align-content: start; }
+.an-params-group.used { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.an-params-group legend { padding: 0 4px; font-weight: 700; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; font-size: 10.5px; }
+.an-params-group.used legend { color: var(--accent); }
+.an-param { display: flex; align-items: center; gap: 6px; min-height: 24px; }
+.an-param > label { flex: 1; min-width: 0; color: var(--text-2); }
+.an-param.changed > label, .an-param.changed > span { color: var(--text); font-weight: 600; }
+.an-param-num { flex: none; width: 76px; height: 22px; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; text-align: right; }
+.an-param-num.invalid { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
+.an-param-bool { cursor: pointer; color: var(--text-2); }

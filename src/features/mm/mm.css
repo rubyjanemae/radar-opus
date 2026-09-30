@@ -38,18 +38,21 @@
 .mm-listwrap { flex: 1; display: flex; min-height: 0; }
 .mm-list { flex: 1; overflow: auto; outline: none; min-width: 0; }
 .mm-list:focus-visible .mm-row.on { box-shadow: inset 0 0 0 1px var(--focus); }
+/* focusable panes of the reader: a quiet 1px inset ring (the selected row / text shows where the keyboard is) */
+.mm-list:focus-visible, .mm-hits:focus-visible, .mm-reader:focus-visible { outline: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--focus) 55%, transparent); }
 .mm-row {
   position: absolute; left: 0; right: 0; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px;
   font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; cursor: default;
 }
 .mm-row:hover { background: var(--bg-hover); }
 .mm-row.on { background: var(--bg-selected); }
-.mm-row-abbr { flex: none; width: 58px; font-weight: 650; color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+.mm-list:focus-visible .mm-row.active { background: var(--bg-hover); box-shadow: inset 0 0 0 1px var(--focus); }
+.mm-row-abbr { flex: none; width: var(--mm-abbr-w, 58px); padding-right: 0; font-weight: 650; color: var(--text); overflow: hidden; text-overflow: ellipsis; }
 .mm-row-title { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 .mm-row-common { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); font-size: var(--fs-xs); }
-.mm-az { flex: none; display: flex; flex-direction: column; justify-content: space-between; width: 18px; padding: 4px 0; border-left: 1px solid var(--border); background: var(--chrome); overflow: hidden; }
+.mm-az { flex: none; display: flex; flex-direction: column; justify-content: space-between; width: 25px; padding: 2px 0; border-left: 1px solid var(--border); background: var(--chrome); overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
 .mm-az button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 3px; color: var(--accent); }
-.mm-az button { flex: 1 1 0; min-height: 0; max-height: 22px; padding: 0; border: 0; background: transparent; font-size: 9.5px; font-weight: 600; color: var(--text-2); line-height: 1; }
+.mm-az button { flex: 1 0 24px; min-height: 24px; max-height: 28px; padding: 0; border: 0; background: transparent; font-size: 10.5px; font-weight: 600; color: var(--text-2); line-height: 1; }
 .mm-az button:hover:not(:disabled) { color: var(--accent); background: var(--bg-hover); }
 .mm-az button:disabled { color: var(--text-3); opacity: .45; }
 
@@ -70,7 +73,7 @@
 .mm-hit-snip mark { background: color-mix(in srgb, var(--warning) 32%, transparent); color: inherit; border-radius: 2px; }
 
 /* reader */
-.mm-reader { flex: 1; min-width: 0; overflow: auto; outline: none; background: var(--bg-elev); --mm-fs: 15px; scroll-behavior: auto; }
+.mm-reader { flex: 1; min-width: 0; overflow: auto; outline: none; background: var(--bg-elev); --mm-fs: 15px; scroll-behavior: auto; container: mm-reader / inline-size; }
 .mm-page { max-width: 46em; margin: 0 auto; padding: 28px 40px 60px; font: var(--mm-fs)/1.62 var(--font-book); color: var(--text); }
 .mm-head { margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
 .mm-head-meta { display: flex; align-items: center; gap: 8px; font: 500 var(--fs-sm) var(--font-ui); color: var(--text-2); }
@@ -103,7 +106,7 @@
 .mm-toolbar .icon-btn.on { background: var(--accent-soft); color: var(--accent); }
 .mm-rem.mm-rem-out { color: var(--text); text-decoration-style: dotted; text-decoration-color: var(--text-3); }
 .mm-page mark.mm-hit { background: color-mix(in srgb, var(--warning) 30%, transparent); color: inherit; border-radius: 2px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--warning) 45%, transparent); }
-.mm-page mark.mm-hit.current { background: var(--warning); color: #111; box-shadow: 0 0 0 2px var(--warning); }
+.mm-page mark.mm-hit.current { background: var(--warning); color: var(--on-warning); box-shadow: 0 0 0 2px var(--warning); }
 .mm-source { margin-top: 28px; padding-top: 8px; border-top: 1px solid var(--border); font: var(--fs-xs) var(--font-ui); color: var(--text-3); }
 
 .mm-welcome { max-width: 36em; margin: 9vh auto 0; padding: 0 32px; color: var(--text-2); font-size: var(--fs); }
@@ -124,7 +127,9 @@
 @container mm-body (max-width: 900px) { .mm-outline { display: none; } }
 @container mm-view (max-width: 1000px) { .mm-booktitle-sub { display: none; } }
 @container mm-view (max-width: 880px) { .mm-booktitle { display: none; } .mm-search { margin-left: 4px; } }
-@container mm-body (max-width: 640px) { .mm-page { padding: 16px 12px 48px; } .mm-row-abbr { width: 50px; } .mm-row { gap: 6px; } }
+@container mm-body (max-width: 640px) { .mm-page { padding: 16px 12px 48px; }  .mm-row { gap: 6px; } }
+/* a narrow reader (side panes open on a small screen) keeps its measure by giving up page margins */
+@container mm-reader (max-width: 520px) { .mm-page { padding: 20px 16px 48px; } }
 @container mm-side (max-width: 230px) {
   .mm-side-tabs { padding: 5px 4px 0; gap: 0; }
   .mm-side-tabs button { padding: 0 7px; gap: 4px; }

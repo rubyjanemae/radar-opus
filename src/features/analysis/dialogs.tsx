@@ -6,7 +6,7 @@ import { formatScore } from '../../engine/analysis'
 import type { AnalysisRow } from '../../engine/analysis'
 import { actions } from '../../state/store'
 import { Dialog } from '../../ui/Dialog'
-import { GradeMark } from './AnalysisGrid'
+import { GradeMark, GroupMark } from '../../ui/marks'
 import { caseChapterCoverage, initialCompare, MAX_COMPARE, sphereOfAction } from './compare'
 import { useAnalysis } from './useAnalysis'
 
@@ -117,7 +117,7 @@ export function CompareDialog({ consultationId, initial, onClose }: { consultati
                 <tbody>
                   {scored.map(({ s, i }) => (
                     <tr key={i}>
-                      <td className="an-cmp-label" title={s.label}><span className={`an-weight w${s.symptom.weight}`} title={`Intensity ×${s.symptom.weight}`}>×{s.symptom.weight}</span>{s.label}</td>
+                      <td className="an-cmp-label" title={s.label}><span className={`an-weight w${s.symptom.weight}`} title={`Intensity ×${s.symptom.weight}`}>×{s.symptom.weight}</span>{s.symptom.group && <GroupMark letter={s.symptom.group} />}{s.label}</td>
                       {list.map(id => {
                         const g = rowOf.get(id)?.grades[i] ?? s.grades.get(id) ?? 0
                         return <td key={id} className="num">{g ? <><GradeMark g={g} /> <span className={`g${g}`}>{g}</span></> : <span className="an-absent" aria-label="absent">–</span>}</td>

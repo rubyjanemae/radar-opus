@@ -7,9 +7,9 @@ import { openApp } from './helpers'
 const view = (page: Page) => page.getByTestId('analysis-view')
 const headers = (page: Page) => view(page).locator('.an-hcell')
 const SHOTS = process.env.SHOTS_DIR
-const RUBRICS = [191, 3774, 7914, 28632, 4559, 73029, 70850, 5739, 25321].map(i => `publicum:${i}`)
+const RUBRICS = [191, 3746, 7862, 28493, 4529, 72742, 70571, 5699, 25192].map(i => `publicum:${i}`)
 /** Generalities motion / lying / touch / pressure agg., Mind consolation agg.: each has an "amel." sibling. */
-const POLAR = [73153, 73118, 73644, 73399, 856].map(i => `publicum:${i}`)
+const POLAR = [72865, 72831, 73355, 73110, 850].map(i => `publicum:${i}`)
 
 async function analysedCase(page: Page, refs: string[]) {
   const panel = page.getByTestId('clipboard-panel')
@@ -60,10 +60,11 @@ test('new strategies are in the menu and rank remedies', async ({ page }) => {
   await first.click()
   const panel = page.getByTestId('remedy-panel')
   await expect(panel).toBeVisible()
-  await expect(panel.locator('.an-term-calc sub', { hasText: 'π' }).first()).toBeVisible()
-  const pts = await panel.locator('tbody .an-term-pts').allTextContents()
-  const total = await panel.locator('tfoot .an-term-pts').textContent()
-  expect(pts.reduce((s, x) => s + Number(x), 0)).toBeCloseTo(Number(total), 5)
+  await expect(panel.locator('.an-term-f sub', { hasText: 'π' }).first()).toBeVisible()
+  // the narrow points column rounds; its titles carry the exact terms, which sum to the total
+  const pts = await panel.locator('tbody .an-term-pts').evaluateAll(els => els.map(e => e.getAttribute('title')))
+  const total = await panel.locator('tfoot .an-term-pts').getAttribute('title')
+  expect(pts.reduce((s, x) => s + Number(x), 0)).toBeCloseTo(Number(total), 2)
   await expect(panel.locator('.an-legend-note')).toContainText('prominence')
   await shot(page, 'prominence-panel')
   await panel.getByRole('button', { name: 'Close details' }).click()
@@ -92,10 +93,10 @@ test('polarity finds opposite rubrics, marks contraindications and explains PD',
   if (firstCI >= 0) expect(scores.slice(firstCI).every(s => s.startsWith('CI'))).toBe(true)
   await headers(page).first().click()
   const panel = page.getByTestId('remedy-panel')
-  await expect(panel.locator('.an-term-calc sub', { hasText: 'opp' }).first()).toBeVisible()
-  const pts = await panel.locator('tbody .an-term-pts').allTextContents()
-  const total = await panel.locator('tfoot .an-term-pts').textContent()
-  expect(pts.reduce((s, x) => s + Number(x), 0)).toBeCloseTo(Number(total), 5)
+  await expect(panel.locator('.an-term-f sub', { hasText: 'opp' }).first()).toBeVisible()
+  const pts = await panel.locator('tbody .an-term-pts').evaluateAll(els => els.map(e => e.getAttribute('title')))
+  const total = await panel.locator('tfoot .an-term-pts').getAttribute('title')
+  expect(pts.reduce((s, x) => s + Number(x), 0)).toBeCloseTo(Number(total), 2)
   expect(Number(total)).toBe(Number(scores[0].replace('CI ', '')))
   await shot(page, 'polarity')
 })
@@ -109,7 +110,7 @@ test('polarity without polar symptoms says so and still ranks', async ({ page })
 })
 
 test('a grouped symptom at intensity 0 stays out of its group: no grades, no elimination', async ({ page }) => {
-  const [a, b, c] = ['publicum:191', 'publicum:73029', 'publicum:3774']
+  const [a, b, c] = ['publicum:191', 'publicum:72742', 'publicum:3746']
   await analysedCase(page, [a, b, c])
   const rows = page.getByTestId('clipboard-panel').locator('.cbp-row')
   // group a + b, then b at intensity 0 and eliminative
@@ -127,7 +128,9 @@ test('a grouped symptom at intensity 0 stays out of its group: no grades, no eli
   // three lines: the group holds only a, b is its own ignored line, nothing is eliminated
   const labels = view(page).locator('.an-label-text')
   await expect(labels).toHaveCount(3)
-  await expect(labels.nth(0)).toHaveText(/^\[a\] MIND - anxiety, night$/)
+  // one group marker (the orange letter), no "[a]" text prefix
+  await expect(labels.nth(0)).toHaveText(/^MIND - anxiety, night$/)
+  await expect(view(page).locator('.an-row').nth(0).locator('.an-flag.f-g')).toHaveText('a')
   await expect(view(page).locator('.an-corner-rem')).toContainText(/^\d+ remedies/)
   const grouped = await headers(page).locator('.an-score').allTextContents()
   const total = await view(page).locator('.an-corner-rem').textContent()

@@ -1,13 +1,16 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { Suspense, useEffect, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { useApp, actions } from '../../state/store'
 import { focusDocument, focusTarget, trackFocus } from './panes'
 import { NARROW_QUERY, closeOverlays, enterNarrow, exclusivePatch, leaveNarrow, openedPane } from './responsive'
 import type { SideState } from './responsive'
 import { shouldAutoStart, startTour, useTour } from './tour'
-import { WelcomeTour } from './WelcomeTour'
+import { lazyRetry } from '../../ui/lazyRetry'
 import './workspace.css'
 import './print.css'
+
+// the tour's overlay is only needed on a first run (or Help > Welcome tour): its own chunk, imported when it opens
+const WelcomeTour = lazyRetry(() => import('./WelcomeTour'), m => m.WelcomeTour)
 
 const mq = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(NARROW_QUERY) : null
 const subscribeNarrow = (fn: () => void) => { mq?.addEventListener('change', fn); return () => mq?.removeEventListener('change', fn) }
@@ -96,5 +99,5 @@ export function WorkspaceChrome() {
     ? createPortal(<div className="ws-scrim" aria-hidden="true" onMouseDown={e => { e.preventDefault(); closeOverlays() }} />, host)
     : null
 
-  return <>{scrim}<WelcomeTour /></>
+  return <>{scrim}{tourOpen && <Suspense fallback={null}><WelcomeTour /></Suspense>}</>
 }

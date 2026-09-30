@@ -94,8 +94,11 @@ export interface StrategyParams {
   smallRubrics: { threshold: number; factor: number }
   /** f(r) = clamp((mRef / m_r)^alpha, fMin, fMax). */
   smallRemedies: { mRef: number; alpha: number; fMin: number; fMax: number }
-  /** κ per symptom category (Kent preset, composite). */
-  kent: { weights: { srp: number; mental: number; general: number; particular: number } }
+  /**
+   * κ per symptom category (Kent preset, composite). Kent options (§4.11): markedMentalEliminative makes the first
+   * mental line with intensity ≥ 3 eliminative; mustCoverStrong makes every line with intensity ≥ 3 eliminative.
+   */
+  kent: { weights: { srp: number; mental: number; general: number; particular: number }; markedMentalEliminative: boolean; mustCoverStrong: boolean }
   /** w(n) = 1 + (wMax − 1)·2^(−(n − 1)/halfLife). */
   smallRubricsCont: { wMax: number; halfLife: number }
   /** Prominent: the remedy holds the line's top grade and at most k remedies share it; soleBonus doubles a sole top grade. */
@@ -108,17 +111,64 @@ export interface StrategyParams {
   composite: { soleTopFactor: number }
 }
 
-export type StrategyParamsPatch = { [K in keyof StrategyParams]?: Partial<StrategyParams[K]> }
+export type StrategyParamsPatch = {
+  [K in keyof StrategyParams]?: K extends 'kent' ? Partial<Omit<StrategyParams['kent'], 'weights'>> & { weights?: Partial<StrategyParams['kent']['weights']> } : Partial<StrategyParams[K]>
+}
 
 export const DEFAULT_PARAMS: StrategyParams = {
   smallRubrics: { threshold: 10, factor: 2 },
   smallRemedies: { mRef: 1000, alpha: 0.5, fMin: 0.5, fMax: 4 },
-  kent: { weights: { srp: 4, mental: 3, general: 2, particular: 1 } },
+  kent: { weights: { srp: 4, mental: 3, general: 2, particular: 1 }, markedMentalEliminative: false, mustCoverStrong: false },
   smallRubricsCont: { wMax: 30, halfLife: 10 },
   prominence: { k: 3, soleBonus: false },
   polarity: { low: 2, high: 3, allowMissing: 0, includeNonPolar: false, minLinesWarn: 5 },
   segments: { topK: 10 },
   composite: { soleTopFactor: 2 },
+}
+
+/** Every strategy id, in menu order. */
+export const STRATEGY_IDS: readonly StrategyId[] = [
+  'sum-symptoms-degrees', 'sum-symptoms', 'sum-degrees', 'sum-symptoms-plus-degrees', 'weighted', 'small-rubrics', 'small-rubrics-cont',
+  'remedy-size', 'small-remedies', 'prominence', 'kent', 'boenninghausen', 'polarity', 'segments', 'composite', 'elimination',
+]
+export const DEFAULT_STRATEGY: StrategyId = 'sum-symptoms-degrees'
+
+/** A known strategy id, else the default strategy (unknown ids from old or damaged saves never score as something else). */
+export function normalizeStrategy(id: unknown): StrategyId {
+  return typeof id === 'string' && (STRATEGY_IDS as readonly string[]).includes(id) ? (id as StrategyId) : DEFAULT_STRATEGY
+}
+
+const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x)
+
+/** Merge one params group over its defaults: numbers must be finite numbers, booleans booleans; anything else keeps the default. */
+function mergeGroup<T extends object>(def: T, patch: unknown): T {
+  if (!isObj(patch)) return def
+  const out = { ...def } as Record<string, unknown>
+  for (const [k, d] of Object.entries(def)) {
+    const v = patch[k]
+    if (typeof d === 'number') { if (typeof v === 'number' && Number.isFinite(v)) out[k] = v }
+    else if (typeof d === 'boolean') { if (typeof v === 'boolean') out[k] = v }
+    else if (isObj(d)) out[k] = mergeGroup(d, v)
+  }
+  return out as T
+}
+
+/**
+ * Full strategy parameters from a (possibly partial, possibly damaged) patch: missing or invalid values use
+ * DEFAULT_PARAMS, so the engine never sees NaN. Shared by the engine, the state sanitizer and the patients views.
+ */
+export function mergeParams(patch: unknown): StrategyParams {
+  if (!isObj(patch)) return DEFAULT_PARAMS
+  const out = {} as Record<string, unknown>
+  for (const k of Object.keys(DEFAULT_PARAMS) as (keyof StrategyParams)[]) out[k] = mergeGroup(DEFAULT_PARAMS[k], patch[k])
+  return out as unknown as StrategyParams
+}
+
+/** Symptom intensity as a number the engine can use: 0–4, non-numeric values count as 1. */
+export function normalizeWeight(w: unknown): Weight {
+  const n = typeof w === 'number' ? w : typeof w === 'string' && w.trim() !== '' ? Number(w) : NaN
+  if (!Number.isFinite(n)) return 1
+  return Math.max(0, Math.min(4, Math.round(n))) as Weight
 }
 
 export type FlagStyle = 'short' | 'long'

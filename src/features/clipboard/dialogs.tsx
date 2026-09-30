@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { Dialog } from '../../ui/Dialog'
 import { actions, useApp } from '../../state/store'
 import { useCatalog } from '../../data/CatalogContext'
+import { createPatient } from '../patients/ops'
 import { rubricLabel } from './labels'
 
 /** Edit the free-text note of one or more symptoms. */
@@ -61,9 +62,14 @@ export function NewCaseDialog({ onClose }: { onClose: () => void }) {
   const firstRef = useRef<HTMLInputElement>(null)
   const create = () => {
     if (!valid) { setTried(true); firstRef.current?.focus(); return }
-    const pid = actions.createPatient({ firstName: first.trim(), lastName: last.trim() })
-    actions.createConsultation(pid, { title: title.trim() || 'Consultation', complaint: complaint.trim() })
-    actions.toast(`Case opened for ${[first.trim(), last.trim()].filter(Boolean).join(' ')}`, 'success')
+    // the patients package's flow (first consultation, patient file, toast); the case details go into the same undo step
+    actions.transaction(() => {
+      const pid = createPatient({ firstName: first.trim(), lastName: last.trim() }, true)
+      const cid = useApp.getState().activeConsultationId
+      const c = cid ? useApp.getState().consultations[cid] : null
+      const patch = { title: title.trim() || c?.title || 'Consultation', complaint: complaint.trim() }
+      if (c && c.patientId === pid && (patch.title !== c.title || patch.complaint !== c.complaint)) actions.updateConsultation(c.id, patch)
+    }, 'New case')
     onClose()
   }
   return (

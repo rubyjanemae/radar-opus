@@ -117,4 +117,32 @@ describe('palette model', () => {
     expect(s[0].pending).toBe(true)
     expect(s[0].items.at(-1)?.kind).toBe('search')
   })
+
+  it('results of a lagging deferred query rank below matches for what is typed now', () => {
+    const remedy = { id: 1, abbrev: 'Neg', name: 'Negundium americanum' }
+    const remedies = (q: string) => q === 'N' ? [{ remedy, score: 100, field: 'abbrev' }] as never : []
+    const commands = [cmd('n', 'New clipboard')]
+    // caught up: the remedy match for "N" may lead
+    const fresh = paletteItems(input({ text: 'N', slowText: 'N', commands, remedies }))
+    expect(fresh[0].key).toBe('remedies')
+    // typed on to "New clipboard" while the deferred copy still says "N": the command leads
+    const stale = paletteItems(input({ text: 'New clipboard', slowText: 'N', commands, remedies }))
+    expect(stale[0].key).toBe('commands')
+    expect(stale.map(x => x.key)).toContain('remedies')
+  })
+})
+
+describe('per-open palette caches', () => {
+  it('fuzzyIndex matches like fuzzy and memoPerCommand calls each predicate once', async () => {
+    const { fuzzy, fuzzyIndex } = await import('./fuzzy')
+    const { memoPerCommand } = await import('./model')
+    const m = fuzzyIndex()
+    for (const [q, t] of [['tog', 'Toggle dark mode'], ['cafe', 'Café au lait'], ['xyz', 'Open patient'], ['op pa', 'Open patient']] as const)
+      expect(m(q, t)).toEqual(fuzzy(q, t))
+    let calls = 0
+    const en = memoPerCommand(() => { calls++; return true })
+    const c = { id: 'a', title: 'A', category: 'X', run: () => {} }
+    en(c); en(c); en(c)
+    expect(calls).toBe(1)
+  })
 })

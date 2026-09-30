@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react'
 import { Dialog } from '../../ui/Dialog'
 import { useApp } from '../../state/store'
 import type { Patient } from '../../state/patients'
-import { normalizeTag, tagCounts, validatePatient } from './logic'
+import { formatDate, normalizeTag, tagCounts, validatePatient } from './logic'
 import type { PatientDraft } from './logic'
+import type { ImportMode } from './casefile'
 import { TagEditor } from './TagEditor'
 import * as ops from './ops'
 import './patients.css'
@@ -85,6 +86,37 @@ export function ConfirmDialog({ onClose, title, message, confirmLabel, danger, o
       </>}
     >
       <p className="pt-confirm-msg">{message}</p>
+    </Dialog>
+  )
+}
+
+/** Asked when a case file describes a patient already on file: replace, merge consultations, or keep both. */
+export function ImportConflictDialog({ onClose, name, birthDate, sameRecord, fileConsultations, haveConsultations, onChoose }: {
+  onClose: () => void; name: string; birthDate: string | null; sameRecord: boolean
+  fileConsultations: number; haveConsultations: number; onChoose: (mode: ImportMode) => void
+}) {
+  const choose = (m: ImportMode) => { onClose(); onChoose(m) }
+  const n = (k: number) => `${k} consultation${k === 1 ? '' : 's'}`
+  return (
+    <Dialog
+      title="Patient already on file" onClose={onClose} width={520} initialFocus=".pt-import-merge"
+      footer={<>
+        <button className="btn" onClick={onClose}>Cancel</button>
+        <span className="grow" />
+        <button className="btn" onClick={() => choose('new')}>Keep both</button>
+        <button className="btn btn-danger-solid" onClick={() => choose('replace')}>Replace</button>
+        <button className="btn btn-primary pt-import-merge" onClick={() => choose('merge')}>Merge consultations</button>
+      </>}
+    >
+      <p className="pt-confirm-msg">
+        <strong>{name}</strong>{birthDate ? ` (born ${formatDate(birthDate)})` : ''} {sameRecord ? 'is the record this case file was exported from.' : 'is already on file with the same name and birth date.'}
+        {' '}The case file has {n(fileConsultations)}; the patient on file has {n(haveConsultations)}.
+      </p>
+      <ul className="pt-import-choices">
+        <li><b>Merge consultations</b>: keep the patient on file and add the consultations it does not have yet.</li>
+        <li><b>Replace</b>: overwrite the personal data and consultations on file with the case file (undo with Ctrl+Z).</li>
+        <li><b>Keep both</b>: import the case file as a separate patient.</li>
+      </ul>
     </Dialog>
   )
 }

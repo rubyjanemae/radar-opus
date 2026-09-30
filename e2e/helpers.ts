@@ -10,7 +10,7 @@ export const SEEDED = '/'
 export const EMPTY = '/?seed=empty'
 export async function openApp(page: Page, path = SEEDED) {
   await page.goto(path)
-  await page.waitForSelector('.shell', { timeout: 30_000 })
+  await page.waitForSelector('.shell[data-ready]', { timeout: 30_000 })
 }
 
 /** Wait until autosave has written every change made so far (the status bar indicator reads "saved"). */

@@ -1,11 +1,9 @@
 import type { Catalog } from '../../data/catalog'
 import { registerCommands } from '../../commands/registry'
 import { selectActiveTab, useApp } from '../../state/store'
-import { registerDialog } from '../../shell/dialogs'
-import type { DialogComponent } from '../../shell/dialogs'
+import { registerLazyDialog } from '../../shell/dialogs'
 import { registerRemedyFamilyProvider } from '../mm/ops'
 import { familiesIfLoaded, loadFamilies } from './api'
-import { FamilyFilterDialog } from './FamilyFilterDialog'
 import { systemLabel } from './model'
 import { activeFamiliesTab, applyFamilyFilter, clearFamilyFilter, FILTER_DIALOG, hasTargetCase, openFamilies, openFilterDialog, openRemedy, targetConsultationId } from './ops'
 import { viewBus } from './viewState'
@@ -29,7 +27,7 @@ function hasFamilyFilter() {
 }
 
 export function register(_catalog: Catalog) {
-  registerDialog(FILTER_DIALOG, FamilyFilterDialog as unknown as DialogComponent)
+  registerLazyDialog(FILTER_DIALOG, () => import('./FamilyFilterDialog'), m => m.FamilyFilterDialog)
 
   // Offer families to the remedy window once the data is in (idle, so startup stays fast).
   const idle = (globalThis as { requestIdleCallback?: (fn: () => void) => void }).requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 1200))

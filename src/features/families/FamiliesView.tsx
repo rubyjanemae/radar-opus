@@ -101,9 +101,9 @@ function Loaded({ tab, index }: { tab: FamiliesTab; index: FamilyIndex }) {
     if (cmd === 'focusSearch') { searchRef.current?.focus(); searchRef.current?.select() }
     else if (cmd === 'expandAll') expandAll()
     else if (cmd === 'collapseAll') collapseAll()
-    else if (cmd === 'focusTree') { takeViewFocus(); focusTree() }
+    else if (cmd === 'focusTree') { takeViewFocus(); focusInitial() }
   }), []) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (takeViewFocus()) focusTree() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (takeViewFocus()) focusInitial() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const pickRemedy = (rid: number) => {
     const prim = index.primaryGroupOf(rid) ?? index.allGroupsOf(rid)[0]
@@ -156,6 +156,10 @@ function Loaded({ tab, index }: { tab: FamiliesTab; index: FamilyIndex }) {
     treeWrap.current?.querySelector<HTMLElement>('.fam-remhits-list')?.focus()
   }
   const focusSearch = () => searchRef.current?.focus()
+  // opened by Ctrl+5 / a command: the selected group's row, else the search box (the overview stays until a group is picked)
+  const groupRef = useRef(group)
+  groupRef.current = group
+  const focusInitial = () => { if (groupRef.current) focusTree(); else focusSearch() }
 
   const matchCount = query.trim() ? rows.filter(r => r.match).length : 0
   const onlyRemedies = !!query.trim() && matchCount === 0 && remedyHits.length > 0
@@ -263,7 +267,7 @@ function GroupDetail({ index, node, catalog, remedy, setRemedy, onSelect, onGrou
 }) {
   const defaultRep = useApp(s => s.settings.defaultRepertory)
   const { rep, error: repError } = useRepertory(defaultRep)
-  const cid = useApp(() => targetConsultationId())
+  const cid = useApp(s => targetConsultationId(s))
   const analysis = useApp(s => (cid ? s.consultations[cid]?.analysis ?? null : null))
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'abbrev', dir: 1 })
   const [filter, setFilter] = useState('')

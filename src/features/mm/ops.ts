@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { Catalog } from '../../data/catalog'
-import { actions, selectActiveTab, useApp } from '../../state/store'
+import type { RubricRef } from '../../data/types'
+import { actions, onTabClosed, selectActiveTab, useApp } from '../../state/store'
 import type { MateriaMedicaTab, RemedyTab } from '../../state/workspace'
 import { loadBook } from './book'
 import type { MMBook } from './book'
@@ -100,6 +101,63 @@ export function canHistory(tabId: string | undefined, dir: -1 | 1): boolean {
   if (!tabId) return false
   const h = useMMUi.getState().history[tabId]
   return !!h && (dir < 0 ? h.back.length : h.forward.length) > 0
+}
+
+/**
+ * Run a navigation that replaces the page (history back/forward) without dropping keyboard focus
+ * to the document: when focus was inside the materia medica view and the focused element goes
+ * away (a remedy link in the old text, a button that becomes disabled), the reader takes it.
+ */
+export function keepMMFocus(fn: () => void) {
+  const view = document.activeElement?.closest?.('.mm-view') ?? null
+  fn()
+  if (!view) return
+  requestAnimationFrame(() => {
+    const a = document.activeElement as HTMLElement | null
+    if (a && a !== document.body && a.isConnected && !(a instanceof HTMLButtonElement && a.disabled)) return
+    const root = document.querySelector('.tab-content .mm-view') ?? view
+    root.querySelector<HTMLElement>('.mm-reader')?.focus({ preventScroll: true })
+  })
+}
+
+// ───────────── remedy window state (transient, per tab) ─────────────
+
+export type RemedySection = 'overview' | 'relations' | 'repertory' | 'families' | 'sources'
+export interface RemedyTabMemory { section: RemedySection; repertory: string | null; back: number[] }
+export const DEFAULT_REMEDY_MEMORY: RemedyTabMemory = { section: 'overview', repertory: null, back: [] }
+
+interface RemedyUiState {
+  /** Per remedy tab: section, profile repertory and the remedy back stack; survives tab switches. */
+  memory: Record<string, RemedyTabMemory>
+  /** Rubric selected in a remedy window's keynote list, for rubric.* commands (take, copy). */
+  selectedRubric: RubricRef | null
+}
+export const useRemedyUi = create<RemedyUiState>(() => ({ memory: {}, selectedRubric: null }))
+
+export function remedyMemory(tabId: string): RemedyTabMemory {
+  return useRemedyUi.getState().memory[tabId] ?? DEFAULT_REMEDY_MEMORY
+}
+export function setRemedyMemory(tabId: string, patch: Partial<RemedyTabMemory>) {
+  useRemedyUi.setState(s => ({ memory: { ...s.memory, [tabId]: { ...(s.memory[tabId] ?? DEFAULT_REMEDY_MEMORY), ...patch } } }))
+}
+export function setSelectedRemedyRubric(ref: RubricRef | null) {
+  if (useRemedyUi.getState().selectedRubric !== ref) useRemedyUi.setState({ selectedRubric: ref })
+}
+export function selectedRemedyRubric(): RubricRef | null { return useRemedyUi.getState().selectedRubric }
+
+/** Drop per-tab reader history and remedy window memory when tabs close. Idempotent. */
+let cleanupInstalled = false
+export function installTabStateCleanup() {
+  if (cleanupInstalled) return
+  cleanupInstalled = true
+  onTabClosed(tab => {
+    if (useMMUi.getState().history[tab.id]) {
+      useMMUi.setState(s => { const history = { ...s.history }; delete history[tab.id]; return { history } })
+    }
+    if (useRemedyUi.getState().memory[tab.id]) {
+      useRemedyUi.setState(s => { const memory = { ...s.memory }; delete memory[tab.id]; return { memory } })
+    }
+  })
 }
 
 /**

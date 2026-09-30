@@ -17,10 +17,22 @@ export interface RepertoryInfo {
   year: number | null
   publisher: string
   license: string
+  /** Source rubrics (rows of the source database, duplicate full paths included); synthetic headings are not counted. */
   rubricCount: number
+  /** Distinct full paths of the source (duplicates merged into one rubric). */
+  uniquePaths?: number
+  /** Rubrics in the file (after merging duplicates and folding connectors, synthetic headings included). */
+  nodeCount?: number
+  /** Synthetic headings created for missing intermediate paths (no remedies). */
+  syntheticCount?: number
+  /** Full paths that occurred more than once in the source and were merged. */
+  duplicatePaths?: number
   entryCount: number
   file: string
 }
+
+/** A numeric column: a plain array as read from JSON, or an Int32Array when parsed off the main thread. */
+export type IntColumn = ArrayLike<number>
 
 /** On-disk columnar repertory (public/data/rep-*.json), rubrics in book order. */
 export interface RepertoryFile {
@@ -29,13 +41,15 @@ export interface RepertoryFile {
   lang: string
   chapters: number[]
   text: string[]
-  parent: number[]
-  depth: number[]
-  chapter: number[]
+  parent: IntColumn
+  depth: IntColumn
+  chapter: IntColumn
   /** rubric i owns data[offsets[i] .. offsets[i+1]) */
-  offsets: number[]
+  offsets: IntColumn
   /** remedyId * 4 + (grade - 1) */
-  data: number[]
+  data: IntColumn
+  /** Indexes of synthetic headings (a missing intermediate path of the source; no remedies). Absent in older files. */
+  synthetic?: number[]
 }
 
 /** Globally unique rubric reference: "<repertory>:<index>". */

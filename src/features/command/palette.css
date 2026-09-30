@@ -1,6 +1,6 @@
 .pal-backdrop {
-  position: fixed; inset: 0; z-index: 950; display: grid; place-items: start center; padding-top: 11vh;
-  background: rgba(15, 20, 30, .28); animation: fade .1s ease-out;
+  position: fixed; inset: 0; z-index: var(--z-palette, 950); display: grid; place-items: start center; padding-top: 11vh;
+  background: var(--scrim); animation: fade .1s ease-out;
 }
 .pal {
   width: min(680px, calc(100vw - 32px)); max-height: 70vh; display: flex; flex-direction: column; overflow: hidden;
@@ -15,24 +15,31 @@
 .pal-mode-x { display: grid; place-items: center; width: 17px; height: 17px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: inherit; opacity: .8; }
 .pal-mode-x:hover { opacity: 1; background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .pal-list { flex: 1; overflow: auto; padding: 4px 6px 6px; }
-.pal-head { padding: 8px 8px 3px; font-size: 10.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); }
+.pal-head { padding: 8px 8px 3px; font-size: 10.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; color: var(--text-2); }
 .pal-head-note { text-transform: none; letter-spacing: 0; font-weight: 500; }
 .pal-opt { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 8px; border-radius: 6px; font-size: var(--fs); cursor: default; }
-.pal-opt.active { background: var(--bg-selected); }
+/* keyboard-active option: the shared active fill (as menus and listboxes), readable in both themes */
+.pal-opt.active { background: var(--active-bg); color: var(--active-fg); }
+.pal-opt.active :is(.pal-ico, .pal-cat, .pal-sub, .pal-note, .pal-mark, .srch-sep, .srch-chap, .srch-leaf) { color: var(--active-fg-2); }
+.pal-opt.active .pal-mark { color: var(--active-fg); text-decoration: underline; text-underline-offset: 2px; }
+.pal-opt.active .pal-why { background: rgba(255, 255, 255, .16); color: var(--active-fg); }
+.pal-opt.active .kbd { background: rgba(255, 255, 255, .16); border-color: var(--active-fg-2); color: var(--active-fg); }
+.pal-opt.active .srch-mark { background: rgba(255, 255, 255, .22); color: var(--active-fg); box-shadow: none; }
 .pal-opt.disabled { color: var(--text-3); }
 .pal-ico { flex: none; display: grid; place-items: center; width: 18px; color: var(--text-3); }
-.pal-opt.active .pal-ico { color: var(--accent); }
 .pal-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pal-rubric { font-family: var(--font-book); }
+/* chapter highlight on inactive rows: the stronger accent keeps at least 4.5:1 in both themes */
+.pal-opt:not(.active) .pal-rubric .srch-chap { color: var(--accent-2); }
 .pal-sub { color: var(--text-3); font-size: var(--fs-sm); }
 .pal-abbrev { font-weight: 650; }
-.pal-cat { flex: none; color: var(--text-3); font-size: var(--fs-xs); }
+.pal-cat { flex: none; color: var(--text-2); font-size: var(--fs-xs); }
 .pal-why { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px; border-radius: 3px; background: var(--bg-sunken); color: var(--text-2); font-size: var(--fs-xs); }
 .pal-note { flex: none; color: var(--text-3); font-size: var(--fs-xs); font-style: italic; }
 .pal-keys { flex: none; }
 .pal-mark { background: transparent; color: var(--accent); font-weight: 700; }
 .pal-opt.disabled .pal-mark { color: inherit; }
-.pal-empty { padding: 20px 12px; color: var(--text-3); text-align: center; font-size: var(--fs-sm); }
+.pal-empty { padding: 20px 12px; color: var(--text-2); text-align: center; font-size: var(--fs-sm); }
 .pal-foot { display: flex; align-items: center; gap: 12px; padding: 7px 14px; border-top: 1px solid var(--border); background: var(--bg); color: var(--text-3); font-size: var(--fs-xs); }
 .pal-foot span { display: inline-flex; align-items: center; gap: 4px; }
 .pal-foot-sp { flex: 1; }

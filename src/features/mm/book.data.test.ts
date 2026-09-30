@@ -101,10 +101,38 @@ describe.skipIf(!existsSync(MM) || !existsSync(REM))('Boericke data integrity', 
     expect(parseParagraph(rel.text, resolver, { relationship: true, selfId: puls.remedyId }).some(s => s.text === 'Ionesia Asoca' && s.remedyId === byAbbrev.get('Jon')!.id)).toBe(true)
   })
 
+  it('reads labels ending in “.”, “;” or “.:” (Apis, Nux vomica)', () => {
+    expect(group('Apis', 'Inimical')).toEqual(['Rhus-t'])
+    expect(group('Apis', 'Complementary')).toEqual(['Nat-m'])
+    expect(group('Nux-v', 'Complementary')).toEqual(['Sulph', 'Sep'])
+    expect(group('Nux-v', 'Inimical')).toEqual(['Zinc'])
+  })
+
+  it('keeps a prose remark after a list out of the list (Sepia: “Nux intensifies action”)', () => {
+    const comp = group('Sep', 'Complementary')
+    expect(comp).toContain('Nat-m')
+    expect(comp).not.toContain('Nux-v')
+    expect(group('Sep', 'Inimical')).toEqual(['Lach', 'Puls'])
+  })
+
   it('leaves out relationship kinds that name no remedy', () => {
     const kinds = relations('Caust').map(g => g.kind)
     expect(kinds).not.toContain('Antidotes')
     for (const g of relations('Caust')) expect(g.remedies.length).toBeGreaterThan(0)
+  })
+
+  it('resolves Boericke cross-references to the parent polychrest, not a derivative or sibling', () => {
+    const res = (q: string) => resolver.resolve(q)?.abbrev ?? null
+    const expected: [string, string | null][] = [
+      ['Digit', 'Dig'], ['Digital', 'Dig'], ['Chelidon', 'Chel'], ['Chelid', 'Chel'], ['Agaric', 'Agar'],
+      ['Hyoscy', 'Hyos'], ['Hyosc', 'Hyos'], ['Lilium', 'Lil-t'], ['Kali hyd', 'Kali-i'], ['Kal hyd', 'Kali-i'],
+      ['Cannab', 'Cann-s'], ['Cannab ind', 'Cann-i'], ['Carb', 'Carb-v'], ['Crotalus', 'Crot-h'], ['Crot', 'Crot-h'],
+      ['Eucalypt', 'Eucal'], ['Juniperus', 'Juni-c'], ['Carduus', 'Card-m'], ['Colchic', 'Colch'], ['Canthar', 'Canth'],
+      ['Berber', 'Berb'], ['Aurum mur', 'Aur-m'], ['Xanthox', 'Xan'], ['Cratoeg', 'Crat'], ['Asafaet', 'Asaf'],
+      // not remedies, or not the remedy the abbreviation spells
+      ['Peru', null], ['Tabes', null], ['Coccion', null], ['Guaiacol', null],
+    ]
+    expect(expected.map(([q]) => [q, res(q)])).toEqual(expected)
   })
 
   it('links plain remedy lists in the reader but not prose', () => {

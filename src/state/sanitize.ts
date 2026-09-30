@@ -1,5 +1,6 @@
 import type { RubricRef } from '../data/types'
-import type { AnalysisOptions, Clipboard, Symptom, Weight } from '../engine/model'
+import { DEFAULT_PARAMS, STRATEGY_IDS, normalizeWeight } from '../engine/model'
+import type { AnalysisOptions, Clipboard, StrategyParamsPatch, Symptom, Weight } from '../engine/model'
 import { uid } from './ids'
 import type { Consultation, Patient, Prescription } from './patients'
 import { CLIPBOARD_COLORS, DEFAULT_ANALYSIS } from './store'
@@ -36,6 +37,9 @@ export interface SanitizeResult {
   /** Human descriptions of what was repaired or dropped (empty when the data was clean). */
   repairs: string[]
 }
+
+/** Name of the placeholder patient that owns consultations whose patient record could not be read. */
+export const RECOVERED_PATIENT = 'Recovered patient'
 
 const isObj = (v: unknown): v is Raw => !!v && typeof v === 'object' && !Array.isArray(v)
 const str = (v: unknown, d = ''): string => (typeof v === 'string' ? v : d)
@@ -98,13 +102,27 @@ function sanitizePatient(raw: unknown, key: string): Patient | null {
   } as Patient
 }
 
-function sanitizeSymptom(raw: unknown): Symptom | null {
+/** Symptom intensity 0–4. Numeric strings and out-of-range numbers are coerced; anything else is 1. Both count as repairs. */
+function sanitizeWeight(v: unknown, where: string, repairs: string[]): Weight {
+  if (v === undefined) return 1
+  if (typeof v === 'number' && [0, 1, 2, 3, 4].includes(v)) return v as Weight
+  const numeric = (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)))
+  const w = numeric ? normalizeWeight(v) : 1
+  repairs.push(`${where}: intensity ${JSON.stringify(v)} ${numeric ? 'read as' : 'unreadable, set to'} ${w}`)
+  return w
+}
+
+function sanitizeSymptom(raw: unknown, where: string, repairs: string[]): Symptom | null {
   if (!isObj(raw)) return null
   const rubrics = strings(raw.rubrics) as RubricRef[]
   if (!rubrics.length) return null
+  const id = str(raw.id) || uid('s')
+  let eliminatory = bool(raw.eliminatory)
+  const exclusive = bool(raw.exclusive)
+  if (eliminatory && exclusive) { eliminatory = false; repairs.push(`${where}, symptom ${id}: both eliminative and excluding; kept excluding`) }
   const out: Symptom = {
-    id: str(raw.id) || uid('s'), rubrics, combine: oneOf(raw.combine, ['union', 'intersection'] as const, 'union'),
-    weight: oneOf(raw.weight, [0, 1, 2, 3, 4] as const, 1) as Weight, eliminatory: bool(raw.eliminatory), exclusive: bool(raw.exclusive),
+    id, rubrics, combine: oneOf(raw.combine, ['union', 'intersection'] as const, 'union'),
+    weight: sanitizeWeight(raw.weight, `${where}, symptom ${id}`, repairs), eliminatory, exclusive,
     group: strOrNull(raw.group), causal: bool(raw.causal), addedAt: num(raw.addedAt, Date.now()),
   }
   if (typeof raw.label === 'string') out.label = raw.label
@@ -113,10 +131,10 @@ function sanitizeSymptom(raw: unknown): Symptom | null {
   return out
 }
 
-function sanitizeClipboard(raw: unknown, index: number, repairs: string[]): Clipboard | null {
+function sanitizeClipboard(raw: unknown, index: number, where: string, repairs: string[]): Clipboard | null {
   if (!isObj(raw)) return null
   const list = Array.isArray(raw.symptoms) ? raw.symptoms : []
-  const symptoms = list.map(sanitizeSymptom).filter((x): x is Symptom => !!x)
+  const symptoms = list.map(x => sanitizeSymptom(x, where, repairs)).filter((x): x is Symptom => !!x)
   if (symptoms.length < list.length) repairs.push(`${list.length - symptoms.length} unreadable symptom(s) dropped`)
   return {
     id: str(raw.id) || uid('cb'), name: str(raw.name) || `Clipboard ${index + 1}`,
@@ -124,11 +142,45 @@ function sanitizeClipboard(raw: unknown, index: number, repairs: string[]): Clip
   }
 }
 
-function sanitizeAnalysis(raw: unknown, clipboards: Clipboard[]): AnalysisOptions {
+/**
+ * Keep only valid strategy parameters: finite numbers (numeric strings are read as numbers) and booleans where
+ * DEFAULT_PARAMS has them; other values are dropped so the engine's defaults apply. Returns the cleaned patch
+ * (undefined when nothing valid is left) and whether anything was dropped or coerced.
+ */
+export function sanitizeParams(raw: unknown): { params: StrategyParamsPatch | undefined; repaired: boolean } {
+  let repaired = false
+  const group = (def: Record<string, unknown>, v: unknown): Record<string, unknown> | undefined => {
+    if (v === undefined) return undefined
+    if (!isObj(v)) { repaired = true; return undefined }
+    const out: Record<string, unknown> = {}
+    for (const [k, x] of Object.entries(v)) {
+      const d = def[k]
+      if (typeof d === 'number') {
+        const n = typeof x === 'number' ? x : typeof x === 'string' && x.trim() !== '' ? Number(x) : NaN
+        if (Number.isFinite(n)) { out[k] = n; if (typeof x !== 'number') repaired = true } else repaired = true
+      } else if (typeof d === 'boolean') {
+        if (typeof x === 'boolean') out[k] = x
+        else repaired = true
+      } else if (isObj(d)) {
+        const g = group(d, x)
+        if (g) out[k] = g
+      } else repaired = true
+    }
+    return Object.keys(out).length ? out : undefined
+  }
+  if (raw === undefined || raw === null) return { params: undefined, repaired: false }
+  if (!isObj(raw)) return { params: undefined, repaired: true }
+  const params = group(DEFAULT_PARAMS as unknown as Record<string, unknown>, raw) as StrategyParamsPatch | undefined
+  return { params, repaired }
+}
+
+function sanitizeAnalysis(raw: unknown, clipboards: Clipboard[], where: string, repairs: string[]): AnalysisOptions {
   const ids = new Set(clipboards.map(cb => cb.id))
   if (!isObj(raw)) return { ...DEFAULT_ANALYSIS, clipboardIds: [...ids] }
   const out = { ...DEFAULT_ANALYSIS, ...raw } as AnalysisOptions & Raw
-  out.strategy = (typeof raw.strategy === 'string' ? raw.strategy : DEFAULT_ANALYSIS.strategy) as AnalysisOptions['strategy']
+  // An unknown strategy falls back to the default, so the label shown always names the strategy that ranks.
+  if (raw.strategy !== undefined && !(STRATEGY_IDS as readonly unknown[]).includes(raw.strategy)) repairs.push(`${where}: unknown strategy ${JSON.stringify(raw.strategy)} replaced by ${DEFAULT_ANALYSIS.strategy}`)
+  out.strategy = (STRATEGY_IDS as readonly unknown[]).includes(raw.strategy) ? (raw.strategy as AnalysisOptions['strategy']) : DEFAULT_ANALYSIS.strategy
   out.clipboardIds = Array.isArray(raw.clipboardIds) ? strings(raw.clipboardIds).filter(id => ids.has(id)) : [...ids]
   out.remedyFilter = Array.isArray(raw.remedyFilter) ? numbers(raw.remedyFilter) : null
   out.excludedRemedies = numbers(raw.excludedRemedies)
@@ -136,6 +188,10 @@ function sanitizeAnalysis(raw: unknown, clipboards: Clipboard[]): AnalysisOption
   out.limit = num(raw.limit, DEFAULT_ANALYSIS.limit)
   for (const k of ['highlight'] as const) if (raw[k] !== undefined && raw[k] !== null && !Array.isArray(raw[k])) delete out[k]
   if (Array.isArray(raw.highlight)) out.highlight = numbers(raw.highlight)
+  const { params, repaired } = sanitizeParams(raw.params)
+  if (repaired) repairs.push(`${where}: invalid strategy parameters dropped (defaults apply)`)
+  if (params) out.params = params
+  else delete out.params
   return out
 }
 
@@ -149,9 +205,10 @@ function sanitizeConsultation(raw: unknown, key: string, patients: Record<string
   const id = str(raw.id) || key
   const patientId = str(raw.patientId)
   if (!id || !patients[patientId]) return null
+  const where = `consultation ${id}`
   const list = Array.isArray(raw.clipboards) ? raw.clipboards : []
   if (!Array.isArray(raw.clipboards)) repairs.push(`consultation ${id}: clipboards were missing`)
-  let clipboards = list.map((cb, i) => sanitizeClipboard(cb, i, repairs)).filter((x): x is Clipboard => !!x)
+  let clipboards = list.map((cb, i) => sanitizeClipboard(cb, i, where, repairs)).filter((x): x is Clipboard => !!x)
   const seen = new Set<string>()
   clipboards = clipboards.map(cb => { if (seen.has(cb.id)) cb = { ...cb, id: uid('cb') }; seen.add(cb.id); return cb })
   if (!clipboards.length) clipboards = [{ id: uid('cb'), name: 'Clipboard 1', color: CLIPBOARD_COLORS[0], symptoms: [] }]
@@ -162,7 +219,7 @@ function sanitizeConsultation(raw: unknown, key: string, patients: Record<string
     id, patientId, date: str(raw.date) || new Date(num(raw.createdAt, now)).toISOString().slice(0, 10), title: str(raw.title),
     kind: oneOf(raw.kind, ['first', 'follow-up', 'acute', 'phone'] as const, 'first'),
     complaint: str(raw.complaint), notes: str(raw.notes), assessment: str(raw.assessment),
-    clipboards, analysis: sanitizeAnalysis(raw.analysis, clipboards), prescriptions,
+    clipboards, analysis: sanitizeAnalysis(raw.analysis, clipboards, where, repairs), prescriptions,
     createdAt: num(raw.createdAt, now), updatedAt: num(raw.updatedAt, num(raw.createdAt, now)),
   }
   if (isObj(raw.response)) out.response = { score: typeof raw.response.score === 'number' ? raw.response.score : null, note: str(raw.response.note) }
@@ -222,11 +279,27 @@ export function sanitizePersisted(input: unknown): SanitizeResult {
     if (p) patients[p.id] = p
     else repairs.push(`patient ${key} dropped (unreadable)`)
   }
+  // A consultation whose patient record is unreadable or missing keeps its data: a placeholder patient owns it.
+  const rawConsultations: Raw = { ...((raw.consultations as Raw) ?? {}) }
+  let ownerless: string | null = null
+  for (const [key, v] of Object.entries(rawConsultations)) {
+    if (!isObj(v)) continue
+    let pid = str(v.patientId)
+    if (pid && patients[pid]) continue
+    if (!pid) { pid = ownerless ??= uid('p'); rawConsultations[key] = { ...v, patientId: pid } }
+    if (patients[pid]) continue
+    const t = Math.min(num(v.createdAt, Date.now()), Date.now())
+    patients[pid] = {
+      id: pid, firstName: '', lastName: RECOVERED_PATIENT, birthDate: null, sex: null, email: '', phone: '', address: '', occupation: '',
+      notes: 'The saved patient record could not be read; its consultations were kept. Enter the patient details again.', tags: ['recovered'], createdAt: t, updatedAt: t,
+    }
+    repairs.push(`patient ${pid} was unreadable or missing; its consultations are kept under "${RECOVERED_PATIENT}"`)
+  }
   const consultations: Record<string, Consultation> = {}
-  for (const [key, v] of Object.entries((raw.consultations as Raw) ?? {})) {
+  for (const [key, v] of Object.entries(rawConsultations)) {
     const c = sanitizeConsultation(v, key, patients, repairs)
     if (c) consultations[c.id] = c
-    else repairs.push(`consultation ${key} dropped (unreadable or its patient is missing)`)
+    else repairs.push(`consultation ${key} dropped (unreadable)`)
   }
 
   return { repairs, state: { patients, consultations, ...sanitizeWorkspace(raw, patients, consultations, repairs) } }

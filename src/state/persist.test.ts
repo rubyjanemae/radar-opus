@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  BACKUP_KEY, LEGACY_KEY, RestoreError, SCHEMA_VERSION, WS_KEY, exportWorkspace, flushNow, hydrate, importWorkspace, parseWorkspaceFile,
+  BACKUP_KEY, LEGACY_KEY, REPAIR_BACKUP_PREFIX, RestoreError, adoptDiskState, SCHEMA_VERSION, WS_KEY, exportWorkspace, flushNow, hydrate, importWorkspace, parseWorkspaceFile,
   sanitizePersisted, saveStatus, setPersistBackend, startAutosave,
 } from './persist'
 import type { PersistBackend } from './persist'
 import { actions, useApp } from './store'
+import { RECOVERED_PATIENT } from './sanitize'
 import { DEFAULT_LAYOUT, DEFAULT_SETTINGS } from './workspace'
 
 /** In-memory backend recording every write. */
@@ -82,13 +83,56 @@ describe('sanitizePersisted', () => {
     expect(state.activeClipboardId).toBe(out.clipboards[0].id)
   })
 
-  it('drops bad records: non-objects, orphan consultations, symptoms without rubrics', () => {
+  it('drops bad records: non-objects, symptoms without rubrics', () => {
     const c = consultation('c1', 'p1')
     c.clipboards[0].symptoms.push({ id: 's2', rubrics: [] } as never)
-    const { state } = sanitizePersisted(legacy({ patients: { p1: patient('p1'), bad: 42 }, consultations: { c1: c, c2: consultation('c2', 'ghost'), c3: null } }))
+    const { state } = sanitizePersisted(legacy({ patients: { p1: patient('p1'), bad: 42 }, consultations: { c1: c, c3: null } }))
     expect(Object.keys(state.patients)).toEqual(['p1'])
     expect(Object.keys(state.consultations)).toEqual(['c1'])
     expect(state.consultations.c1.clipboards[0].symptoms.map(s => s.id)).toEqual(['s1'])
+  })
+
+  it('keeps the consultations of a corrupt or missing patient under a "Recovered patient"', () => {
+    const { state, repairs } = sanitizePersisted(legacy({
+      patients: { p1: patient('p1'), bad: 42 },
+      consultations: { c1: consultation('c1', 'p1'), c2: consultation('c2', 'bad', { notes: 'keep me' }), c4: consultation('c4', 'bad'), c5: consultation('c5', 'ghost'), c6: consultation('c6', '') },
+    }))
+    expect(Object.keys(state.consultations).sort()).toEqual(['c1', 'c2', 'c4', 'c5', 'c6'])
+    expect(state.patients.bad).toMatchObject({ id: 'bad', lastName: RECOVERED_PATIENT, tags: ['recovered'] })
+    expect(state.patients.ghost.lastName).toBe(RECOVERED_PATIENT)
+    expect(state.consultations.c2).toMatchObject({ patientId: 'bad', notes: 'keep me' })
+    expect(state.consultations.c4.patientId).toBe('bad')
+    expect(state.patients[state.consultations.c6.patientId].lastName).toBe(RECOVERED_PATIENT)
+    expect(Object.keys(state.patients)).toHaveLength(4)
+    expect(repairs.filter(r => r.includes(RECOVERED_PATIENT))).toHaveLength(3)
+  })
+
+  it('analysis: unknown strategy falls back to the default and counts as a repair; params keep only numbers', () => {
+    const { state, repairs } = sanitizePersisted(legacy({
+      consultations: { c1: consultation('c1', 'p1', { analysis: { strategy: 'magic', clipboardIds: ['c1-cb'], params: { smallRubrics: { threshold: '12', factor: 'x' }, kent: { weights: { mental: 5, srp: null }, mustCoverStrong: true }, bogus: 1, polarity: 'no' } } }) },
+    }))
+    const a = state.consultations.c1.analysis
+    expect(a.strategy).toBe('sum-symptoms-degrees')
+    expect(a.params).toEqual({ smallRubrics: { threshold: 12 }, kent: { weights: { mental: 5 }, mustCoverStrong: true } })
+    expect(repairs.some(r => r.includes('unknown strategy "magic"'))).toBe(true)
+    expect(repairs.some(r => r.includes('strategy parameters'))).toBe(true)
+    // a clean analysis is not a repair
+    expect(sanitizePersisted(legacy()).repairs).toEqual([])
+  })
+
+  it('symptom weights: numeric strings are coerced, invalid ones are repaired (and reported)', () => {
+    const c = consultation('c1', 'p1')
+    const base = c.clipboards[0].symptoms[0]
+    c.clipboards[0].symptoms = [
+      { ...base, id: 'a', weight: '3' as never }, { ...base, id: 'b', weight: 'heavy' as never }, { ...base, id: 'c', weight: 7 },
+      { ...base, id: 'd', weight: 0 }, { ...base, id: 'e', eliminatory: true, exclusive: true },
+    ]
+    const { state, repairs } = sanitizePersisted(legacy({ consultations: { c1: c } }))
+    const syms = state.consultations.c1.clipboards[0].symptoms
+    expect(syms.map(x => x.weight)).toEqual([3, 1, 4, 0, 1])
+    expect(syms[4]).toMatchObject({ eliminatory: false, exclusive: true })
+    expect(repairs.filter(r => r.includes('intensity'))).toHaveLength(3)
+    expect(repairs.some(r => r.includes('"heavy" unreadable, set to 1'))).toBe(true)
   })
 
   it('rejects data it cannot use', () => {
@@ -129,6 +173,44 @@ describe('hydrate', () => {
     expect(await hydrate()).toBe(true)
     expect(useApp.getState().tabs).toEqual([])
     expect(useApp.getState().patients.p1).toBeDefined()
+  })
+
+  it('repair: backs up the raw records, deletes only unreadable keys and rewrites only repaired ones; the toast offers the raw export', async () => {
+    const ws = { version: SCHEMA_VERSION, ...legacy(), patients: undefined, consultations: undefined }
+    const m = memoryBackend({ [WS_KEY]: ws, 'p:p1': patient('p1'), 'p:bad': 'corrupt', 'c:c1': consultation('c1', 'p1'), 'c:c2': consultation('c2', 'bad'), 'c:junk': 17 })
+    setPersistBackend(m.b)
+    await hydrate()
+    const s = useApp.getState()
+    expect(s.consultations.c2.patientId).toBe('bad')
+    expect(s.patients.bad.lastName).toBe(RECOVERED_PATIENT)
+    const toast = s.toasts.at(-1)!
+    expect(toast.text).toMatch(/repaired/)
+    expect(toast.action?.label).toBe('Export raw data')
+    dispose = startAutosave()
+    await flushNow()
+    expect(m.writes).toHaveLength(1)
+    const [w] = m.writes
+    expect(w.dels).toEqual(['c:junk'])
+    const backupKey = w.puts.find(k => k.startsWith(REPAIR_BACKUP_PREFIX))!
+    expect(backupKey).toBeDefined()
+    // clean records are not rewritten; the placeholder replaces the corrupt patient under its key
+    expect(w.puts.filter(k => k !== backupKey).sort()).toEqual(['p:bad', WS_KEY])
+    const backup = m.data.get(backupKey) as { entries: Record<string, unknown>; repairs: string[] }
+    expect(backup.entries['p:bad']).toBe('corrupt')
+    expect(backup.entries['c:junk']).toBe(17)
+    expect(backup.entries[WS_KEY]).toEqual(ws)
+    expect(backup.entries['p:p1']).toBeUndefined()
+    expect(backup.repairs.length).toBeGreaterThan(0)
+    expect(m.data.get('c:c2')).toEqual(consultation('c2', 'bad'))
+    // a second start finds clean data: no repairs, nothing written
+    m.writes.length = 0
+    dispose(); dispose = null
+    useApp.setState({ toasts: [] })
+    await hydrate()
+    dispose = startAutosave()
+    await flushNow()
+    expect(m.writes).toEqual([])
+    expect(useApp.getState().toasts).toEqual([])
   })
 
   it('throws RestoreError for an unusable workspace key', async () => {
@@ -194,6 +276,69 @@ describe('autosave writes only what changed', () => {
     window.dispatchEvent(new Event('pagehide'))
     await Promise.resolve(); await Promise.resolve()
     expect(m.writes).toEqual([{ puts: [WS_KEY], dels: [] }])
+  })
+})
+
+describe('taking over from another tab (adoptDiskState)', () => {
+  async function boot() {
+    const m = memoryBackend({
+      [WS_KEY]: { version: SCHEMA_VERSION, ...legacy(), patients: undefined, consultations: undefined },
+      'p:p1': patient('p1'), 'p:p2': patient('p2'), 'c:c1': consultation('c1', 'p1'), 'c:c2': consultation('c2', 'p2'),
+    })
+    setPersistBackend(m.b)
+    await hydrate()
+    dispose = startAutosave()
+    return m
+  }
+  /** Tab B's saves while tab A was read-only: written straight to the backend. */
+  const writeB = (m: ReturnType<typeof memoryBackend>, puts: [string, unknown][]) => m.b.write(puts, [])
+
+  it("A takes a rubric; B's patient, notes and prescription are adopted; A undoes; B's edits survive", async () => {
+    const m = await boot()
+    actions.addRubrics(['r:9'])
+    await flushNow()
+    const now = Date.now() + 1000
+    await writeB(m, [
+      ['p:p2', patient('p2', { notes: 'B patient notes', updatedAt: now })],
+      ['p:p3', patient('p3', { lastName: 'New from B', updatedAt: now })],
+      ['c:c2', consultation('c2', 'p2', { notes: 'B notes', prescriptions: [{ id: 'rx1', remedyId: 5, potency: '200C', dosage: '', date: '2026-02-01', note: '' }], updatedAt: now })],
+    ])
+    await adoptDiskState()
+    expect(useApp.getState().patients.p3.lastName).toBe('New from B')
+    actions.undo()
+    const s = useApp.getState()
+    expect(s.consultations.c1.clipboards[0].symptoms.map(x => x.rubrics[0])).toEqual(['r:1'])
+    expect(s.patients.p2.notes).toBe('B patient notes')
+    expect(s.patients.p3).toBeDefined()
+    expect(s.consultations.c2.notes).toBe('B notes')
+    expect(s.consultations.c2.prescriptions).toHaveLength(1)
+    await flushNow()
+    expect((m.data.get('c:c2') as { notes: string }).notes).toBe('B notes')
+    expect(m.data.has('p:p3')).toBe(true)
+    expect((m.data.get('c:c1') as { clipboards: { symptoms: unknown[] }[] }).clipboards[0].symptoms).toHaveLength(1)
+  })
+
+  it('an undo step on a record B changed is dropped, so undo never reverts B\'s version', async () => {
+    const m = await boot()
+    actions.addRubrics(['r:9'])
+    actions.updatePatient('p2', { notes: 'A' })
+    await flushNow()
+    await writeB(m, [['c:c1', consultation('c1', 'p1', { prescriptions: [{ id: 'rx1', remedyId: 5, potency: '30C', dosage: '', date: '2026-02-01', note: '' }], updatedAt: Date.now() + 1000 })]])
+    await adoptDiskState()
+    expect(useApp.getState().past.map(e => e.label)).toEqual(['Edit patient'])
+    actions.undo()
+    actions.undo() // nothing left
+    const s = useApp.getState()
+    expect(s.consultations.c1.prescriptions).toHaveLength(1)
+    expect(s.patients.p2.notes).toBe('')
+  })
+
+  it('adopting unchanged data keeps the history', async () => {
+    await boot()
+    actions.addRubrics(['r:9'])
+    await flushNow()
+    await adoptDiskState()
+    expect(useApp.getState().past).toHaveLength(1)
   })
 })
 

@@ -1,10 +1,12 @@
 import type { Command } from '../../commands/registry'
-import { isEnabled } from '../../commands/registry'
+import { isEnabled as isEnabledPlain } from '../../commands/registry'
 import type { Repertory } from '../../data/repertory'
 import type { Remedy, RubricRef } from '../../data/types'
 import type { Patient } from '../../state/patients'
 import type { RemedyMatch } from '../search/remedies'
-import { fuzzy } from './fuzzy'
+import { fuzzy as fuzzyPlain } from './fuzzy'
+import type { FuzzyMatch } from './fuzzy'
+import { patientName } from '../patients/logic'
 
 /** Palette data model: modes, sections and ranking (pure, unit-tested). */
 
@@ -32,6 +34,11 @@ export interface Section { key: string; label: string; items: PaletteItem[]; str
 export interface PaletteInput {
   mode: Mode
   text: string
+  /**
+   * Text for the heavier sections (patients, remedies, rubrics). The palette passes a deferred copy
+   * of `text` so commands and tabs follow each keystroke while these catch up in the background.
+   */
+  slowText?: string
   commands: Command[]
   recent: string[]
   /** How often each command was run from the palette (for the empty-query suggestions). */
@@ -40,6 +47,10 @@ export interface PaletteInput {
   patients: Patient[]
   remedies: (q: string) => RemedyMatch[]
   rubrics: (q: string) => { hits: { ref: RubricRef; rep: Repertory; index: number }[]; pending: boolean }
+  /** Matcher with cached folded haystacks (the palette builds one per open); defaults to plain `fuzzy`. */
+  match?: (q: string, text: string) => FuzzyMatch | null
+  /** Enabled test, memoised per open by the palette; defaults to the registry's `isEnabled`. */
+  enabled?: (c: Command) => boolean
 }
 
 /** Everyday commands suggested on an empty palette before anything has been used. */
@@ -70,15 +81,18 @@ export function keywordReason(q: string, c: Pick<Command, 'title' | 'category' |
   return viaKeyword ? found.join(', ') : null
 }
 
-export const patientLabel = (p: Patient) => [p.lastName, p.firstName].filter(Boolean).join(', ') || 'Unnamed patient'
 
 /** Build the palette sections for a query, strongest section first in mixed mode. */
 export function paletteItems(inp: PaletteInput): Section[] {
   const { mode, text } = inp
+  const fuzzy = inp.match ?? fuzzyPlain
+  const isEnabled = inp.enabled ?? isEnabledPlain
   const q = text.trim()
   const all = mode === 'all'
   const sections: Section[] = []
   const lim = (n: number, big: number) => (all ? n : big)
+  const slow = inp.slowText ?? text
+  const sq = slow.trim()
 
   // commands
   if (all || mode === 'commands') {
@@ -135,37 +149,66 @@ export function paletteItems(inp: PaletteInput): Section[] {
   }
 
   // patients
-  if ((all && q) || mode === 'patients') {
+  if ((all && sq) || mode === 'patients') {
     const items: PaletteItem[] = []
     for (const p of inp.patients) {
-      const label = patientLabel(p)
-      if (!q) { items.push({ kind: 'patient', patient: p, label, score: p.updatedAt }); continue }
-      const m = fuzzy(q, label) ?? fuzzy(q, `${p.firstName} ${p.lastName}`)
-      if (m) items.push({ kind: 'patient', patient: p, label, positions: fuzzy(q, label)?.positions, score: m.score })
+      const label = patientName(p)
+      if (!sq) { items.push({ kind: 'patient', patient: p, label, score: p.updatedAt }); continue }
+      const m = fuzzy(sq, label) ?? fuzzy(sq, `${p.firstName} ${p.lastName}`)
+      if (m) items.push({ kind: 'patient', patient: p, label, positions: fuzzy(sq, label)?.positions, score: m.score })
     }
     items.sort((a, b) => b.score - a.score)
-    if (items.length) sections.push({ key: 'patients', label: 'Patients', strength: q ? items[0].score : 1000, items: items.slice(0, lim(5, 100)) })
+    if (items.length) sections.push({ key: 'patients', label: 'Patients', strength: sq ? items[0].score : 1000, items: items.slice(0, lim(5, 100)) })
   }
 
   // remedies
-  if ((all && q) || mode === 'remedies') {
-    const matches = q ? inp.remedies(q) : []
+  if ((all && sq) || mode === 'remedies') {
+    const matches = sq ? inp.remedies(sq) : []
     const items: PaletteItem[] = matches.filter(m => !all || m.score >= 55).map(m => ({ kind: 'remedy', remedy: m.remedy, score: m.score }))
     if (items.length) sections.push({ key: 'remedies', label: 'Remedies', strength: (items[0].score) * 20, items })
   }
 
   // rubrics
-  if ((all && q.length >= 3) || (mode === 'rubrics' && q.length >= 2)) {
-    const { hits, pending } = inp.rubrics(text)
+  if ((all && sq.length >= 3) || (mode === 'rubrics' && sq.length >= 2)) {
+    const { hits, pending } = inp.rubrics(slow)
     const items: PaletteItem[] = hits.map((h, i) => ({ kind: 'rubric', ref: h.ref, rep: h.rep, index: h.index, score: -i }))
     if (items.length || pending) {
-      items.push({ kind: 'search', query: q, score: -1000 })
+      items.push({ kind: 'search', query: sq, score: -1000 })
       sections.push({ key: 'rubrics', label: 'Rubrics', strength: 1050, items, pending })
     }
   }
 
+  // while the deferred query lags behind the typed text, its sections describe an older query:
+  // keep them below everything that matches what is typed now
+  if (all && slow !== text) for (const sec of sections) if (SLOW_SECTIONS.has(sec.key)) sec.strength -= 1e9
   if (all) sections.sort((a, b) => b.strength - a.strength)
   return sections
+}
+
+const SLOW_SECTIONS = new Set(['patients', 'remedies', 'rubrics'])
+
+/**
+ * Memoise a per-command predicate (enabled / checked) for one palette open: each command's callback
+ * runs at most once however many keystrokes re-rank the list. Rebuilt when the registry changes.
+ */
+export function memoPerCommand<T>(fn: (c: Command) => T): (c: Command) => T {
+  const cache = new Map<string, T>()
+  return c => {
+    if (cache.has(c.id)) return cache.get(c.id) as T
+    const v = fn(c)
+    cache.set(c.id, v)
+    return v
+  }
+}
+
+/** Remember the last result of a function of one string argument (per-keystroke work runs once per query). */
+export function lastOf<T>(fn: (q: string) => T): (q: string) => T {
+  let key: string | null = null
+  let val: T
+  return q => {
+    if (q !== key) { val = fn(q); key = q }
+    return val
+  }
 }
 
 // ───────────── recent commands & initial query (per-viewer conveniences) ─────────────

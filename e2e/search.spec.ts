@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { openApp } from './helpers'
+import { EMPTY, openApp } from './helpers'
 
 const crumbs = (page: Page) => page.locator('.rv-crumbs')
 const searchTabs = (page: Page) => page.locator('.tabstrip [role=tab][data-kind=search]')
@@ -182,6 +182,43 @@ test('command palette: commands, prefixes, remedies, rubrics, focus restore', as
   await expect(nav).toHaveCount(had ? 1 : 0)
 })
 
+test('command palette: typing stays under a frame budget; enabled() runs once per open; token scrim', async ({ page }) => {
+  await ready(page)
+  // count one command's enabled() calls across a whole palette session
+  await page.evaluate(async () => {
+    const { getCommand } = await (window as unknown as { __radarModules: import('../src/e2eBridge').E2EModules }).__radarModules.registry()
+    const c = getCommand('app.settings')!
+    const orig = c.enabled
+    ;(window as unknown as { __en: number }).__en = 0
+    c.enabled = () => { (window as unknown as { __en: number }).__en++; return orig ? orig() : true }
+  })
+  await page.keyboard.press('Control+k')
+  const pal = page.getByRole('dialog', { name: 'Command palette' })
+  await expect(pal).toBeVisible()
+  const times = await page.evaluate(async () => {
+    const inp = document.querySelector<HTMLInputElement>('.pal-input')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    const out: number[] = []
+    for (const ch of 'settings zoom') {
+      const t = performance.now()
+      setter.call(inp, inp.value + ch)
+      inp.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise(r => requestAnimationFrame(() => setTimeout(r)))
+      out.push(performance.now() - t)
+    }
+    return out
+  })
+  console.log(`palette keystroke to paint: max ${Math.max(...times).toFixed(0)} ms, median ${times.sort((a, b) => a - b)[times.length >> 1].toFixed(0)} ms`)
+  // dev build of React is several times slower than production; production target is < 50 ms
+  expect(times[times.length >> 1]).toBeLessThan(50)
+  expect(Math.max(...times)).toBeLessThan(150)
+  expect(await page.evaluate(() => (window as unknown as { __en: number }).__en)).toBeLessThanOrEqual(1)
+  const bg = await page.locator('.pal-backdrop').evaluate(el => getComputedStyle(el).backgroundColor)
+  const scrim = await page.evaluate(() => { const d = document.createElement('div'); d.style.background = 'var(--scrim)'; document.body.append(d); const c = getComputedStyle(d).backgroundColor; d.remove(); return c })
+  expect(bg).toBe(scrim)
+  await page.keyboard.press('Escape')
+})
+
 test('quick find: remedy abbreviations first, one Esc restores focus, recent items when empty', async ({ page }) => {
   await ready(page)
   const book = page.locator('.rv-scroll')
@@ -297,4 +334,98 @@ test('command palette: empty state order, keyword reasons, leaving a prefix mode
   await pal.getByRole('button', { name: 'Leave remedies mode' }).click()
   await expect(pal.locator('.pal-mode')).toHaveCount(0)
   await expect(pal.getByRole('combobox')).toHaveValue('lach')
+})
+
+test('search results: live count, no controls inside options, combined take is one undo step', async ({ page }) => {
+  await openApp(page, EMPTY)
+  await page.keyboard.press('F4')
+  const q = page.getByRole('combobox', { name: 'Search query' })
+  await q.fill('head pain night')
+  const results = page.getByRole('listbox', { name: 'Search results' })
+  await expect(results.getByRole('option').first()).toBeVisible()
+  // the count is announced politely; options hold no nested interactive controls (axe nested-interactive)
+  await expect(page.locator('.srch-bar-row [role=status]')).toHaveText(/^\d+ rubrics$/)
+  expect(await results.locator('[role=option] :is(input, button, a, [tabindex])').count()).toBe(0)
+  // the tick box still selects with a click
+  await results.getByRole('option').nth(1).locator('.srch-cb').click()
+  await expect(results.getByRole('option').nth(1)).toHaveAttribute('aria-selected', 'true')
+  await results.focus()
+  await page.keyboard.press('Home')
+  await page.keyboard.press('Space')
+  await expect(page.locator('.srch-total')).toContainText('2 selected')
+  // no case yet: taking creates the case and the symptom, and one undo removes both
+  await page.getByRole('button', { name: 'More take options' }).click()
+  await page.getByRole('menuitem', { name: 'Take as one combined symptom' }).click()
+  await expect(page.locator('.statusbar')).toContainText('1 symptom')
+  await results.focus()
+  await page.keyboard.press('Control+z')
+  await expect(page.locator('.statusbar')).not.toContainText('symptom')
+  // nothing matches: said in the live region, shown outside the listbox
+  await q.fill('zzqqx')
+  await expect(page.locator('.srch-bar-row [role=status]')).toHaveText('No rubric matches “zzqqx”.')
+  await expect(results).toHaveCount(0)
+})
+
+test('F5 opens at once and fills from the remedy index; ? opens search only outside text fields', async ({ page }) => {
+  await ready(page)
+  await page.locator('.rv-scroll').focus()
+  await page.keyboard.press('F5')
+  const picker = page.getByRole('combobox', { name: 'Remedy' })
+  await expect(picker).toBeFocused()
+  // '?' typed in a field is text, not a shortcut
+  await picker.pressSequentially('?')
+  await expect(picker).toHaveValue('?')
+  await expect(searchTabs(page)).toHaveCount(1)
+  await picker.fill('')
+  await picker.pressSequentially('sulph')
+  await page.keyboard.press('Enter')
+  const results = page.getByRole('listbox', { name: 'Search results' })
+  await expect(results.locator('.srch-head').first()).toContainText('Mind')
+  // Home lands on the first rubric, not on the chapter header above it
+  await results.focus()
+  await page.keyboard.press('End')
+  await page.keyboard.press('Home')
+  await expect(results.locator('.srch-row.cursor')).toHaveAttribute('role', 'option')
+  // from the workspace '?' opens a word search
+  await page.getByRole('tab', { name: /Mind/ }).first().click()
+  await page.locator('.rv-scroll').focus()
+  await page.keyboard.press('?')
+  await expect(page.getByRole('combobox', { name: 'Search query' })).toBeFocused()
+})
+
+test('a repertory that failed to load is requested again by Retry', async ({ page }) => {
+  let block = true
+  await page.route(/rep-kent-de\.json/, r => (block ? r.abort() : r.continue()))
+  await openApp(page, EMPTY)
+  await page.keyboard.press('F4')
+  await page.getByRole('combobox', { name: 'Search query' }).fill('angst')
+  await page.getByRole('combobox', { name: 'Search scope' }).selectOption('all')
+  const retry = page.getByRole('button', { name: 'Retry' })
+  await expect(retry).toBeVisible({ timeout: 15_000 })
+  block = false
+  await retry.click()
+  const results = page.getByRole('listbox', { name: 'Search results' })
+  await expect(results.getByRole('option').first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.srch-pend')).toHaveCount(0)
+  await expect(results).toContainText(/Angst/i)
+})
+
+test('search results: set positions and a grade breakdown that is not colour alone', async ({ page }) => {
+  await openApp(page, EMPTY)
+  await page.keyboard.press('F4')
+  await page.getByRole('combobox', { name: 'Search query' }).fill('fear night')
+  const results = page.getByRole('listbox', { name: 'Search results' })
+  const first = results.getByRole('option').first()
+  await expect(first).toHaveAttribute('aria-posinset', '1')
+  const total = (await page.locator('.srch-total b').first().textContent())!.replace(/\D/g, '')
+  await expect(first).toHaveAttribute('aria-setsize', total)
+  // each remedy bar names its grade breakdown, prints grade numerals and shows the breakdown on focus
+  const bar = page.locator('.srch-sum .srch-barrow').first()
+  await expect(bar).toHaveAttribute('aria-label', /^\S+ \d+: grade \d \d+(, grade \d \d+)*$/)
+  await expect(bar.locator('.srch-seg-n').first()).toHaveText(/^[1-4]$/)
+  await bar.focus()
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Shift+Tab')
+  await expect(bar.locator('.srch-barbreak')).toBeVisible()
+  await expect(page.locator('.srch-legend .srch-seg-n')).toHaveText(['4', '3', '2', '1'])
 })

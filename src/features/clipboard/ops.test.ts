@@ -3,10 +3,17 @@ import { actions, selectActiveClipboard, useApp } from '../../state/store'
 import * as ops from './ops'
 
 const cb = () => selectActiveClipboard(useApp.getState())!
+/** Answer the confirm dialog an op opened. */
+function answerConfirm(ok: boolean) {
+  const d = useApp.getState().dialog
+  expect(d?.kind).toBe('app.confirm')
+  ;(d!.props as { resolve: (ok: boolean) => void }).resolve(ok)
+  actions.closeDialog()
+}
 const ids = () => cb().symptoms.map(s => s.id)
 
 beforeEach(() => {
-  useApp.setState({ patients: {}, consultations: {}, activeConsultationId: null, activeClipboardId: null, selectedSymptomIds: [], past: [], future: [], toasts: [] })
+  useApp.setState({ patients: {}, consultations: {}, activeConsultationId: null, activeClipboardId: null, selectedSymptomIds: [], past: [], future: [], toasts: [], dialog: null })
   const pid = actions.createPatient({ firstName: 'Test' })
   actions.createConsultation(pid)
   actions.addRubrics(['r:1', 'r:2', 'r:3', 'r:4'])
@@ -78,6 +85,21 @@ describe('clipboard ops', () => {
     expect(cb().symptoms.map(s => s.rubrics[0])).toEqual(['r:1', 'r:2', 'r:3', 'r:4'])
   })
 
+  it('splits several combined symptoms in one undo step', () => {
+    actions.setSelectedSymptoms(ids().slice(0, 2))
+    ops.combine('union')
+    actions.setSelectedSymptoms(ids().slice(1, 3))
+    ops.combine('intersection')
+    expect(cb().symptoms.map(s => s.rubrics.length)).toEqual([2, 2])
+    const past = useApp.getState().past.length
+    actions.setSelectedSymptoms(ids())
+    ops.split()
+    expect(cb().symptoms).toHaveLength(4)
+    expect(useApp.getState().past.length).toBe(past + 1)
+    actions.undo()
+    expect(cb().symptoms.map(s => s.rubrics.length)).toEqual([2, 2])
+  })
+
   it('moves and copies to another clipboard', () => {
     const first = cb().id
     const second = actions.addClipboard()!
@@ -110,7 +132,7 @@ describe('clipboard ops', () => {
     expect(cb().symptoms).toHaveLength(4)
   })
 
-  it('undo of a deleted clipboard restores it in place without undoing later edits', () => {
+  it('undo of a deleted clipboard restores it in place without undoing later edits', async () => {
     const c = () => useApp.getState().consultations[useApp.getState().activeConsultationId!]
     const first = cb().id
     const second = actions.addClipboard()!
@@ -120,7 +142,11 @@ describe('clipboard ops', () => {
     ops.toggleInAnalysis(second)
     ops.toggleInAnalysis(second)
     actions.setActiveClipboard(second)
-    ops.deleteClipboard()
+    const done = ops.deleteClipboard()
+    // it holds a symptom: nothing happens before the confirmation
+    expect(c().clipboards).toHaveLength(3)
+    answerConfirm(true)
+    expect(await done).toBe(true)
     expect(c().clipboards).toHaveLength(2)
     const toast = useApp.getState().toasts.at(-1)!
     // a later, unrelated edit
@@ -133,17 +159,37 @@ describe('clipboard ops', () => {
     expect(cb().id).toBe(second)
   })
 
-  it('clears all clipboards in one step, undo restores them', () => {
+  it('clears all clipboards in one step after confirmation, undo restores them', async () => {
     const c = () => useApp.getState().consultations[useApp.getState().activeConsultationId!]
     const second = actions.addClipboard()!
     actions.addRubrics(['r:7', 'r:8'], { clipboardId: second })
     expect(ops.hasAnySymptoms()).toBe(true)
     const past = useApp.getState().past.length
-    ops.clearAllClipboards()
+    const cancelled = ops.clearAllClipboards()
+    answerConfirm(false)
+    expect(await cancelled).toBe(false)
+    expect(c().clipboards.map(x => x.symptoms.length)).toEqual([4, 2])
+    const done = ops.clearAllClipboards()
+    answerConfirm(true)
+    expect(await done).toBe(true)
     expect(c().clipboards.every(x => x.symptoms.length === 0)).toBe(true)
     expect(useApp.getState().past.length).toBe(past + 1)
     useApp.getState().toasts.at(-1)!.action!.run()
     expect(c().clipboards.map(x => x.symptoms.length)).toEqual([4, 2])
+  })
+
+  it('deletes an empty clipboard without asking; a cancelled delete keeps it', async () => {
+    const c = () => useApp.getState().consultations[useApp.getState().activeConsultationId!]
+    const second = actions.addClipboard()!
+    expect(await ops.deleteClipboard(second)).toBe(true)
+    expect(useApp.getState().dialog).toBeNull()
+    expect(c().clipboards).toHaveLength(1)
+    const third = actions.addClipboard()!
+    const first = c().clipboards[0].id
+    const p = ops.deleteClipboard(first)
+    answerConfirm(false)
+    expect(await p).toBe(false)
+    expect(c().clipboards.map(x => x.id)).toEqual([first, third])
   })
 
   it('toggles clipboards in the analysis selection, keeping clipboard order', () => {

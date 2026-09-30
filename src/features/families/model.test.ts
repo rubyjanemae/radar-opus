@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decomposeGroups, FamilyIndex, fold, groupMatching, groupsOfFilter, matches, rowPositions, searchRemedies, systemLabel, unionLabel, visibleRows } from './model'
+import { bestMatch, decomposeGroups, FamilyIndex, fold, groupMatching, groupsOfFilter, matches, rowPositions, searchRemedies, systemLabel, unionLabel, visibleRows } from './model'
 import type { FamiliesFile } from './model'
 
 // node:fs through a dynamic specifier: the app tsconfig has no Node types (paths relative to the repo root, where vitest runs)
@@ -270,5 +270,26 @@ describe('rowPositions (aria-setsize / aria-posinset)', () => {
     expect(rows.map(r => r.id)).toEqual(['k:a', 'o:x', 'f:z', 'k:b', 'e:na'])
     expect(rowPositions(rows).map(p => `${p.pos}/${p.size}`)).toEqual(['1/2', '1/2', '2/2', '2/2', '1/1'])
     expect(rowPositions([])).toEqual([])
+  })
+})
+
+describe('bestMatch', () => {
+  it('prefers an exact or prefix family over its order and tree order', () => {
+    const rows = visibleRows(fx, new Set(), 'solan')
+    // tree order puts the order first; the family is the better hit
+    expect(rows.filter(r => r.match).map(r => r.id)).toEqual(['o:x', 'f:x'])
+    expect(bestMatch(fx, rows, 'solan')).toBe('f:x')
+  })
+  it('an exact name beats a longer prefix match', () => {
+    expect(bestMatch(fx, visibleRows(fx, new Set(), 'solanales'), 'solanales')).toBe('o:x')
+    expect(bestMatch(fx, visibleRows(fx, new Set(), 'plants'), 'plants')).toBe('k:a')
+  })
+  it('null without a query or a hit', () => {
+    expect(bestMatch(fx, visibleRows(fx, new Set(), ''), '')).toBeNull()
+    expect(bestMatch(fx, visibleRows(fx, new Set(), 'zzz'), 'zzz')).toBeNull()
+  })
+  it('real data: "solan" and "ranunc" land on the families', () => {
+    expect(bestMatch(idx, visibleRows(idx, new Set(), 'solan'), 'solan')).toBe('plant:family:Solanaceae')
+    expect(bestMatch(idx, visibleRows(idx, new Set(), 'ranunc'), 'ranunc')).toBe('plant:family:Ranunculaceae')
   })
 })

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Catalog } from '../../data/catalog'
 import type { MateriaMedicaEntry } from '../../data/types'
 import { RemedyResolver, normToken, parseAltNames } from './resolve'
-import { buildCitations, buildDocs, groupRelations, parseRelationships, titleCase } from './text'
+import { buildCitations, buildDocs, groupRelations, parseRelationships, plainText, titleCase } from './text'
 import type { Citation, MMDoc, Relation, RelationKind } from './text'
 
 export interface BookItem {
@@ -66,12 +66,12 @@ export class MMBook {
       if (!e.heading?.trim() || /^none$/i.test(e.heading.trim())) e.heading = r.name.toUpperCase()
       const title = titleCase(e.heading)
       return {
-        remedyId: e.remedyId, abbrev: r.abbrev, title, commonName: e.commonName,
+        remedyId: e.remedyId, abbrev: r.abbrev, title, commonName: commonName(e.commonName),
         letter: (title[0] ?? '#').toUpperCase(),
-        haystack: `${r.abbrev} ${r.name} ${r.altName ?? ''} ${e.heading} ${e.commonName}`.toLowerCase(),
+        haystack: `${r.abbrev} ${r.name} ${r.altName ?? ''} ${e.heading} ${commonName(e.commonName)}`.toLowerCase(),
         abbrevKey: normToken(r.abbrev),
         names: [e.heading, r.name, ...parseAltNames(r.altName)].map(normToken).filter(Boolean),
-        commonKey: normToken(e.commonName),
+        commonKey: normToken(commonName(e.commonName)),
       }
     }).sort((a, b) => a.title.localeCompare(b.title))
   }
@@ -144,4 +144,10 @@ export function useBook(catalog: Catalog): { book: MMBook | null; error: Error |
     return () => { alive = false }
   }, [catalog, attempt, state.book])
   return { ...state, retry: () => { setState({ book: null, error: null }); setAttempt(a => a + 1) } }
+}
+
+
+/** Boericke subtitles carry markdown emphasis ("**(EOSIN)**"): the words without the markers. */
+export function commonName(s: string): string {
+  return plainText(s).replace(/\s+/g, ' ').trim()
 }

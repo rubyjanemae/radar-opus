@@ -5,8 +5,9 @@ import type { RubricRef } from '../../data/types'
 import { actions, selectActiveTab, useApp } from '../../state/store'
 import type { SearchTab } from '../../state/workspace'
 import { hasIndex, remedyRubrics, search, warmIndex } from './engine'
-import type { SearchHit, Target } from './engine'
+import type { Target } from './engine'
 import { resolveRemedy } from './remedies'
+import { loadRemedyIndexModule, remedyIndexIfReady, remedyIndexModuleLoaded, warmRemedyIndex } from '../mm/remedyIndexAccess'
 
 /** Search operations shared by QuickFind, the search view, the palette and commands. */
 
@@ -49,22 +50,30 @@ export function tabRepertories(tab: Pick<SearchTab, 'scope' | 'repertories'>): s
   return tab.repertories.slice(0, 1).filter(a => all.includes(a))
 }
 
-/** Load and index repertories. Resolves when all are ready. */
-export async function prepare(abbrevs: string[]): Promise<Repertory[]> {
+type Mode = SearchTab['mode'] | undefined
+
+/** Is a loaded repertory ready for this kind of search? Word search needs the word index, remedy search the remedy index. */
+function isReady(rep: Repertory, mode: Mode): boolean {
+  // a text query may hold remedy terms (#lach), answered from the remedy index: its module must be in
+  return mode === 'remedy' ? !!remedyIndexIfReady(rep) : hasIndex(rep) && remedyIndexModuleLoaded()
+}
+
+/** Load and index repertories for a search mode. Resolves when all are ready. */
+export async function prepare(abbrevs: string[], mode: Mode = 'text'): Promise<Repertory[]> {
   const cat = searchCatalog()
   const reps = await Promise.all(abbrevs.map(a => cat.loadRepertory(a)))
-  await Promise.all(reps.map(r => warmIndex(r, true)))
+  await Promise.all([...reps.map(r => (mode === 'remedy' ? warmRemedyIndex(r, true) : warmIndex(r, true))), loadRemedyIndexModule()])
   return reps
 }
 
 /** Targets that are ready now (loaded and indexed), and whether any are still pending. */
-export function readyTargets(tab: Pick<SearchTab, 'scope' | 'repertories' | 'chapter'>): { targets: Target[]; pending: string[] } {
+export function readyTargets(tab: Pick<SearchTab, 'scope' | 'repertories' | 'chapter' | 'mode'>): { targets: Target[]; pending: string[] } {
   const cat = searchCatalog()
   const targets: Target[] = []
   const pending: string[] = []
   for (const a of tabRepertories(tab)) {
     const rep = cat.repertory(a)
-    if (!rep || !hasIndex(rep)) { pending.push(a); continue }
+    if (!rep || !isReady(rep, tab.mode)) { pending.push(a); continue }
     if (tab.scope === 'chapter' && tab.chapter != null && tab.chapter >= 0 && tab.chapter < rep.size) {
       const root = rep.chapterRoot(tab.chapter)
       targets.push({ rep, start: root, end: rep.subtreeEndOf(root) })
@@ -168,7 +177,6 @@ export function searchRubricRefs(): RubricRef[] | null {
   return f ? [f] : null
 }
 
-export function hitRef(h: Pick<SearchHit, 'rep' | 'index'>): RubricRef { return h.rep.ref(h.index) }
 
 /** CSV of rubrics (path, repertory, remedies with grades) for spreadsheet export. */
 export function rubricsCsv(items: { rep: Repertory; index: number }[]): string {

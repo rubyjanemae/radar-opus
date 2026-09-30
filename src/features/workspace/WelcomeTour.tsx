@@ -128,9 +128,9 @@ function TourOverlay() {
           </ul>
         )}
         <div className="ws-tour-foot">
-          <div className="ws-tour-dots" role="tablist" aria-label="Tour steps">
+          <div className="ws-tour-dots" role="group" aria-label="Tour steps">
             {TOUR_STEPS.map((t, i) => (
-              <button key={t.id} role="tab" aria-selected={i === step} aria-label={`Step ${i + 1}: ${t.title}`} tabIndex={-1}
+              <button key={t.id} type="button" aria-current={i === step ? 'step' : undefined} aria-label={`Step ${i + 1} of ${TOUR_STEPS.length}: ${t.title}`} tabIndex={-1}
                 className={`ws-tour-dot${i === step ? ' on' : ''}`} onClick={() => tourGo(i)} />
             ))}
           </div>

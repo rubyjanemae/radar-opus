@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { actions, useApp } from '../../state/store'
 import type { Patient } from '../../state/patients'
 import { Field } from './dialogs'
-import { formatAge, tagCounts, validatePatient } from './logic'
+import { formatAge, formatDateTime, tagCounts, validatePatient } from './logic'
 import type { PatientDraft } from './logic'
 import { TagEditor } from './TagEditor'
 import { useDraft } from './useDraft'
@@ -54,7 +54,7 @@ export function PatientDetails({ patient }: { patient: Patient }) {
         <div className="pt-form-grid">
           <DemoField key={`e${patient.id}`} patient={patient} k="email" label="Email" type="email" />
           <DemoField key={`p${patient.id}`} patient={patient} k="phone" label="Phone" type="tel" />
-          <div className="pt-span2"><DemoField key={`a${patient.id}`} patient={patient} k="address" label="Address" /></div>
+          <div className="pt-span-all"><DemoField key={`a${patient.id}`} patient={patient} k="address" label="Address" /></div>
         </div>
       </section>
       <section className="pt-details-sec">
@@ -68,7 +68,7 @@ export function PatientDetails({ patient }: { patient: Patient }) {
           onChange={e => notes.setDraft(e.target.value)} onBlur={notes.flush}
         />
       </section>
-      <p className="pt-dim pt-details-foot">Changes save automatically. Created {new Date(patient.createdAt).toLocaleDateString()} · last change {new Date(patient.updatedAt).toLocaleString()}</p>
+      <p className="pt-dim pt-details-foot">Changes save automatically. Created {formatDateTime(patient.createdAt)} · last change {formatDateTime(patient.updatedAt)}</p>
     </div>
   )
 }
