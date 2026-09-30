@@ -10,12 +10,12 @@ import { useContextMenu } from '../../ui/Menu'
 import type { MenuItem } from '../../ui/Menu'
 import { useFamilies } from './api'
 import { FamilyTree, GroupIcon, Mark, ROW_H } from './FamilyTree'
-import { ancestorsOf, KIND_LABEL, searchRemedies, visibleRows } from './model'
+import { ancestorsOf, bestMatch, KIND_LABEL, searchRemedies, visibleRows } from './model'
 import type { FamilyIndex, Node } from './model'
 import { applyFamilyFilter, clearFamilyFilter, openFilterDialog, openRemedy, targetConsultationId } from './ops'
 import { rubricStat } from './rubricStats'
 import type { RubricStat } from './rubricStats'
-import { setViewSelection, viewBus } from './viewState'
+import { takeViewFocus, viewBus } from './viewState'
 import './families.css'
 
 type SortKey = 'abbrev' | 'name' | 'primary' | 'total' | 'high'
@@ -57,7 +57,9 @@ function Loaded({ tab, index }: { tab: FamiliesTab; index: FamilyIndex }) {
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(group ? ancestorsOf(index, group) : []))
   const [treeW, setTreeW] = useState(TREE_W)
-  const [remedy, setRemedy] = useState<number | null>(null)
+  // the selected remedy lives on the tab (commands read it; it survives tab switches)
+  const remedy = typeof tab.remedy === 'number' ? tab.remedy : null
+  const setRemedy = (r: number | null) => { if (r !== remedy) actions.updateTab<FamiliesTab>(tab.id, { remedy: r }) }
   const [remHit, setRemHit] = useState(0)
   const searchRef = useRef<HTMLInputElement>(null)
   const treeWrap = useRef<HTMLDivElement>(null)
@@ -73,7 +75,9 @@ function Loaded({ tab, index }: { tab: FamiliesTab; index: FamilyIndex }) {
   const rows = useMemo(() => visibleRows(index, expanded, query), [index, expanded, query])
   const remedyHits = useMemo(() => (query.trim() ? searchRemedies(catalog.remedies.values(), query).filter(r => index.allGroupsOf(r.id).length) : []), [catalog, index, query])
 
-  const select = (id: string | null) => { if (id !== tab.group) actions.updateTab<FamiliesTab>(tab.id, { group: id }) }
+  const select = (id: string | null, keepRemedy = true) => {
+    if (id !== tab.group || (!keepRemedy && remedy != null)) actions.updateTab<FamiliesTab>(tab.id, keepRemedy ? { group: id } : { group: id, remedy: null })
+  }
   const reveal = (id: string) => {
     setExpanded(s => { const n = new Set(s); for (const a of ancestorsOf(index, id)) n.add(a); return n })
     select(id)
@@ -92,21 +96,20 @@ function Loaded({ tab, index }: { tab: FamiliesTab; index: FamilyIndex }) {
     if (group) setExpanded(s => { const need = ancestorsOf(index, group).filter(a => !s.has(a)); return need.length ? new Set([...s, ...need]) : s })
   }, [group, index])
 
-  // expose the selection to commands; listen for view commands
-  useEffect(() => { setViewSelection({ tabId: tab.id, group, remedy }) }, [tab.id, group, remedy])
-  useEffect(() => () => setViewSelection({ tabId: null, group: null, remedy: null }), [])
+  // listen for view commands; take a pending focus request (Ctrl+5 opened this tab)
   useEffect(() => viewBus.on(cmd => {
     if (cmd === 'focusSearch') { searchRef.current?.focus(); searchRef.current?.select() }
     else if (cmd === 'expandAll') expandAll()
     else if (cmd === 'collapseAll') collapseAll()
-    else if (cmd === 'focusTree') focusTree()
+    else if (cmd === 'focusTree') { takeViewFocus(); focusTree() }
   }), []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (takeViewFocus()) focusTree() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const pickRemedy = (rid: number) => {
     const prim = index.primaryGroupOf(rid) ?? index.allGroupsOf(rid)[0]
     if (!prim) return
-    reveal(prim.id)
-    setRemedy(rid)
+    setExpanded(s => { const n = new Set(s); for (const a of ancestorsOf(index, prim.id)) n.add(a); return n })
+    actions.updateTab<FamiliesTab>(tab.id, { group: prim.id, remedy: rid })
     requestAnimationFrame(() => detailRef.current?.querySelector<HTMLElement>('.fam-table')?.focus())
   }
 
@@ -134,13 +137,14 @@ function Loaded({ tab, index }: { tab: FamiliesTab; index: FamilyIndex }) {
       e.preventDefault()
       // no group name matches: go straight to the matching remedies
       if (onlyRemedies) { focusHits(0); return }
-      const first = rows.find(r => r.match) ?? rows[0]
-      if (first) select(first.id)
+      // the best match (exact name, then name prefix, family before order), not merely the first in tree order
+      const first = bestMatch(index, rows, query) ?? rows[0]?.id
+      if (first) select(first)
       focusTree()
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      const first = rows.find(r => r.match)
-      if (first) { select(first.id); focusTree() }
+      const first = bestMatch(index, rows, query)
+      if (first) { select(first); focusTree() }
       else if (remedyHits[0]) pickRemedy(remedyHits[0].id)
     }
   }
@@ -188,7 +192,7 @@ function Loaded({ tab, index }: { tab: FamiliesTab; index: FamilyIndex }) {
             index={index}
             rows={rows}
             active={group}
-            onActivate={id => { select(id); setRemedy(null) }}
+            onActivate={id => select(id, false)}
             onToggle={toggle}
             onEnter={() => detailRef.current?.querySelector<HTMLElement>('.fam-table')?.focus()}
             onContextMenu={(id, e) => cm.open(e, groupMenu(id))}

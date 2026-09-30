@@ -5,7 +5,7 @@ import type { AnalysisResult, AnalysisRow } from '../../engine/analysis'
 import type { MenuItem } from '../../ui/Menu'
 import { useContextMenu } from '../../ui/Menu'
 import { GradeMark } from './AnalysisGrid'
-import { exclusionText } from './export'
+import { exclusionText } from './labels'
 
 interface Props {
   result: AnalysisResult
@@ -85,7 +85,8 @@ export const AnalysisCards = memo(function AnalysisCards(p: Props) {
             onDoubleClick={() => p.onOpenRemedy(row.remedyId)}
             onKeyDown={e => {
               if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); p.onOpenRemedy(row.remedyId) }
-              else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); p.onSelectRemedy(p.selectedRemedy === row.remedyId ? null : row.remedyId) }
+              else if (e.key === 'Enter') { e.preventDefault(); p.onSelectRemedy(row.remedyId) }
+              else if (e.key === ' ') { e.preventDefault(); p.onSelectRemedy(p.selectedRemedy === row.remedyId ? null : row.remedyId) }
             }}
             onContextMenu={e => cm.open(e, p.remedyMenu(row))}
           >

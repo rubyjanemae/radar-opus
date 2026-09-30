@@ -82,6 +82,23 @@ describe('real repertories', () => {
     for (const r of def.all) expect(boen.all.find(x => x.remedyId === r.remedyId)!.coverage).toBeGreaterThanOrEqual(r.coverage)
   })
 
+  it('finds polar opposite rubrics for polarity analysis', () => {
+    const src = new CatalogSource(withRepertories([pub, kent]))
+    const opp = (ref: string) => { const o = src.oppositeRubric(ref); return o && src.label(o) }
+    expect(opp('publicum:856')).toBe('MIND - consolation, amel.') // agg. ↔ amel. siblings
+    expect(opp('publicum:857')).toBe('MIND - consolation, agg.')
+    expect(opp('publicum:5739')).toBeNull() // "weeping" is a symptom, not the opposite of its "amel." sub-rubric
+    expect(opp('kent-de:2431')).toBe('GEMÜT - Schwermut, abends, besser') // schlechter ↔ besser
+    expect(opp('publicum:0')).toBeNull() // a chapter has none
+    expect(src.oppositeRubric('publicum:856')).toBe(src.oppositeRubric('publicum:856'))
+    // polarity picks the opposites up without any per-symptom setting
+    const cbs: Clipboard[] = [{ id: 'a', name: 'a', color: '', symptoms: [856, 73153].map((i, k) => ({ id: `s${k}`, rubrics: [`publicum:${i}`], combine: 'union', weight: 1, eliminatory: false, exclusive: false, group: null, causal: false, addedAt: 0 })) }]
+    const r = analyze(src, cbs, { clipboardIds: ['a'], remedyFilter: null, excludedRemedies: [], minCoverage: 0, limit: 20, strategy: 'polarity' })
+    expect(r.polarLines).toBe(2)
+    expect(r.total).toBeGreaterThan(0)
+    for (const row of r.all) expect(row.score).toBe(row.polarity!.ps - row.polarity!.os)
+  })
+
   it('60 symptoms across both repertories analyse in < 30 ms (cold cache, every strategy warm)', () => {
     const pick = (rep: Repertory, k: number) => {
       // walk to the k-th rubric with 30+ remedies, spread over the book

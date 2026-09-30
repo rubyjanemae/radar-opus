@@ -197,6 +197,30 @@ export function visibleRows(index: FamilyIndex, expanded: ReadonlySet<string>, q
   return rows
 }
 
+/** Broader levels rank after specific ones when two groups match equally well ("Solan": Solanaceae before Solanales). */
+const LEVEL_PENALTY: Record<string, number> = { order: 1, clade: 2, kingdom: 3 }
+
+/**
+ * The search hit to go to first: an exact name match, then a name that starts with the query, then any
+ * word-prefix match; equally good hits prefer the more specific level (family over order), then tree order.
+ */
+export function bestMatch(index: FamilyIndex, rows: readonly TreeRow[], query: string): string | null {
+  const q = fold(query)
+  if (!q) return null
+  let best: string | null = null
+  let bestScore = Infinity
+  rows.forEach((r, i) => {
+    if (!r.match) return
+    const n = index.get(r.id)
+    if (!n) return
+    const name = fold(n.name)
+    const tier = name === q ? 0 : name.startsWith(q) ? 1 : 2
+    const score = (tier * 10 + (LEVEL_PENALTY[n.kind] ?? 0)) * 1e6 + i
+    if (score < bestScore) { bestScore = score; best = r.id }
+  })
+  return best
+}
+
 /** Ancestors of a group (excluding itself) – used to reveal a group in the tree. */
 export function ancestorsOf(index: FamilyIndex, id: string): string[] {
   const n = index.get(id)

@@ -4,7 +4,7 @@ import {
   Atom, Biohazard, Bird, Bug, ChevronDown, ChevronRight, CircleDot, Droplets, FlaskConical, Fish, Gem, HeartPulse, Layers,
   Leaf, Microscope, Mountain, PawPrint, Shell, Sparkles, Sprout, TreePine, Waves, Zap,
 } from 'lucide-react'
-import { rowPositions } from './model'
+import { KIND_LABEL, rowPositions } from './model'
 import type { FamilyIndex, Node, TreeRow } from './model'
 
 export const ROW_H = 24
@@ -230,6 +230,8 @@ export function FamilyTree({ index, rows, active, onActivate, onToggle, checked,
               )}
               <GroupIcon node={n} />
               <span className="fam-name">{q && r.match ? <Mark text={n.name} q={q} /> : n.name}</span>
+              {/* while searching, name the level of each hit ("Solanales" order vs "Solanaceae" family) */}
+              {q && r.match && n.depth > 0 && KIND_LABEL[n.kind] && <span className={`fam-level k-${n.kind}`}>{KIND_LABEL[n.kind]}</span>}
               {n.note && <span className="fam-note">{n.note}</span>}
               <span className="fam-count" aria-label={`${n.remedies.length} remedies`}>{n.remedies.length}</span>
             </div>

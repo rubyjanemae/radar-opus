@@ -20,6 +20,8 @@ export interface AnalysisTab extends TabBase {
   view?: AnalysisViewMode
   /** Remedy shown in the drill-down panel. */
   remedy?: number | null
+  /** Symptom line highlighted (index into the analysed symptoms). */
+  symptom?: number | null
   /** Remedies appended as extra columns because they rank beyond the display limit (remedy box jumps). */
   pinnedRemedies?: number[] | null
 }
@@ -50,7 +52,11 @@ export interface SearchTab extends TabBase {
   maxSize?: number
   maxCo?: number
 }
-export interface FamiliesTab extends TabBase { kind: 'families'; group: string | null }
+export interface FamiliesTab extends TabBase {
+  kind: 'families'; group: string | null
+  /** Remedy selected in the group's remedy table. */
+  remedy?: number | null
+}
 
 export type Tab = RepertoryTab | RepertoriesTab | AnalysisTab | MateriaMedicaTab | RemedyTab | PatientsTab | PatientTab | SearchTab | FamiliesTab
 

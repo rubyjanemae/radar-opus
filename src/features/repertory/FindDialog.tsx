@@ -105,8 +105,8 @@ function FindBody({ rep, from, current, onClose, abbrev, setAbbrev }: { rep: Rep
         onDoubleClick={() => { if (!descend(i)) go(i) }}
       >
         <span className="rfind-text">{rep.text(i)}</span>
-        {rep.remedyCount(i) > 0 && <span className="rfind-count">{rep.remedyCount(i)}</span>}
-        <span className="rfind-kids">{kids ? <>{kids}<ChevronRight size={12} /></> : null}</span>
+        {rep.remedyCount(i) > 0 && <span className="rfind-count" title={`${rep.remedyCount(i)} ${rep.remedyCount(i) === 1 ? 'remedy' : 'remedies'}`}>{rep.remedyCount(i)}</span>}
+        <span className="rfind-kids" title={kids ? `${kids} sub-rubric${kids === 1 ? '' : 's'}` : undefined}>{kids ? <>{kids}<ChevronRight size={12} /></> : null}</span>
       </div>,
     )
   }

@@ -66,7 +66,7 @@ export function TakeOptionsDialog({ onClose, refs = [] }: { onClose: () => void;
           <label><input type="checkbox" checked={o.causal} onChange={e => set({ causal: e.target.checked })} /> Causal <small>causation / never well since</small></label>
           <label className={subCount < 1 ? 'disabled' : ''}>
             <input type="checkbox" checked={o.subRubrics} disabled={subCount < 1} onChange={e => set({ subRubrics: e.target.checked })} /> With sub-rubrics
-            <small>{subCount > 0 ? `combine with ${subCount} sub-rubrics` : 'no sub-rubrics with remedies'}</small>
+            <small>{subCount > 0 ? `combine with ${subCount} sub-rubric${subCount === 1 ? '' : 's'}` : 'no sub-rubrics with remedies'}</small>
           </label>
         </div>
         <div className="rtake-row">

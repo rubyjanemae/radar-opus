@@ -3,7 +3,7 @@ import type { Catalog } from '../../data/catalog'
 import { useCatalog } from '../../data/CatalogContext'
 import { analyze } from '../../engine/analysis'
 import type { AnalysisResult } from '../../engine/analysis'
-import type { Clipboard } from '../../engine/model'
+import type { AnalysisOptions, Clipboard } from '../../engine/model'
 import { useApp } from '../../state/store'
 import type { Consultation } from '../../state/patients'
 import { sourceFor } from './source'
@@ -51,6 +51,26 @@ export interface LiveAnalysis {
   catalog: Catalog
 }
 
+/*
+ * Shared analysis cache. Clipboards and options are immutable (every edit replaces them), so their
+ * references identify an analysis; the key also names the repertories loaded at the time, since a
+ * symptom of a repertory still loading resolves to nothing. The dock, the analysis tab, dialogs and
+ * commands all read through here, so one F8 computes the analysis once.
+ */
+const cache = new WeakMap<Clipboard[], WeakMap<AnalysisOptions, { key: string; result: AnalysisResult }>>()
+
+/** The analysis of these clipboards with these options, computed once per (clipboards, options, loaded repertories). */
+export function analyzeCached(source: CatalogSource, catalog: Catalog, clipboards: Clipboard[], options: AnalysisOptions): AnalysisResult {
+  const key = repertoriesOf(clipboards).filter(a => catalog.repertory(a)).join('|')
+  let byOptions = cache.get(clipboards)
+  if (!byOptions) { byOptions = new WeakMap(); cache.set(clipboards, byOptions) }
+  const hit = byOptions.get(options)
+  if (hit && hit.key === key) return hit.result
+  const result = analyze(source, clipboards, options)
+  byOptions.set(options, { key, result })
+  return result
+}
+
 /** Live analysis of a consultation: recomputed whenever its clipboards or options change. */
 export function useAnalysis(consultationId: string | null): LiveAnalysis {
   const catalog = useCatalog()
@@ -61,10 +81,10 @@ export function useAnalysis(consultationId: string | null): LiveAnalysis {
   const reps = useMemo(() => repertoriesOf(clipboards ?? []), [clipboards])
   const load = useRepertoriesLoaded(catalog, reps)
   const result = useMemo(
-    () => (clipboards && options ? analyze(source, clipboards, options) : null),
+    () => (clipboards && options ? analyzeCached(source, catalog, clipboards, options) : null),
     // load.version: re-run when a repertory arrives
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [source, clipboards, options, load.version, load.status],
+    [source, catalog, clipboards, options, load.version, load.status],
   )
   return { consultation, result, load, source, catalog }
 }

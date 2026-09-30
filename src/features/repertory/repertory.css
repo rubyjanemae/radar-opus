@@ -31,7 +31,7 @@
 /* header controls share one 24px height and 12px text */
 .rv-tools .rseg > button { height: 22px; }
 .rv-seg-icon { display: none; }
-.rv-grade { height: 24px; font-size: 12px; padding-top: 0; padding-bottom: 0; }
+.rv-tools .rv-grade { height: 24px; font-size: 12px; padding-top: 0; padding-bottom: 0; }
 .rv-tools .btn-sm { height: 24px; font-size: 12px; }
 /* medium pane: the symptom path gets its own row, the tools sit below it */
 @container rvhead (max-width: 760px) {
@@ -162,6 +162,7 @@
 .rv-chooser-item.active .rv-chooser-n { color: rgba(255, 255, 255, .8); }
 .rv-chooser-empty { padding: 8px; color: var(--text-3); font-size: var(--fs-sm); }
 
+.rv-error { align-content: start; }
 .rv-loading-label { color: var(--text-3); font-size: var(--fs-sm); }
 .rv-skel { padding: 16px 20px; display: grid; gap: 10px; }
 .rv-skel .skeleton { height: 12px; }

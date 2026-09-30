@@ -3,8 +3,8 @@ import { createRoot } from 'react-dom/client'
 import { formatScore, strategyInfo } from '../../engine/analysis'
 import type { AnalysisResult, AnalysisRow } from '../../engine/analysis'
 import { GradeMark } from './AnalysisGrid'
-import { symptomFlags } from './export'
-import type { ExportMeta } from './export'
+import { symptomFlags } from './labels'
+import type { ExportMeta } from './labels'
 import './analysis.css'
 
 /** Remedy columns per printed table (landscape A4 fits about 30). */

@@ -4,7 +4,7 @@ import { formatScore } from '../../engine/analysis'
 import type { AnalysisResult, AnalysisRow } from '../../engine/analysis'
 import type { MenuItem } from '../../ui/Menu'
 import { useContextMenu } from '../../ui/Menu'
-import { exclusionText } from './export'
+import { exclusionText } from './labels'
 
 interface Props {
   result: AnalysisResult
@@ -111,7 +111,8 @@ export const AnalysisBars = memo(function AnalysisBars(p: Props) {
         else if (e.key === 'Home') go(0)
         else if (e.key === 'End') go(rows.length - 1)
         else if (e.key === 'Enter' && e.shiftKey) p.onOpenRemedy(rows[a].remedyId)
-        else if (e.key === 'Enter' || e.key === ' ') p.onSelectRemedy(p.selectedRemedy === rows[a].remedyId ? null : rows[a].remedyId)
+        else if (e.key === 'Enter') p.onSelectRemedy(rows[a].remedyId)
+        else if (e.key === ' ') p.onSelectRemedy(p.selectedRemedy === rows[a].remedyId ? null : rows[a].remedyId)
         else if (e.key === 'Escape' && (p.selectedRemedy != null || p.selectedSymptom != null)) { p.onSelectRemedy(null); p.onSelectSymptom(null) }
         else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
           const el = ref.current?.querySelector<HTMLElement>(`[data-k="${a}"]`)

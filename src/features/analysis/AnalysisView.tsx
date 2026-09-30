@@ -1,18 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import {
-  Ban, ChartBarStacked, ChessKnight, ChevronDown, Download, Eye, EyeOff, Filter, GitCompare, Grid3x3,
-  Highlighter, LayoutGrid, LoaderCircle, Pin, Printer, Search, TriangleAlert, Weight, X,
+  ArrowLeftRight, Ban, ChartBarStacked, ChessKnight, ChevronDown, Download, Eye, EyeOff, Filter, GitCompare, Grid3x3,
+  Highlighter, Info, LayoutGrid, LoaderCircle, Pin, Printer, Search, TriangleAlert, Weight, X,
 } from 'lucide-react'
 import { getCommand, runCommand } from '../../commands/registry'
 import { STRATEGIES, strategyInfo } from '../../engine/analysis'
 import type { AnalysisResult, AnalysisRow } from '../../engine/analysis'
-import { actions } from '../../state/store'
+import { actions, useApp } from '../../state/store'
 import type { AnalysisTab, AnalysisViewMode } from '../../state/workspace'
 import { MenuList } from '../../ui/Menu'
 import type { MenuItem } from '../../ui/Menu'
-import { AnalysisBars, GradeLegend } from './AnalysisBars'
-import { AnalysisCards } from './AnalysisCards'
 import { AnalysisGrid } from './AnalysisGrid'
 import { RemedyPanel } from './RemedyPanel'
 import * as ops from './ops'
@@ -22,13 +20,38 @@ import './analysis.css'
 
 const CARD_CAP = 200
 
+/* Bars and cards load on demand: F8 only pays for the grid. They are prefetched once the grid is idle. */
+const loadBars = () => import('./AnalysisBars')
+const loadCards = () => import('./AnalysisCards')
+const AnalysisBars = lazy(() => loadBars().then(m => ({ default: m.AnalysisBars })))
+const GradeLegend = lazy(() => loadBars().then(m => ({ default: m.GradeLegend })))
+const AnalysisCards = lazy(() => loadCards().then(m => ({ default: m.AnalysisCards })))
+let prefetched = false
+function prefetchViews() {
+  if (prefetched) return
+  prefetched = true
+  const idle = (globalThis as { requestIdleCallback?: (fn: () => void, o?: { timeout: number }) => void }).requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 800))
+  idle(() => { void loadBars().catch(() => { prefetched = false }); void loadCards().catch(() => { prefetched = false }) }, { timeout: 3000 })
+}
+
+/** Runs `fn` after its Suspense boundary committed (a lazily loaded view is in the DOM). */
+function OnMount({ fn }: { fn: () => void }) {
+  useEffect(() => { fn() }, [fn])
+  return null
+}
+
+const MAIN_FOCUS = '.an-main [data-cell][tabindex="0"], .an-main .an-bar-row[tabindex="0"], .an-main .an-card.selected, .an-main .an-card'
+
 export function AnalysisView({ tab }: { tab: AnalysisTab }) {
   const live = useAnalysis(tab.consultationId)
   const { consultation, result, load, catalog, source } = live
   const view: AnalysisViewMode = tab.view ?? 'grid'
-  const [symptom, setSymptom] = useState<number | null>(null)
   const [revealReq, setReveal] = useState<{ remedyId: number; nonce: number } | null>(null)
-  const selectedRemedy = tab.remedy ?? null
+  const selectedRemedy = typeof tab.remedy === 'number' ? tab.remedy : null
+  // the highlighted symptom lives on the tab too, so the panel and highlight survive tab switches
+  const symptom = typeof tab.symptom === 'number' && result && tab.symptom < result.symptoms.length ? tab.symptom : null
+  const setSymptom = useCallback((i: number | null) => actions.updateTab<AnalysisTab>(tab.id, { symptom: i }), [tab.id])
+  const activeCaseId = useApp(s => s.activeConsultationId)
 
   const selectRemedy = useCallback((id: number | null) => actions.updateTab<AnalysisTab>(tab.id, { remedy: id }), [tab.id])
   const openRemedy = useCallback((id: number) => ops.openRemedyTab(id), [])
@@ -52,7 +75,6 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
   const highlight = useMemo(() => (options?.highlight?.length ? new Set(options.highlight) : null), [options?.highlight])
   const selectedRow = selectedRemedy != null ? rows.find(r => r.remedyId === selectedRemedy) ?? result?.all.find(r => r.remedyId === selectedRemedy) ?? result?.excludedRows.find(r => r.remedyId === selectedRemedy) ?? null : null
 
-  useEffect(() => { if (result && symptom != null && symptom >= result.symptoms.length) setSymptom(null) }, [result, symptom])
 
   // jump to a remedy: select it, pin it when beyond the limit, scroll to it and focus it
   const tabRef = useRef(tab)
@@ -67,18 +89,34 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
     return ops.onReveal((t, id) => { if (t === tab.id) { ops.takeReveal(t); reveal(id) } })
   }, [tab.id, reveal])
 
-  // keep keyboard focus in the analysis when the display changes (the old view unmounts)
+  /*
+   * Keyboard focus into the result: requested by F8 (ops.requestFocus) and when the display changes
+   * while focus is in the analysis (the old view unmounts). The request waits until the result is
+   * rendered, including a lazily loaded bars / cards view.
+   */
   const rootRef = useRef<HTMLDivElement>(null)
+  const wantFocus = useRef(false)
+  const loading = load.status === 'loading'
+  const tryFocus = useCallback(() => {
+    const root = rootRef.current
+    if (!wantFocus.current || !root) return
+    const target = root.querySelector<HTMLElement>(MAIN_FOCUS)
+    if (target) { wantFocus.current = false; target.focus({ preventScroll: false }); return }
+    // nothing to focus in the result (empty state, error): the view itself, so its keys still work
+    if (root.querySelector('.an-main > .empty-state, .an-main > .error-state')) { wantFocus.current = false; root.focus() }
+  }, [])
+  useLayoutEffect(() => {
+    if (ops.takeFocus(tab.id)) wantFocus.current = true
+    return ops.onFocusRequest(id => { if (id === tab.id && ops.takeFocus(id)) { wantFocus.current = true; tryFocus() } })
+  }, [tab.id, tryFocus])
   const prevView = useRef(view)
-  useEffect(() => {
-    if (prevView.current === view) return
+  if (prevView.current !== view) {
     prevView.current = view
     const a = document.activeElement
-    if (a && a !== document.body && !rootRef.current?.contains(a)) return
-    const main = rootRef.current?.querySelector('.an-main')
-    const target = main?.querySelector<HTMLElement>('[data-cell][tabindex="0"], .an-bar-row[tabindex="0"], .an-card.selected, .an-card')
-    ;(target ?? rootRef.current)?.focus({ preventScroll: false })
-  }, [view])
+    if (!a || a === document.body || rootRef.current?.contains(a)) wantFocus.current = true
+  }
+  useEffect(() => { if (!loading) tryFocus() })
+  useEffect(() => { if (result && view === 'grid') prefetchViews() }, [result, view])
 
   const remedyMenu = useCallback((row: AnalysisRow): MenuItem[] => {
     const excluded = options?.excludedRemedies.includes(row.remedyId) ?? false
@@ -88,7 +126,7 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
       { label: 'Materia medica', run: () => ops.openMateriaMedica(row.remedyId) },
       { type: 'separator' },
       { label: excluded ? 'Include remedy again' : 'Exclude remedy', run: () => ops.toggleExcluded(row.remedyId, tab.consultationId) },
-      { label: 'Compare with top remedies…', run: () => ops.openCompare([row.remedyId, ...rows.filter(r => r.remedyId !== row.remedyId && !r.excluded).slice(0, 3).map(r => r.remedyId)]) },
+      { label: 'Compare with top remedies…', run: () => ops.openCompare([row.remedyId, ...rows.filter(r => r.remedyId !== row.remedyId && !r.excluded).slice(0, 3).map(r => r.remedyId)], tab.consultationId) },
       ...(pinnedExtra.has(row.remedyId) ? [{ type: 'separator' } as const, { label: 'Unpin column', run: () => ops.unpin(tabRef.current, row.remedyId) }] : []),
     ]
   }, [options?.excludedRemedies, rows, selectRemedy, tab.consultationId, pinnedExtra])
@@ -100,7 +138,7 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
       { label: symptom === i ? 'Clear highlight' : 'Highlight remedies in this symptom', run: () => setSymptom(symptom === i ? null : i) },
       { label: 'Open rubric in repertory', run: () => openRubric(s.symptom.rubrics[0]) },
     ]
-  }, [result, symptom])
+  }, [result, symptom, setSymptom])
 
   if (!consultation) {
     return (
@@ -155,7 +193,7 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
       <div className="empty-state">
         <strong>No remedy remains</strong>
         <span>{describeEmpty(result)}</span>
-        {ops.hasFilter(options) && <button className="btn" onClick={() => ops.clearFilter()}>Clear filters</button>}
+        {ops.hasFilter(options) && <button className="btn" onClick={() => ops.clearFilter(consultation.id)}>Clear filters</button>}
       </div>
     )
   } else if (view === 'grid') {
@@ -170,23 +208,29 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
     )
   } else if (view === 'bars') {
     body = (
-      <div className="an-bars-wrap">
-        <div className="an-bars-head"><GradeLegend /><span className="an-muted">Bar length: points per symptom · click a segment to highlight its symptom</span></div>
-        <AnalysisBars
-          result={result} rows={rows} catalog={catalog} selectedRemedy={selectedRemedy} selectedSymptom={symptom} highlight={highlight}
-          onSelectRemedy={selectRemedy} onSelectSymptom={setSymptom} onOpenRemedy={openRemedy} remedyMenu={remedyMenu} reveal={revealReq} pinned={pinnedExtra}
-        />
-      </div>
+      <Suspense fallback={<ViewLoading />}>
+        <div className="an-bars-wrap">
+          <div className="an-bars-head"><GradeLegend /><span className="an-muted">Bar length: points per symptom · click a segment to highlight its symptom</span></div>
+          <AnalysisBars
+            result={result} rows={rows} catalog={catalog} selectedRemedy={selectedRemedy} selectedSymptom={symptom} highlight={highlight}
+            onSelectRemedy={selectRemedy} onSelectSymptom={setSymptom} onOpenRemedy={openRemedy} remedyMenu={remedyMenu} reveal={revealReq} pinned={pinnedExtra}
+          />
+        </div>
+        <OnMount fn={tryFocus} />
+      </Suspense>
     )
   } else {
     body = (
-      <div className="an-cards-wrap">
-        <AnalysisCards
-          result={result} rows={rows.length > CARD_CAP ? [...rows.slice(0, CARD_CAP), ...rows.filter(r => pinnedExtra.has(r.remedyId))] : rows} catalog={catalog} selectedRemedy={selectedRemedy} selectedSymptom={symptom} highlight={highlight}
-          onSelectRemedy={selectRemedy} onOpenRemedy={openRemedy} remedyMenu={remedyMenu} reveal={revealReq} pinned={pinnedExtra}
-        />
-        {rows.length > CARD_CAP && <div className="an-muted an-cap">Showing the first {CARD_CAP} of {rows.length} remedies as cards. Use the grid or bars for the rest.</div>}
-      </div>
+      <Suspense fallback={<ViewLoading />}>
+        <div className="an-cards-wrap">
+          <AnalysisCards
+            result={result} rows={rows.length > CARD_CAP ? [...rows.slice(0, CARD_CAP), ...rows.filter(r => pinnedExtra.has(r.remedyId))] : rows} catalog={catalog} selectedRemedy={selectedRemedy} selectedSymptom={symptom} highlight={highlight}
+            onSelectRemedy={selectRemedy} onOpenRemedy={openRemedy} remedyMenu={remedyMenu} reveal={revealReq} pinned={pinnedExtra}
+          />
+          {rows.length > CARD_CAP && <div className="an-muted an-cap">Showing the first {CARD_CAP} of {rows.length} remedies as cards. Use the grid or bars for the rest.</div>}
+        </div>
+        <OnMount fn={tryFocus} />
+      </Suspense>
     )
   }
 
@@ -200,8 +244,15 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
         if (e.key === 'Escape' && (selectedRemedy != null || symptom != null)) { selectRemedy(null); setSymptom(null) }
       }}
     >
+      {activeCaseId !== tab.consultationId && <OtherCaseBanner tab={tab} activeCaseId={activeCaseId} />}
       <Toolbar live={live} tab={tab} view={view} limit={limit} onReveal={reveal} />
       <PillBar live={live} tab={tab} pinned={[...pinnedExtra]} limit={limit} />
+      {!!result?.notes.length && (
+        <div className="an-notes" role="status" data-testid="analysis-notes">
+          <Info size={13} aria-hidden="true" />
+          <span className="an-notes-text">{result.notes.join(' ')}</span>
+        </div>
+      )}
       {symptom != null && result?.symptoms[symptom] && (
         <div className="an-symbar" role="status">
           <span>Highlighting remedies in <strong>{result.symptoms[symptom].label}</strong> · {result.symptoms[symptom].size} remedies</span>
@@ -217,11 +268,41 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
             onOpenRemedy={() => ops.openRemedyTab(selectedRow.remedyId)}
             onOpenMM={() => ops.openMateriaMedica(selectedRow.remedyId)}
             onToggleExclude={() => ops.toggleExcluded(selectedRow.remedyId, consultation.id)}
-            onCompare={() => ops.openCompare([selectedRow.remedyId, ...rows.filter(r => r.remedyId !== selectedRow.remedyId && !r.excluded).slice(0, 3).map(r => r.remedyId)])}
+            onCompare={() => ops.openCompare([selectedRow.remedyId, ...rows.filter(r => r.remedyId !== selectedRow.remedyId && !r.excluded).slice(0, 3).map(r => r.remedyId)], consultation.id)}
             manuallyExcluded={options?.excludedRemedies.includes(selectedRow.remedyId) ?? false}
           />
         )}
       </div>
+    </div>
+  )
+}
+
+function ViewLoading() {
+  return <div className="an-loading" aria-busy="true">{Array.from({ length: 6 }, (_, i) => <div key={i} className="skeleton an-skel" style={{ width: `${90 - i * 8}%` }} />)}</div>
+}
+
+function caseLabel(s: ReturnType<typeof useApp.getState>, id: string | null): string | null {
+  const c = id ? s.consultations[id] : null
+  if (!c) return null
+  const p = s.patients[c.patientId]
+  return `${p ? `${p.lastName}${p.firstName ? `, ${p.firstName}` : ''}` : 'Case'} · ${c.title || 'Consultation'} (${c.date})`
+}
+
+/** Shown when this tab analyses a case other than the active one: commands (F8, menus) act on the active case. */
+function OtherCaseBanner({ tab, activeCaseId }: { tab: AnalysisTab; activeCaseId: string | null }) {
+  const mine = useApp(s => caseLabel(s, tab.consultationId))
+  const active = useApp(s => caseLabel(s, activeCaseId))
+  const label = { mine, active }
+  return (
+    <div className="an-other-case" role="status" data-testid="analysis-other-case">
+      <Info size={13} aria-hidden="true" />
+      <span className="an-ellipsis" title={label.active ? `Menus and F8 act on the active case: ${label.active}` : undefined}>
+        This analysis shows <strong>{label.mine}</strong>{label.active ? <>, not the active case <strong>{label.active}</strong></> : ' (no case is active)'}.
+      </span>
+      {label.active && (
+        <button className="btn btn-sm" onClick={() => ops.switchToActiveCase(tab)}><ArrowLeftRight size={12} /> Switch to active case</button>
+      )}
+      <button className="btn btn-sm btn-ghost" onClick={() => actions.setActiveConsultation(tab.consultationId)} title="Make the case of this analysis the active case">Make this case active</button>
     </div>
   )
 }
@@ -255,20 +336,28 @@ function Toolbar({ live, tab, view, limit, onReveal }: { live: LiveAnalysis; tab
     const r = e.currentTarget.getBoundingClientRect()
     setMenu({ kind, x: r.left, y: r.bottom + 2 })
   }
+  // the toolbar acts on this tab's case (menus and shortcuts act on the active case; see OtherCaseBanner)
+  const cid = consultation.id
   const strategyItems: MenuItem[] = [
     { type: 'label', label: 'Analysis method' },
-    ...STRATEGIES.map(s => ({ command: `analysis.strategy.${s.id}` })),
+    ...STRATEGIES.map((s): MenuItem => ({ command: `analysis.strategy.${s.id}`, checked: o.strategy === s.id, disabled: false, run: () => ops.setStrategy(s.id, cid) })),
     { type: 'separator' },
-    { command: 'analysis.intensity' },
-    { command: 'analysis.showExcluded' },
+    { command: 'analysis.intensity', checked: o.useIntensity !== false, disabled: false, run: () => ops.toggleIntensity(cid) },
+    { command: 'analysis.showExcluded', checked: !!o.showExcluded, disabled: false, run: () => ops.toggleShowExcluded(cid) },
   ]
+  const familyDialog = ops.familyFilterDialog()
   const filterItems: MenuItem[] = [
-    ...(getCommand('families.filter') ? [{ command: 'families.filter' }] : []),
-    { command: 'analysis.remedies' },
+    ...(familyDialog && getCommand('families.filter') ? [{ command: 'families.filter', disabled: false, run: () => ops.openFilter(cid) } as MenuItem] : []),
+    { command: 'analysis.remedies', disabled: false, run: () => ops.openRemedyFilter(cid) },
     { type: 'separator' },
-    { command: 'analysis.clearFilter' },
+    { command: 'analysis.clearFilter', disabled: !ops.hasFilter(o), run: () => ops.clearFilter(cid) },
   ]
-  const exportItems: MenuItem[] = [{ command: 'analysis.exportCsv' }, { command: 'analysis.exportPng' }, { type: 'separator' }, { command: 'analysis.print' }]
+  const exportItems: MenuItem[] = [
+    { command: 'analysis.exportCsv', disabled: false, run: () => void ops.exportCsv(cid) },
+    { command: 'analysis.exportPng', disabled: false, run: () => void ops.exportPng(cid) },
+    { type: 'separator' },
+    { command: 'analysis.print', disabled: false, run: () => void ops.printAnalysis(cid) },
+  ]
   const onChip = (id: string, e: ReactMouseEvent) => {
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
       const next = selected.has(id) ? o.clipboardIds.filter(x => x !== id) : [...o.clipboardIds, id]
@@ -281,10 +370,11 @@ function Toolbar({ live, tab, view, limit, onReveal }: { live: LiveAnalysis; tab
   return (
     <div className="an-toolbar" role="toolbar" aria-label="Analysis toolbar">
       <button className="an-tb-btn an-strategy" aria-haspopup="menu" aria-label={`Analysis method: ${info.name}`} title={`${info.name}: ${info.description}`} onClick={e => openMenu('strategy', e)}>
-        <ChessKnight size={15} /><span>{info.short}</span><ChevronDown size={12} />
+        <ChessKnight size={15} /><span className="an-strategy-name">{info.short}</span><ChevronDown size={12} />
       </button>
       <div className="an-sep" />
-      <div className="an-chips" role="group" aria-label="Analysed clipboards (click: only this, Ctrl+click: combine)">
+      <div className="an-chipbar" role="group" aria-label="Analysed clipboards (click: only this, Ctrl+click: combine)">
+      <ChipScroller>
         {consultation.clipboards.map((cb, i) => (
           <button
             key={cb.id}
@@ -297,8 +387,9 @@ function Toolbar({ live, tab, view, limit, onReveal }: { live: LiveAnalysis; tab
             <span className="an-chip-dot" aria-hidden="true" />{i + 1}<span className="an-chip-name">{cb.name.replace(/^Clipboard \d+$/, '')}</span><span className="an-chip-n">{cb.symptoms.length}</span>
           </button>
         ))}
+      </ChipScroller>
         {consultation.clipboards.length > 1 && (
-          <button className={`an-chip${allSelected ? ' on' : ''}`} aria-pressed={allSelected} title="Analyse all non-empty clipboards" onClick={() => {
+          <button className={`an-chip an-chip-all${allSelected ? ' on' : ''}`} aria-pressed={allSelected} title="Analyse all non-empty clipboards" onClick={() => {
             const ne = consultation.clipboards.filter(c => c.symptoms.length).map(c => c.id)
             ops.setOptions({ clipboardIds: ne.length ? ne : consultation.clipboards.map(c => c.id) }, consultation.id)
           }}>All</button>
@@ -308,7 +399,7 @@ function Toolbar({ live, tab, view, limit, onReveal }: { live: LiveAnalysis; tab
       <button className="icon-btn" aria-pressed={o.useIntensity !== false} aria-label="Use symptom intensity" title="Use symptom intensity (×1–×4)" onClick={() => ops.setOptions({ useIntensity: o.useIntensity === false }, consultation.id)}><Weight size={15} /></button>
       <button className="icon-btn" aria-pressed={!!o.showExcluded} aria-label="Show excluded remedies in position" title="Show excluded remedies greyed in their position" onClick={() => ops.setOptions({ showExcluded: !o.showExcluded }, consultation.id)}>{o.showExcluded ? <Eye size={15} /> : <EyeOff size={15} />}</button>
       <div className={`an-split${ops.hasFilter(o) ? ' on' : ''}`}>
-        <button className="icon-btn" aria-label="Filter remedies" title={ops.familyFilterDialog() ? 'Family filter: limit or highlight families' : 'Limit, exclude or highlight remedies'} onClick={() => runCommand('analysis.filter')}><Filter size={15} /></button>
+        <button className="icon-btn" aria-label="Filter remedies" title={familyDialog ? 'Family filter: limit or highlight families' : 'Limit, exclude or highlight remedies'} onClick={() => ops.openFilter(cid)}><Filter size={15} /></button>
         <button className="icon-btn an-split-more" aria-label="Filter options" aria-haspopup="menu" title="Filter options" onClick={e => openMenu('filter', e)}><ChevronDown size={11} /></button>
       </div>
       <RemedyBox result={result} catalog={catalog} onPick={onReveal} />
@@ -327,9 +418,9 @@ function Toolbar({ live, tab, view, limit, onReveal }: { live: LiveAnalysis; tab
           </button>
         ))}
       </div>
-      <button className="icon-btn" aria-label="Compare remedies" title="Compare remedies" onClick={() => runCommand('analysis.compare')}><GitCompare size={15} /></button>
+      <button className="icon-btn" aria-label="Compare remedies" title="Compare remedies" onClick={() => ops.openCompare(undefined, cid)}><GitCompare size={15} /></button>
       <button className="icon-btn" aria-label="Export" aria-haspopup="menu" title="Export CSV / PNG" onClick={e => openMenu('export', e)}><Download size={15} /></button>
-      <button className="icon-btn" aria-label="Print analysis" title="Print (Ctrl+P)" onClick={() => runCommand('analysis.print')}><Printer size={15} /></button>
+      <button className="icon-btn" aria-label="Print analysis" title="Print (Ctrl+P)" onClick={() => void ops.printAnalysis(cid)}><Printer size={15} /></button>
       {menu && (
         <MenuList
           items={menu.kind === 'strategy' ? strategyItems : menu.kind === 'filter' ? filterItems : exportItems}
@@ -339,6 +430,40 @@ function Toolbar({ live, tab, view, limit, onReveal }: { live: LiveAnalysis; tab
           onClose={() => setMenu(null)}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * Horizontally scrolling chip strip: a case can have many clipboards, the strip never grows the toolbar.
+ * The wheel scrolls it sideways; edge fades show there is more.
+ */
+function ChipScroller({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [edge, setEdge] = useState({ left: false, right: false })
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const update = () => {
+      const left = el.scrollLeft > 0, right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+      setEdge(e => (e.left === left && e.right === right ? e : { left, right }))
+    }
+    update()
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return
+      e.preventDefault()
+      el.scrollLeft += e.deltaY
+    }
+    el.addEventListener('scroll', update, { passive: true })
+    el.addEventListener('wheel', onWheel, { passive: false })
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    for (const c of el.children) ro.observe(c)
+    return () => { el.removeEventListener('scroll', update); el.removeEventListener('wheel', onWheel); ro.disconnect() }
+  })
+  return (
+    <div ref={ref} className={`an-chips${edge.left ? ' fade-l' : ''}${edge.right ? ' fade-r' : ''}`}>
+      {children}
     </div>
   )
 }
@@ -382,7 +507,7 @@ function PillBar({ live, tab, pinned, limit }: { live: LiveAnalysis; tab: Analys
           <button aria-label={`Unpin ${catalog.remedy(id).abbrev}`} onClick={() => ops.unpin(tab, id)}><X size={11} /></button>
         </span>
       ))}
-      {ops.hasFilter(o) && <button className="btn btn-sm btn-ghost an-pill-clear" onClick={() => runCommand('analysis.clearFilter')}>Clear filters</button>}
+      {ops.hasFilter(o) && <button className="btn btn-sm btn-ghost an-pill-clear" onClick={() => ops.clearFilter(consultation.id)}>Clear filters</button>}
     </div>
   )
 }
@@ -418,7 +543,7 @@ function RemedyBox({ result, catalog, onPick }: { result: AnalysisResult | null;
       <input
         ref={ref}
         className="an-rbox-input"
-        placeholder="Jump to remedy"
+        placeholder="Jump…"
         aria-label="Jump to remedy in analysis"
         role="combobox"
         aria-expanded={open && matches.length > 0}

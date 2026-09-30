@@ -1,9 +1,9 @@
 import { BookOpen, Ban, CircleCheck, ExternalLink, GitCompare, X } from 'lucide-react'
 import type { Catalog } from '../../data/catalog'
-import { COVERAGE_FIRST, explainTerm, formatScore, strategyInfo } from '../../engine/analysis'
+import { COVERAGE_FIRST, explainTerm, FACTOR_NOTES, formatScore, strategyInfo } from '../../engine/analysis'
 import type { AnalysisResult, AnalysisRow, RubricSource } from '../../engine/analysis'
 import { GradeMark } from './AnalysisGrid'
-import { exclusionText } from './export'
+import { exclusionText } from './labels'
 
 interface Props {
   result: AnalysisResult
@@ -33,7 +33,7 @@ export function RemedyPanel(p: Props) {
   const rem = catalog.remedy(row.remedyId)
   const info = strategyInfo(result.strategy)
   const scored = result.symptoms.map((s, i) => ({ s, i })).filter(x => x.s.role === 'scored')
-  const covered = scored.filter(x => row.grades[x.i])
+  const covered = scored.filter(x => row.grades[x.i] || row.contributions[x.i])
   const missing = scored.filter(x => !row.grades[x.i])
   const other = result.symptoms.map((s, i) => ({ s, i })).filter(x => x.s.role !== 'scored' && row.grades[x.i])
   const terms = covered.map(({ i }) => explainTerm(result, p.source, row, i))
@@ -72,20 +72,26 @@ export function RemedyPanel(p: Props) {
         <table className="an-terms">
           <caption className="sr-only">Score terms</caption>
           <thead>
-            <tr><th scope="col">Symptom</th><th scope="col" className="num">g</th><th scope="col">i × g × factors</th><th scope="col" className="num">pts</th></tr>
+            <tr>
+              <th scope="col">Symptom</th>
+              <th scope="col" className="num"><abbr title="Grade of the remedy in the rubric">G</abbr></th>
+              <th scope="col"><abbr title="Intensity × grade value × strategy factors">I×G</abbr></th>
+              <th scope="col" className="num"><abbr title="Points">Pts</abbr></th>
+            </tr>
           </thead>
           <tbody>
             {covered.map(({ s, i }, k) => {
               const t = terms[k]
               return (
                 <tr key={i} className={p.selectedSymptom === i ? 'selected' : ''} onClick={() => p.onSelectSymptom(p.selectedSymptom === i ? null : i)}>
-                  <td className="an-term-label" title={s.label}><span>{s.label}</span></td>
+                  <td className="an-term-label" title={s.label}>{s.label}</td>
                   <td className="num" title={t.baseGrade !== null ? `Generalised: grade ${t.baseGrade || 'absent'} in this rubric, ${t.grade} in ${s.generals.map(r => p.source.label(r)).join(', ')}` : undefined}>
                     <span className={`g${t.grade}`}>{t.grade}</span>{t.baseGrade !== null && <sup className="an-gen" aria-label="generalised">G</sup>} <GradeMark g={t.grade} />
                   </td>
                   <td className="an-term-calc">
                     {t.weight}×{num(t.value)}
                     {t.factors.map(f => <span key={f.key} title={f.label}>×{num(f.value)}<sub>{f.key}</sub></span>)}
+                    {t.opposite && <span title={`Grade in the opposite rubric ${t.opposite.label}`}>−{t.opposite.grade}<sub>opp</sub></span>}
                   </td>
                   <td className="num an-term-pts">{num(Math.round(t.points * 100) / 100)}</td>
                 </tr>
@@ -101,7 +107,7 @@ export function RemedyPanel(p: Props) {
         </table>
         {(factorKeys.size > 0 || generalised) && (
           <p className="an-legend-note">
-            {[...factorKeys].map(k => <span key={k}><sub>{k}</sub> {FACTOR_NOTE[k]}</span>)}
+            {[...factorKeys].map(k => <span key={k}><sub>{k}</sub> {FACTOR_NOTE[k] ?? FACTOR_NOTES[k]}</span>)}
             {generalised && <span><sup>G</sup> grade raised from the linked Generalities rubric</span>}
           </p>
         )}

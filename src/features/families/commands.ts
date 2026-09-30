@@ -8,10 +8,12 @@ import { familiesIfLoaded, loadFamilies } from './api'
 import { FamilyFilterDialog } from './FamilyFilterDialog'
 import { systemLabel } from './model'
 import { activeFamiliesTab, applyFamilyFilter, clearFamilyFilter, FILTER_DIALOG, hasTargetCase, openFamilies, openFilterDialog, openRemedy, targetConsultationId } from './ops'
-import { viewBus, viewSelection } from './viewState'
+import { viewBus } from './viewState'
 
-function inView() { return !!activeFamiliesTab() && viewSelection().tabId === activeFamiliesTab()?.id }
-function selectedGroup() { return inView() ? viewSelection().group : null }
+/* The families view keeps its selection on its tab, so commands read the store. */
+function inView() { return !!activeFamiliesTab() }
+function selectedGroup() { const g = activeFamiliesTab()?.group; return g && familiesIfLoaded()?.get(g) ? g : null }
+function selectedRemedy() { return activeFamiliesTab()?.remedy ?? null }
 
 function activeRemedyId(): number | null {
   const t = selectActiveTab(useApp.getState())
@@ -79,8 +81,8 @@ export function register(_catalog: Catalog) {
     { id: 'families.expandAll', title: 'Expand all families', category: 'Tools', enabled: inView, run: () => viewBus.emit('expandAll') },
     { id: 'families.collapseAll', title: 'Collapse all families', category: 'Tools', enabled: inView, run: () => viewBus.emit('collapseAll') },
     {
-      id: 'families.openRemedy', title: 'Open selected remedy', category: 'Tools', enabled: () => inView() && viewSelection().remedy != null,
-      run: () => { const r = viewSelection().remedy; if (r != null) openRemedy(r) },
+      id: 'families.openRemedy', title: 'Open selected remedy', category: 'Tools', enabled: () => selectedRemedy() != null,
+      run: () => { const r = selectedRemedy(); if (r != null) openRemedy(r) },
     },
   ])
 }

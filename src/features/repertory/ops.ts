@@ -241,7 +241,8 @@ export function takeRefs(refs: RubricRef[], o: TakeOptions): number {
     else featureToast('error', () => 'The case changed since this take; use Edit › Undo', 'info')
   }
   const verb = updated && !added ? 'Updated' : 'Taken'
-  const last = refs.length === 1 ? `${leafText(refs[0])} (${describeTake(o)})` : `${refs.length} rubrics (${describeTake(o)})`
+  // a multi-rubric take names its last rubric too ("last: Fear and 2 more", never "last: 3 rubrics")
+  const last = `${leafText(refs[refs.length - 1])}${refs.length > 1 ? ` and ${refs.length - 1} more` : ''} (${describeTake({ ...o, clipboard: null })})`
   takeToast({ count: added + updated, target: target.name, last }, `${verb} ${what} (${describeTake(o, target.name)}${leafNote}${caseNote})`, undo)
   return added + updated
 }

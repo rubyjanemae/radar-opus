@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { Grade } from '../data/types'
 import {
-  abbrevKey, analyze, applyGroups, classifyChapter, exclusionCode, explainTerm, formatScore, gradeValue, remedySizeFactor, resolveSymptom,
-  smallRubricFactor, STRATEGIES,
+  abbrevKey, analyze, analyzeFamilies, applyGroups, classifyChapter, exclusionCode, explainTerm, FACTOR_NOTES, formatScore, gradeValue, qualityLight,
+  remedySizeFactor, resolveSymptom, rubricSizeWeight, smallRubricFactor, STRATEGIES,
 } from './analysis'
 import type { AnalysisResult, ChapterClass, RubricSource } from './analysis'
+import { symptomFlags } from './model'
 import type { AnalysisOptions, Clipboard, StrategyId, Symptom } from './model'
 
 let seq = 0
@@ -146,6 +147,69 @@ describe('scoring-spec test vectors (§5.2)', () => {
     // the other strategies do not generalise
     expect(f1Out(runF1('sum-symptoms-degrees', true, [sym('f:10'), line(4)]))).toEqual(['A(2/3)', 'C(1/2)', 'B(1/1)', 'D(1/1)'])
   })
+  it('T12 continuous small-rubric weight w(n)', () => {
+    expect([1, 11, 21, 31].map(n => rubricSizeWeight(n))).toEqual([30, 15.5, 8.25, 4.625])
+    expect(rubricSizeWeight(3)).toBeCloseTo(26.245966, 6)
+    expect(rubricSizeWeight(8)).toBeCloseTo(18.851594, 6)
+    expect(rubricSizeWeight(60)).toBeCloseTo(1.485647, 6)
+    expect(rubricSizeWeight(250)).toBeCloseTo(1.000001, 6)
+  })
+  it('T13 smallRubricsCont, intensity on', () => {
+    expect(f1Rounded(runF1('small-rubrics-cont', true))).toEqual(['B160.9614', 'F106.4695', 'A77.3148', 'C43.1601', 'D22.8229', 'E3.4856'])
+  })
+  it('T17 prominence (K = 3, no sole bonus)', () => {
+    const on = runF1('prominence', true)
+    expect(on.rows.map(x => `${F1_NAME[x.remedyId]}${x.score}`)).toEqual(['B6', 'C5', 'A3', 'F0', 'D0', 'E0'])
+    expect(on.symptoms.map(s => `${s.topGrade}×${s.topCount}`)).toEqual(['3×1', '3×1', '3×1', '2×1'])
+    const off = runF1('prominence', false)
+    expect(off.rows.map(x => `${F1_NAME[x.remedyId]}${x.score}`)).toEqual(['C5', 'A3', 'B3', 'D0', 'E0', 'F0'])
+    // a top grade shared by more than K remedies is not prominent
+    const wide = runF1('prominence', true, F1(), { params: { prominence: { k: 0 } } })
+    expect(wide.rows.every(x => x.score === 0)).toBe(true)
+    // drill-down: π = 1 on prominent lines, 0 elsewhere
+    const c = on.all.find(x => F1_NAME[x.remedyId] === 'C')!
+    expect([0, 1, 2, 3].map(i => explainTerm(on, f1, c, i).points)).toEqual([0, 0, 3, 2])
+  })
+  it('T19 sumSymPlusDeg, intensity off', () => {
+    expect(f1Out(runF1('sum-symptoms-plus-degrees', false))).toEqual(['A11', 'B9', 'C9', 'D7', 'E5', 'F5'])
+  })
+  it('T20 sumSymPlusDeg, intensity on (A before B on the tie chain)', () => {
+    expect(f1Out(runF1('sum-symptoms-plus-degrees', true))).toEqual(['A13', 'B13', 'C9', 'F8', 'D7', 'E5'])
+  })
+  it('T21 composite: scores, confidence and quality light', () => {
+    const r = runF1('composite', true)
+    expect(f1Rounded(r)).toEqual(['F431.8206', 'B161.9614', 'C96.2341', 'D55.5884', 'A47.6431', 'E17.9426'])
+    expect(r.confidence).toBeCloseTo(62.49, 2)
+    expect(r.quality).toBe('green')
+    expect(r.notes.join(' ')).toMatch(/Confidence 62 %.*quality green/)
+    // worked detail for F: R2 term 2·2·κ1·w(3)·π1, R3 term 1·1·κ2·w(60)·π1, × f(F) = 4
+    const f = r.all.find(x => F1_NAME[x.remedyId] === 'F')!
+    expect(f.contributions[1] / 4).toBeCloseTo(104.9839, 4)
+    expect(f.contributions[2] / 4).toBeCloseTo(2.9713, 4)
+    expect(explainTerm(r, f1, f, 1).factors.map(x => x.key)).toEqual(['w', 'κ', 'π', 'R'])
+  })
+  it('T23 families: pseudo-remedies take the max member grade', () => {
+    const fams = [{ id: 'fam1', label: 'Fam1', members: [F1_ID.A, F1_ID.D] }, { id: 'fam2', label: 'Fam2', members: [F1_ID.B, F1_ID.E, F1_ID.F] }]
+    const fa = analyzeFamilies(f1, [cb(F1())], opts({ strategy: 'sum-symptoms-degrees', useIntensity: false }), fams)
+    expect(fa.result.rows.map(x => `${fams[x.remedyId - 1].label}(${formatScore(fa.result.strategy, x)})`)).toEqual(['Fam1(4/7)', 'Fam2(3/6)'])
+    // n is recomputed on the pseudo-remedies
+    expect(fa.result.symptoms.map(s => s.size)).toEqual([2, 2, 2, 1])
+    // density: members in the top 20 of the remedy-level result
+    expect(fa.density).toEqual([2, 3])
+    // the remedy filter applies to members first
+    const lim = analyzeFamilies(f1, [cb(F1())], opts({ useIntensity: false, remedyFilter: [F1_ID.D, F1_ID.E] }), fams)
+    expect(lim.result.rows.map(x => `${fams[x.remedyId - 1].label}(${formatScore(lim.result.strategy, x)})`)).toEqual(['Fam1(3/4)', 'Fam2(2/3)'])
+  })
+  it('T24 segments (K = 2): clipboard top-K counts, then DI', () => {
+    const r = analyze(f1, [cb([line(1), line(2)], 'cb1'), cb([line(3), line(4)], 'cb2')], opts({ strategy: 'segments', clipboardIds: ['cb1', 'cb2'], params: { segments: { topK: 2 } } }))
+    expect(r.rows.map(x => `${F1_NAME[x.remedyId]}${x.score}/${x.secondary}`)).toEqual(['A2/8', 'B1/9', 'C1/6', 'F0/5', 'D0/4', 'E0/3'])
+    expect(formatScore('segments', r.rows[0])).toBe('2/8')
+    expect(r.notes).toEqual([])
+    // one clipboard: warned, still calculated
+    const one = runF1('segments', true)
+    expect(one.notes[0]).toMatch(/2–6 clipboards/)
+    expect(one.rows.length).toBe(6)
+  })
 })
 
 describe('scoring-spec edge cases (§5.4)', () => {
@@ -165,6 +229,38 @@ describe('scoring-spec edge cases (§5.4)', () => {
     expect(r.excludedRows).toEqual([])
     expect(r.total).toBe(6)
     expect(r.symptoms[3].role).toBe('ignored')
+  })
+  it('E3 in groups: a member at intensity 0 never enters the group max', () => {
+    // R2 {group a, weight 0} with R1 {group a}: the group is R1 alone, R2 is its own ignored line
+    const r = runF1('sum-symptoms-degrees', false, [line(1, { group: 'a' }), line(2, { group: 'a', weight: 0 }), line(3), line(4)])
+    expect(r.symptoms.map(s => s.role)).toEqual(['scored', 'ignored', 'scored', 'scored'])
+    expect(r.symptoms[0].members.map(m => m.id)).toEqual(['R1'])
+    expect(Object.fromEntries([...r.symptoms[0].grades].map(([id, g]) => [F1_NAME[id], g]))).toEqual({ A: 3, B: 2, C: 1, D: 1, E: 2 })
+    // same result as analysing R1, R3, R4 alone; F (only in R2 and R3) keeps just its R3 grade
+    expect(f1Out(r)).toEqual(f1Out(runF1('sum-symptoms-degrees', false, [line(1), line(3), line(4)])))
+    expect(r.all.find(x => F1_NAME[x.remedyId] === 'F')!.grades).toEqual([0, 2, 1, 0])
+  })
+  it('E3 in groups: an eliminative member at intensity 0 does not make the group eliminative', () => {
+    const r = runF1('sum-symptoms-degrees', false, [line(1, { group: 'a' }), line(2, { group: 'a', weight: 0, eliminatory: true }), line(3), line(4)])
+    expect(r.symptoms[0].symptom.eliminatory).toBe(false)
+    expect(r.excludedRows).toEqual([])
+    expect(r.total).toBe(6)
+  })
+  it('E3 in groups: a member at intensity 0 does not dilute an excluding group', () => {
+    // R2 exclusive + R4 at 0 (not exclusive): the group is R2 alone and stays excluding
+    const r = runF1('sum-symptoms-degrees', false, [line(1), line(2, { group: 'a', exclusive: true }), line(3), line(4, { group: 'a', weight: 0 })])
+    expect(r.symptoms[1].role).toBe('excluding')
+    expect(f1Out(r)).toEqual(['C(2/4)', 'D(2/3)', 'E(2/3)'])
+    // an exclusive R4 at 0 excludes nothing
+    const x = runF1('sum-symptoms-degrees', false, [line(1, { group: 'a' }), line(2), line(3), line(4, { group: 'a', weight: 0, exclusive: true })])
+    expect(x.excludedRows).toEqual([])
+    expect(x.symptoms[x.symptoms.length - 1].role).toBe('ignored')
+  })
+  it('E3 in groups: a group whose members are all at 0 is ignored', () => {
+    const r = runF1('sum-symptoms-degrees', false, [line(1, { group: 'a', weight: 0 }), line(2, { group: 'a', weight: 0, eliminatory: true }), line(3), line(4)])
+    expect(r.symptoms.map(s => s.role)).toEqual(['ignored', 'ignored', 'scored', 'scored'])
+    expect(r.scoredCount).toBe(2)
+    expect(f1Out(r)).toEqual(f1Out(runF1('sum-symptoms-degrees', false, [line(3), line(4)])))
   })
   it('E9 eliminative with intensity off: T7 unchanged', () => {
     const on = runF1('sum-symptoms-degrees', true, [line(1), line(2), line(3), line(4, { eliminatory: true })])
@@ -226,8 +322,30 @@ describe('factors and metadata', () => {
     expect(['Head', 'Appetite', 'Blood', 'Extremitäten'].map(classifyChapter)).toEqual(Array(4).fill('particular'))
   })
   it('every strategy has metadata', () => {
-    const ids: StrategyId[] = ['sum-symptoms-degrees', 'sum-symptoms', 'sum-degrees', 'weighted', 'small-rubrics', 'remedy-size', 'small-remedies', 'kent', 'boenninghausen', 'elimination']
+    const ids: StrategyId[] = [
+      'sum-symptoms-degrees', 'sum-symptoms', 'sum-degrees', 'weighted', 'small-rubrics', 'remedy-size', 'small-remedies', 'kent', 'boenninghausen', 'elimination',
+      'sum-symptoms-plus-degrees', 'small-rubrics-cont', 'prominence', 'polarity', 'segments', 'composite',
+    ]
     expect(STRATEGIES.map(s => s.id).sort()).toEqual([...ids].sort())
+    for (const s of STRATEGIES) expect(s.name && s.short && s.formula && s.description, s.id).toBeTruthy()
+    expect(new Set(STRATEGIES.map(s => s.short)).size).toBe(STRATEGIES.length)
+  })
+  it('new strategy parameters merge with the defaults', () => {
+    const r = runF1('prominence', true, F1(), { params: { prominence: { soleBonus: true }, polarity: { allowMissing: 2 } } })
+    expect(r.params.prominence).toEqual({ k: 3, soleBonus: true })
+    expect(r.params.polarity).toMatchObject({ low: 2, high: 3, allowMissing: 2 })
+    expect(r.params.smallRubricsCont).toEqual({ wMax: 30, halfLife: 10 })
+    // sole bonus: B is the sole top grade of R2 → 2·3·2 = 12
+    expect(f1Out(r)[0]).toBe('B12')
+  })
+  it('every drill-down factor key has a note', () => {
+    expect(Object.keys(FACTOR_NOTES).sort()).toEqual(['R', 'f', 'w', 'κ', 'π'].sort())
+  })
+  it('symptomFlags: short and long labels', () => {
+    const s = sym('x:0', { weight: 0, eliminatory: true, exclusive: true, group: 'b', causal: true })
+    expect(symptomFlags(s)).toBe('0 E X B C')
+    expect(symptomFlags(s, 'long')).toBe('ignored (intensity 0), eliminative, excluding, group B, causal')
+    expect(symptomFlags(sym('x:0'))).toBe('')
   })
 })
 
@@ -412,7 +530,7 @@ describe('explainTerm', () => {
         let sum = 0
         r.symptoms.forEach((_, i) => {
           const t = explainTerm(r, src, row, i)
-          const product = t.value ? t.weight * t.value * t.factors.reduce((p, f) => p * f.value, 1) : 0
+          const product = (t.value ? t.weight * t.value * t.factors.reduce((p, f) => p * f.value, 1) : 0) - (t.opposite?.grade ?? 0)
           expect(product).toBeCloseTo(row.contributions[i], 8)
           sum += t.points
         })
@@ -461,5 +579,88 @@ describe('performance', () => {
       times.sort((a, b) => a - b)
       expect(times[2], `${s.id} median ${times[2].toFixed(1)} ms`).toBeLessThan(30)
     }
+  })
+})
+
+/* ═════════════ Polarity fixture F2 (scoring-spec §5.3) ═════════════
+ *   remedy  p1 p2 p3   o1 o2 o3
+ *   X       4  3  2    1  0  1
+ *   Y       3  3  1    0  1  3
+ *   Z       2  2  2    0  0  0
+ *   W       4  4  0    0  0  4
+ */
+describe('polarity (§4.13, F2)', () => {
+  const ID: Record<string, number> = { X: 1, Y: 2, Z: 3, W: 4 }
+  const NAME = Object.fromEntries(Object.entries(ID).map(([k, v]) => [v, k])) as Record<number, string>
+  const P: Record<string, number[]> = { X: [4, 3, 2], Y: [3, 3, 1], Z: [2, 2, 2], W: [4, 4, 0] }
+  const O: Record<string, number[]> = { X: [1, 0, 1], Y: [0, 1, 3], Z: [0, 0, 0], W: [0, 0, 4] }
+  const table = (t: Record<string, number[]>, k: number) => new Map(Object.entries(t).filter(([, v]) => v[k] > 0).map(([n, v]) => [ID[n], v[k] as Grade]))
+  const pol: RubricSource = {
+    grades: ref => {
+      const m = /^p:(\d+)$/.exec(ref)
+      if (!m) return null
+      const k = Number(m[1])
+      return k < 10 ? table(P, k - 1) : table(O, k - 11)
+    },
+    label: ref => ref,
+    oppositeRubric: ref => (ref === 'p:1' || ref === 'p:2' || ref === 'p:3' ? `p:${Number(ref.slice(2)) + 10}` : null),
+    remedyName: id => NAME[id],
+  }
+  const polar = () => [sym('p:1'), sym('p:2'), sym('p:3')]
+  const out = (r: AnalysisResult) => r.rows.map(x => `${NAME[x.remedyId]} ${formatScore(r.strategy, x)}`)
+
+  it('T25 allowMissing = 0', () => {
+    const r = analyze(pol, [cb(polar())], opts({ strategy: 'polarity' }))
+    expect(r.polarLines).toBe(3)
+    expect(out(r)).toEqual(['X 7', 'Z 6', 'Y CI 3'])
+    expect(r.rows.map(x => x.polarity)).toEqual([{ ps: 9, os: 2, pd: 7, cov: 3 }, { ps: 6, os: 0, pd: 6, cov: 3 }, { ps: 7, os: 4, pd: 3, cov: 3 }])
+    expect(r.excludedRows.map(x => `${NAME[x.remedyId]} ${x.excluded}`)).toEqual(['W coverage'])
+    expect(r.notes[0]).toMatch(/3 polar symptoms; 5 or more/)
+  })
+  it('T26 allowMissing = 1', () => {
+    const r = analyze(pol, [cb(polar())], opts({ strategy: 'polarity', params: { polarity: { allowMissing: 1 } } }))
+    expect(out(r)).toEqual(['X 7', 'Z 6', 'W CI 4', 'Y CI 3'])
+    expect(r.rows.map(x => x.contraindicated)).toEqual([false, false, true, true])
+  })
+  it('T27 published sanity values: PD = PS − OS', () => {
+    // Ipeca PS 14, OS 3 → PD 11; Arnica PS 9, OS 5 → PD 4 (grades split over 4 polar pairs)
+    const g: Record<string, [number[], number[]]> = { 'p:1': [[4, 3], [1, 2]], 'p:2': [[4, 2], [1, 1]], 'p:3': [[3, 2], [1, 1]], 'p:4': [[3, 2], [0, 1]] }
+    const src2: RubricSource = {
+      grades: ref => {
+        const k = ref.replace(/^o/, 'p')
+        const e = g[k]
+        if (!e) return null
+        const v = ref.startsWith('o') ? e[1] : e[0]
+        return new Map(v.map((x, i) => [i + 1, x as Grade] as [number, Grade]).filter(([, x]) => x > 0))
+      },
+      label: ref => ref,
+      remedyName: id => (id === 1 ? 'Ip.' : 'Arn.'),
+    }
+    const r = analyze(src2, [cb(['p:1', 'p:2', 'p:3', 'p:4'].map(p => sym(p, { opposite: p.replace('p', 'o') })))], opts({ strategy: 'polarity' }))
+    expect(r.rows.map(x => [x.polarity!.ps, x.polarity!.os, x.polarity!.pd])).toEqual([[14, 3, 11], [9, 5, 4]])
+  })
+  it('drill-down: each polar term is g − g(opposite)', () => {
+    const r = analyze(pol, [cb(polar())], opts({ strategy: 'polarity' }))
+    const y = r.all.find(x => NAME[x.remedyId] === 'Y')!
+    expect(explainTerm(r, pol, y, 2)).toMatchObject({ grade: 1, value: 1, weight: 1, opposite: { label: 'p:13', grade: 3 }, points: -2 })
+  })
+  it('includeNonPolar adds the non-polar degree sum to PS; no polar lines ranks by degrees with a note', () => {
+    const extra = sym('p:9')
+    const withExtra: RubricSource = { ...pol, grades: ref => (ref === 'p:9' ? new Map([[ID.Z, 4 as Grade]]) : pol.grades(ref)) }
+    const r = analyze(withExtra, [cb([...polar(), extra])], opts({ strategy: 'polarity', params: { polarity: { includeNonPolar: true } } }))
+    expect(out(r)).toEqual(['Z 10', 'X 7', 'Y CI 3'])
+    const none = analyze(src, [cb(abc())], opts({ strategy: 'polarity' }))
+    expect(none.polarLines).toBe(0)
+    expect(none.notes[0]).toMatch(/No scored symptom has a polar opposite/)
+    expect(none.rows.map(x => `${NAMES[x.remedyId]} ${x.score}`)).toEqual(['Bry 6', 'Zinc 4', 'Apis 3'])
+  })
+})
+
+describe('quality light (§4.15)', () => {
+  it('red below 4 lines, amber when intensities are flat or top-heavy, else green', () => {
+    expect(qualityLight([1, 2, 3]).light).toBe('red')
+    expect(qualityLight([1, 1, 1, 1, 1, 2]).light).toBe('amber')
+    expect(qualityLight([4, 4, 1, 2]).light).toBe('amber')
+    expect(qualityLight([1, 2, 1, 1]).light).toBe('green')
   })
 })

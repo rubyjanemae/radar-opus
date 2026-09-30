@@ -109,6 +109,7 @@ function sanitizeSymptom(raw: unknown): Symptom | null {
   }
   if (typeof raw.label === 'string') out.label = raw.label
   if (typeof raw.note === 'string') out.note = raw.note
+  if (typeof raw.opposite === 'string' && raw.opposite) out.opposite = raw.opposite as RubricRef
   return out
 }
 

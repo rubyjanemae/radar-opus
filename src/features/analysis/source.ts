@@ -17,6 +17,7 @@ export class CatalogSource implements RubricSource {
   private readonly statsCache = new Map<string, RemedyStats | null>()
   private readonly generalIndex = new Map<string, { chapter: number; byPath: Map<string, number> } | null>()
   private readonly generalCache = new Map<RubricRef, RubricRef[]>()
+  private readonly oppositeCache = new Map<RubricRef, RubricRef | null>()
 
   constructor(catalog: Catalog) { this.catalog = catalog }
 
@@ -99,6 +100,21 @@ export class CatalogSource implements RubricSource {
     return out
   }
 
+  /**
+   * Polar opposite of a rubric for polarity analysis (scoring-spec §4.13), looked up among its
+   * siblings: a polar word swapped ("… agg." ↔ "… amel.", "schlechter" ↔ "besser", "desire" ↔
+   * "aversion") or "X" ↔ "X, amel.". A bare "amel." sub-rubric is not paired with its parent: the
+   * parent may be a symptom ("weeping") rather than a modality. Null when there is no counterpart.
+   */
+  oppositeRubric(ref: RubricRef): RubricRef | null {
+    if (this.oppositeCache.has(ref)) return this.oppositeCache.get(ref)!
+    const r = this.locate(ref)
+    const out = r ? findOpposite(r.rep, r.index) : null
+    const hit = out === null ? null : r!.rep.ref(out)
+    this.oppositeCache.set(ref, hit)
+    return hit
+  }
+
   private generalsOf(rep: Repertory) {
     if (this.generalIndex.has(rep.abbrev)) return this.generalIndex.get(rep.abbrev)!
     let res: { chapter: number; byPath: Map<string, number> } | null = null
@@ -120,6 +136,32 @@ export class CatalogSource implements RubricSource {
 }
 
 const normalise = (t: string) => t.trim().toLowerCase().replace(/\s+/g, ' ')
+
+/** Polar word pairs of the bundled repertories (English Publicum, German Kent). */
+const POLES: [string, string][] = [['agg.', 'amel.'], ['schlechter', 'besser'], ['desire', 'aversion'], ['Verlangen', 'Abneigung']]
+const POLE_RES = POLES.flatMap(([a, b]) => [[a, b], [b, a]]).map(([from, to]) => ({ re: new RegExp(`(^|[\\s,])${from.replace('.', '\\.')}(?=$|[\\s,])`), to }))
+const AMEL_SUFFIX = /^(.+?),?\s+amel\.$/
+
+/** Sibling index of the polar opposite of rubric i, or null. */
+export function findOpposite(rep: Pick<Repertory, 'parent' | 'children' | 'text'>, i: number): number | null {
+  const p = rep.parent(i)
+  if (p < 0) return null
+  const text = rep.text(i)
+  const siblings = rep.children(p)
+  const find = (t: string) => siblings.find(k => k !== i && rep.text(k) === t)
+  for (const { re, to } of POLE_RES) {
+    if (!re.test(text)) continue
+    const k = find(text.replace(re, `$1${to}`))
+    if (k !== undefined) return k
+  }
+  const m = AMEL_SUFFIX.exec(text)
+  if (m) { const k = find(m[1]); if (k !== undefined) return k }
+  else {
+    const k = siblings.find(s => s !== i && AMEL_SUFFIX.exec(rep.text(s))?.[1] === text)
+    if (k !== undefined) return k
+  }
+  return null
+}
 
 /** Count, for every remedy, the rubrics it appears in. */
 export function computeRemedyStats(rep: Pick<Repertory, 'size' | 'forEachRemedy'>): RemedyStats {

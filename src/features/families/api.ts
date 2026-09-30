@@ -38,14 +38,6 @@ export function loadFamilies(): Promise<FamilyIndex> {
   return pending
 }
 
-/** Test/SSR hook: install an index directly. */
-export function setFamilies(f: FamiliesFile | FamilyIndex | null) {
-  index = f === null ? null : f instanceof FamilyIndex ? f : new FamilyIndex(f)
-  pending = null
-  error = null
-  bump()
-}
-
 export function familiesIfLoaded(): FamilyIndex | null { return index }
 
 /** Groups containing a remedy, most useful first (primary group, other leaves, lineage, kingdom). Empty until loaded. */

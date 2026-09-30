@@ -1,13 +1,14 @@
 import { useMemo, useRef, useState } from 'react'
 import { Filter, Highlighter, Info, ListFilter, Search, X } from 'lucide-react'
-import { getCommand, isEnabled, runCommand } from '../../commands/registry'
+import { getCommand, isEnabled } from '../../commands/registry'
+import { openRemedyFilter } from '../analysis/ops'
 import { Dialog } from '../../ui/Dialog'
 import { actions, useApp } from '../../state/store'
 import { useFamilies } from './api'
 import { FamilyTree } from './FamilyTree'
-import { ancestorsOf, groupsOfFilter, unionLabel, visibleRows } from './model'
+import { ancestorsOf, bestMatch, groupsOfFilter, KIND_LABEL, unionLabel, visibleRows } from './model'
 import type { FamilyIndex } from './model'
-import { applyFamilyFilter, clearFamilyFilter } from './ops'
+import { analysisToastAction, applyFamilyFilter, clearFamilyFilter } from './ops'
 import type { FilterMode } from './ops'
 
 /** The analysis feature's per-remedy filter dialog (limit / exclude / highlight single remedies, minimum coverage). */
@@ -130,7 +131,7 @@ function Loaded({ consultationId, groups, mode: initialMode, onClose, index }: P
     // one toast for the whole apply (applyFamilyFilter toasts itself when it is the only change)
     if (pending.length > 1 || !sel[pending[0]].size) {
       const t = done.join('; ')
-      actions.toast(`Family filter: ${t}`, 'success', { label: 'Open analysis', run: () => runCommand('analysis.open') })
+      actions.toast(`Family filter: ${t}`, 'success', analysisToastAction(consultationId))
     }
     onClose()
   }
@@ -138,11 +139,12 @@ function Loaded({ consultationId, groups, mode: initialMode, onClose, index }: P
   const cur = current[mode]
   // the analysis's own per-remedy dialog (exclude, minimum coverage …) stays one click away
   const remedyFilterCmd = getCommand(REMEDY_FILTER_COMMAND)
-  const openRemedyFilters = () => { onClose(); void runCommand(REMEDY_FILTER_COMMAND) }
+  const openRemedyFilters = () => { onClose(); openRemedyFilter(consultationId) }
   const focusTree = () => treeRef.current?.querySelector<HTMLElement>('.fam-tree')?.focus()
   const toTree = () => {
-    const first = rows.find(r => r.match) ?? rows.find(r => r.id === active) ?? rows[0]
-    if (first) setActive(first.id)
+    // the best hit (exact / prefix name, family before order), not merely the first in tree order
+    const first = bestMatch(index, rows, query) ?? rows.find(r => r.id === active)?.id ?? rows[0]?.id
+    if (first) setActive(first)
     focusTree() // synchronously, so a fast Space after ArrowDown lands in the tree
   }
 
@@ -234,6 +236,7 @@ function Loaded({ consultationId, groups, mode: initialMode, onClose, index }: P
                 return (
                   <li key={id} title={index.pathLabel(id)}>
                     <span className="fam-ellipsis">{n.name}</span>
+                    {n.depth > 0 && KIND_LABEL[n.kind] && <span className={`fam-level k-${n.kind}`}>{KIND_LABEL[n.kind]}</span>}
                     <span className="fam-count">{n.remedies.length}</span>
                     <button className="icon-btn" aria-label={`Remove ${n.name}`} onClick={() => check(id)}><X size={12} /></button>
                   </li>

@@ -47,6 +47,8 @@ export function Shell() {
   const density = useApp(s => s.settings.density)
   const fontScale = useApp(s => s.settings.fontScale)
   const activeTabId = useApp(s => s.activeTabId)
+  // the analysis preview dock steps aside while an analysis tab is visible (it would only repeat it)
+  const analysisVisible = useApp(s => s.tabs.find(x => x.id === s.activeTabId)?.kind === 'analysis')
   const paletteOpen = useApp(s => s.commandPaletteOpen)
   const vw = useSyncExternalStore(subscribeResize, viewportWidth, () => 1440)
   const vh = useSyncExternalStore(subscribeResize, viewportHeight, () => 900)
@@ -92,7 +94,7 @@ export function Shell() {
             >
               {activeTabId ? <TabHost tabId={activeTabId} key={activeTabId} /> : <EmptyWorkspace />}
             </div>
-            {layout.showAnalysisDock && (
+            {layout.showAnalysisDock && !analysisVisible && (
               <>
                 <Splitter
                   orientation="horizontal" label="Resize analysis dock" value={layout.analysisHeight} min={120} max={Math.floor(vh * 0.7)}

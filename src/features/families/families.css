@@ -35,6 +35,12 @@
 .fam-icon { flex: none; color: var(--accent); }
 .fam-icon-dim { color: var(--text-3); }
 .fam-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* level of a search hit: outlined tag, family filled so it stands out from its order */
+.fam-level {
+  flex: none; height: 16px; padding: 0 5px; border-radius: 3px; font-size: 10px; line-height: 14px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--text-2); border: 1px solid var(--border-strong);
+}
+.fam-level.k-family { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); }
 .fam-note { flex: none; color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .fam-count {
   flex: none; min-width: 22px; text-align: right; color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums;

@@ -1,7 +1,9 @@
 import { runCommand } from '../../commands/registry'
-import { actions, selectActiveConsultation, selectActiveTab, useApp } from '../../state/store'
+import { actions, selectActiveTab, useApp } from '../../state/store'
 import type { FamiliesTab } from '../../state/workspace'
+import { analysisTabOf, isAnalysisVisible, openAnalysisFor, targetConsultationId } from '../analysis/ops'
 import { familiesIfLoaded, loadFamilies } from './api'
+import { requestViewFocus } from './viewState'
 import { unionLabel } from './model'
 
 export const FILTER_DIALOG = 'families.filter'
@@ -9,32 +11,23 @@ export type FilterMode = 'limit' | 'highlight'
 
 const st = () => useApp.getState()
 
-/** Consultation a family filter applies to: the active analysis tab's case, else the active case, else the last analysis tab's. */
-export function targetConsultationId(): string | null {
-  const s = st()
-  const t = selectActiveTab(s)
-  if (t?.kind === 'analysis' && s.consultations[t.consultationId]) return t.consultationId
-  const c = selectActiveConsultation(s)
-  if (c) return c.id
-  for (let i = s.tabs.length - 1; i >= 0; i--) {
-    const x = s.tabs[i]
-    if (x.kind === 'analysis' && s.consultations[x.consultationId]) return x.consultationId
-  }
-  return null
-}
+/**
+ * Consultation a family filter applies to: the same target as the analysis commands (the active case,
+ * else the visible or most recent analysis tab's), so families.filter and analysis.remedies / clearFilter agree.
+ */
+export { targetConsultationId }
 
 export function activeFamiliesTab(): FamiliesTab | null {
   const t = selectActiveTab(st())
   return t?.kind === 'families' ? t : null
 }
 
-/** Open the families tab, optionally revealing a group. */
+/** Open the families tab, optionally revealing a group, and move keyboard focus into it (so Ctrl+F finds in families). */
 export function openFamilies(group?: string | null) {
   actions.openTab({ kind: 'families', group: group ?? null })
-  if (group !== undefined) {
-    const t = activeFamiliesTab()
-    if (t) actions.updateTab<FamiliesTab>(t.id, { group })
-  }
+  const t = activeFamiliesTab()
+  if (group !== undefined && t) actions.updateTab<FamiliesTab>(t.id, { group, remedy: null })
+  requestViewFocus()
 }
 
 function noCase() {
@@ -58,9 +51,18 @@ export function applyFamilyFilter(groupIds: string[], mode: FilterMode, consulta
     const text = mode === 'limit'
       ? `Analysis limited to ${label} (${members.length} remedies)`
       : `Highlighting ${label} (${members.length} remedies) in the analysis`
-    actions.toast(text, 'success', { label: 'Open analysis', run: () => runCommand('analysis.open') })
+    actions.toast(text, 'success', analysisToastAction(consultationId))
   }
   return true
+}
+
+/**
+ * Toast action after a family filter: none when that case's analysis is the visible tab,
+ * "Show analysis" when it is open in another tab, else "Open analysis".
+ */
+export function analysisToastAction(consultationId: string): { label: string; run: () => void } | undefined {
+  if (isAnalysisVisible(consultationId)) return undefined
+  return { label: analysisTabOf(consultationId) ? 'Show analysis' : 'Open analysis', run: () => openAnalysisFor(consultationId) }
 }
 
 /** Remove the family limit and/or highlight from a consultation's analysis. */

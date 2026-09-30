@@ -72,11 +72,12 @@ describe('taking rubrics', () => {
     expect(toasts[0].text).toMatch(/^3 rubrics taken \(into Clipboard 1\) · last: anger \(×2\)$/)
     expect(toasts[0].action?.label).toBe('Undo last')
   })
-  it('a merged toast lists where each take went, and never reads "last: 3 rubrics" for one rubric', () => {
+  it('a merged toast lists where each take went and names the last rubric, never "last: 2 rubrics"', () => {
     takeRefs(['t:2'], { ...DEFAULT_TAKE })
     takeRefs(['t:3', 't:4'], { ...DEFAULT_TAKE, clipboard: 2 })
     const text = useApp.getState().toasts[0].text
-    expect(text).toMatch(/^3 rubrics taken \(1 → Clipboard 1, 2 → .+\) · last: 2 rubrics \(×1\)$/)
+    expect(text).toMatch(/^3 rubrics taken \(1 → Clipboard 1, 2 → .+\) · last: anger and 1 more \(×1\)$/)
+    expect(text).not.toMatch(/last: \d+ rubrics/)
     expect(takeToastText([{ count: 1, target: 'A', last: 'x' }], 'single')).toBe('single')
   })
   it('records taken rubrics in the Recent list of the repertory tab', () => {
