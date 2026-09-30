@@ -38,12 +38,26 @@ export const GRADE_WORD = ['', 'grade 1', 'grade 2', 'grade 3', 'grade 4']
 /** A rubric's remedy list as book markup, and how many remedies it shows. */
 export interface RemedyMarkup { html: string; shown: number }
 
+/** Read a least-recently-used cache (a Map in use order): a hit moves to the back. */
+export function lruGet<K, V>(m: Map<K, V>, key: K): V | undefined {
+  const v = m.get(key)
+  if (v !== undefined) { m.delete(key); m.set(key, v) }
+  return v
+}
+/** Write a least-recently-used cache, evicting from the front beyond `max` entries. */
+export function lruSet<K, V>(m: Map<K, V>, key: K, value: V, max: number) {
+  m.delete(key)
+  m.set(key, value)
+  while (m.size > max) m.delete(m.keys().next().value as K)
+}
+
 const markupCache = new WeakMap<Repertory, Map<number, RemedyMarkup>>()
-const MAX_MARKUP = 4000
+/** Entries kept per repertory (LRU). */
+export const MAX_MARKUP = 4000
 
 /**
  * The remedy list of rubric i as static markup (one span per remedy, grade in its class: italic,
- * bold, capitals), cached per rubric, style and minimum grade. A long rubric has hundreds of
+ * bold, capitals), cached per rubric, display mode and minimum grade in a least-recently-used cache. A long rubric has hundreds of
  * remedies: one string set as innerHTML is far cheaper than hundreds of React elements, and an
  * unchanged row keeps its DOM when it re-renders.
  *
@@ -54,8 +68,9 @@ const MAX_MARKUP = 4000
 export function remedyMarkup(rep: Repertory, catalog: Catalog, i: number, names: boolean, minGrade: number): RemedyMarkup {
   let m = markupCache.get(rep)
   if (!m) { m = new Map(); markupCache.set(rep, m) }
+  // key: rubric, display mode (abbreviations or names) and minimum grade
   const key = i * 8 + (names ? 4 : 0) + minGrade
-  let hit = m.get(key)
+  let hit = lruGet(m, key)
   if (hit) return hit
   const parts: string[] = []
   for (const r of alphaRemedies(rep, catalog, i)) {
@@ -65,7 +80,6 @@ export function remedyMarkup(rep: Repertory, catalog: Catalog, i: number, names:
     parts.push(`<span class="rv-rem g${r.grade}" data-rid="${r.id}" data-grade="${r.grade}">${text}</span>`)
   }
   hit = { html: parts.join(names ? ', ' : ' '), shown: parts.length }
-  m.set(key, hit)
-  if (m.size > MAX_MARKUP) m.delete(m.keys().next().value!)
+  lruSet(m, key, hit, MAX_MARKUP)
   return hit
 }

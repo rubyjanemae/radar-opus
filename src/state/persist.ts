@@ -88,12 +88,25 @@ export function pickWorkspace(s: AppState | PersistedState): WorkspaceState {
 }
 
 /** What this tab believes is on disk: record key → the object last written or read (by reference). */
-interface Flushed { workspace: WorkspaceState | null; records: Map<string, unknown>; patients: unknown; consultations: unknown }
-const emptyFlushed = (): Flushed => ({ workspace: null, records: new Map(), patients: null, consultations: null })
+/**
+ * Record keys → values, kept in one map per key prefix so a diff only walks its own collection and can
+ * tell "nothing was deleted" from a count instead of scanning every key.
+ */
+class Records {
+  readonly byPrefix = new Map<string, Map<string, unknown>>([[P, new Map()], [C, new Map()]])
+  private of(k: string) { return this.byPrefix.get(k.startsWith(P) ? P : C)! }
+  get(k: string) { return this.of(k).get(k) }
+  has(k: string) { return this.of(k).has(k) }
+  set(k: string, v: unknown) { this.of(k).set(k, v) }
+  delete(k: string) { this.of(k).delete(k) }
+  keys() { return [...this.byPrefix.get(P)!.keys(), ...this.byPrefix.get(C)!.keys()] }
+}
+interface Flushed { workspace: WorkspaceState | null; records: Records; patients: unknown; consultations: unknown }
+const emptyFlushed = (): Flushed => ({ workspace: null, records: new Records(), patients: null, consultations: null })
 let flushed: Flushed = emptyFlushed()
 
 function markFlushed(state: PersistedState) {
-  const records = new Map<string, unknown>()
+  const records = new Records()
   for (const p of Object.values(state.patients)) records.set(P + p.id, p)
   for (const c of Object.values(state.consultations)) records.set(C + c.id, c)
   flushed = { workspace: pickWorkspace(state), records, patients: state.patients, consultations: state.consultations }
@@ -109,10 +122,21 @@ function diffState(s: PersistedState): Diff {
   const ws = pickWorkspace(s)
   const wsChanged = !flushed.workspace || WORKSPACE_FIELDS.some(k => ws[k] !== flushed.workspace![k])
   if (wsChanged) puts.push([WS_KEY, { version: SCHEMA_VERSION, ...ws }])
+  // Dirty records only: a record is written when its object is not the one last written or read (edits
+  // in the store replace the object), so one edit at 2,000+ patients writes one record.
   const diffRecords = (prefix: string, next: Record<string, { id: string }>, prevObj: unknown) => {
     if (next === prevObj) return
-    for (const [id, v] of Object.entries(next)) if (flushed.records.get(prefix + id) !== v) puts.push([prefix + id, v])
-    for (const k of flushed.records.keys()) if (k.startsWith(prefix) && !(k.slice(prefix.length) in next)) dels.push(k)
+    const known = flushed.records.byPrefix.get(prefix)!
+    let kept = 0
+    for (const id in next) {
+      const k = prefix + id
+      const was = known.get(k)
+      if (was !== undefined) kept++
+      if (was !== next[id]) puts.push([k, next[id]])
+    }
+    // Every known key is still present: nothing to delete, no second pass.
+    if (kept === known.size) return
+    for (const k of known.keys()) if (!(k.slice(prefix.length) in next)) dels.push(k)
   }
   diffRecords(P, s.patients, flushed.patients)
   diffRecords(C, s.consultations, flushed.consultations)
@@ -192,7 +216,7 @@ function trackLoaded(loaded: Loaded, state: PersistedState = loaded.state) {
   flushed.workspace = null
   flushed.patients = flushed.consultations = null
   const onDisk = new Set(loaded.diskKeys)
-  for (const k of [...flushed.records.keys()]) if (!onDisk.has(k)) flushed.records.delete(k)
+  for (const k of flushed.records.keys()) if (!onDisk.has(k)) flushed.records.delete(k)
   const touched: [string, unknown][] = []
   for (const k of loaded.diskKeys) {
     const rec = flushed.records.get(k)
@@ -292,6 +316,7 @@ export async function adoptDiskState(): Promise<void> {
   const workspace = sanitizeWorkspace({
     tabs: s.tabs, activeTabId: s.activeTabId, activeConsultationId: s.activeConsultationId, activeClipboardId: s.activeClipboardId, layout: s.layout,
     settings: ws.settings, bookmarks: ws.bookmarks, rubricNotes: ws.rubricNotes, remedyNotes: ws.remedyNotes, recentSearches: ws.recentSearches,
+    recentRubrics: ws.recentRubrics,
   }, patients, consultations)
   // Keep this tab's tab objects where they are still valid, so its views do not remount.
   const tabs = workspace.tabs.map(t => s.tabs.find(x => x.id === t.id) ?? t)
@@ -374,8 +399,10 @@ export function startAutosave(): () => void {
     // The raw copy of repaired records goes in the same transaction as the first write that changes them.
     const backup = pendingBackup
     writing = backend.write(backup ? [backup, ...d.puts] : d.puts, d.dels).then(
-      () => { if (pendingBackup === backup) pendingBackup = null; applyFlushed(d, snap); setStatus('saved'); savedListeners.forEach(fn => fn()) },
-      e => { console.error('Autosave failed', e); setStatus('error') },
+      () => { if (pendingBackup === backup) pendingBackup = null; applyFlushed(d, snap)
+        // More work queued (an edit made while this write was in flight) keeps the status on 'pending'.
+        setStatus(debounce || cancelIdle || followUp ? 'pending' : 'saved'); savedListeners.forEach(fn => fn()) },
+      e => { console.error('Autosave failed', e); setStatus(followUp ? 'pending' : 'error') },
     ).finally(() => { writing = null })
     return writing
   }

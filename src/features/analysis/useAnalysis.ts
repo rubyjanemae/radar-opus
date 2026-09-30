@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo } from 'react'
+import { startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { Catalog } from '../../data/catalog'
 import { useCatalog, useRepertories } from '../../data/CatalogContext'
 import { analyze } from '../../engine/analysis'
@@ -34,6 +34,8 @@ export interface LiveAnalysis {
   result: AnalysisResult | null
   /** True while the shown result is older than the case (a newer one is being computed). */
   stale: boolean
+  /** True while the first result is being computed in the background (`deferFirst`): nothing to show yet. */
+  computing: boolean
   load: LoadState
   source: CatalogSource
   catalog: Catalog
@@ -65,17 +67,43 @@ export function useAnalysisMinGrade(): number {
 }
 
 /**
+ * False on mount when not `immediate`, then true once the mount has painted: the switch is a transition,
+ * so the render it starts (the analysis and its grid) is time-sliced and yields to input and paint.
+ */
+function useArmed(immediate: boolean): boolean {
+  const [armed, setArmed] = useState(immediate)
+  useEffect(() => {
+    if (armed) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let fired = false
+    const arm = () => { if (fired) return; fired = true; startTransition(() => setArmed(true)) }
+    // a frame, then a task: the progress state is on screen before the heavy render starts. rAF never
+    // fires while the page is not rendered (a background tab, an occluded window), so a timer arms too.
+    const frame = requestAnimationFrame(() => { timer = setTimeout(arm) })
+    const fallback = setTimeout(arm, 100)
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer); clearTimeout(fallback) }
+  }, [armed])
+  return armed
+}
+
+/**
  * Live analysis of a consultation: recomputed whenever its clipboards, options or the repertory view
  * change. The inputs are deferred, so the edit that caused the change (an intensity key, a strategy
  * pick) paints first and the new ranking follows in a transition.
  */
-export function useAnalysis(consultationId: string | null): LiveAnalysis {
+export function useAnalysis(consultationId: string | null, opts?: { deferFirst?: boolean }): LiveAnalysis {
   const catalog = useCatalog()
   const source = sourceFor(catalog)
   const consultation = useApp(s => (consultationId ? s.consultations[consultationId] ?? null : null))
   const minGrade = useAnalysisMinGrade()
-  const clipboards = useDeferredValue(consultation?.clipboards)
-  const options = useDeferredValue(consultation?.analysis)
+  /*
+   * deferFirst: the first render gets no inputs, so the view mounts (toolbar, progress) and paints at
+   * once; the analysis and the grid then render in a background pass that yields to input, paint and
+   * autosave instead of holding the main thread for the whole first render.
+   */
+  const armed = useArmed(!opts?.deferFirst)
+  const clipboards = useDeferredValue(armed ? consultation?.clipboards : undefined)
+  const options = useDeferredValue(armed ? consultation?.analysis : undefined)
   const viewGrade = useDeferredValue(minGrade)
   const reps = useMemo(() => repertoriesOf(clipboards ?? []), [clipboards])
   const load = useRepertoriesLoaded(catalog, reps)
@@ -87,5 +115,6 @@ export function useAnalysis(consultationId: string | null): LiveAnalysis {
     [source, catalog, clipboards, options, view, load.version, load.status],
   )
   const stale = clipboards !== consultation?.clipboards || options !== consultation?.analysis || viewGrade !== minGrade
-  return { consultation, result, stale, load, source, catalog }
+  const computing = !result && !!consultation && !clipboards
+  return { consultation, result, stale, computing, load, source, catalog }
 }

@@ -12,7 +12,7 @@ import { findRemedies } from '../search/remedies'
 import { openRemedySearch, openSearch, prepare, readyTargets, remedyResolver } from '../search/ops'
 import { Highlight, RubricPath, titleIfTruncated } from '../search/components'
 import { fuzzyIndex, markPositions } from './fuzzy'
-import { bindQuerySetter, commandCounts, lastOf, memoPerCommand, paletteItems, parseMode, recentCommands, rememberCommand, takeInitialQuery } from './model'
+import { bindQuerySetter, commandCounts, lastOf, memoPerCommand, paletteItems, parseMode, patientEntries, recentCommands, rememberCommand, takeInitialQuery } from './model'
 import type { PaletteItem, Section } from './model'
 import './palette.css'
 
@@ -80,6 +80,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const stored = useMemo(() => ({ recent: recentCommands(), counts: commandCounts() }), [])
   const tabList = useMemo(() => tabs.map(t => ({ id: t.id, active: t.id === activeTabId, ...tabTitle(t, catalog, { patients, consultations }) })), [tabs, activeTabId, catalog, patients, consultations])
   const patientList = useMemo(() => Object.values(patients), [patients])
+  // folded patient haystacks, built once per open (and only again if the patients map itself changes)
+  const patientIndex = useMemo(() => patientEntries(patients), [patients])
   const itemsFor = (slowText: string) => paletteItems({
     mode, text, slowText,
     commands: perOpen.commands,
@@ -89,10 +91,11 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     enabled: perOpen.enabled,
     tabs: tabList,
     patients: patientList,
+    patientEntries: patientIndex,
     remedies: remediesFor,
     rubrics: rubricsFor,
   })
-  const sections: Section[] = useMemo(() => itemsFor(slowText), [mode, text, slowText, tabList, patientList, perOpen, remediesFor, rubricsFor]) // eslint-disable-line react-hooks/exhaustive-deps
+  const sections: Section[] = useMemo(() => itemsFor(slowText), [mode, text, slowText, tabList, patientList, patientIndex, perOpen, remediesFor, rubricsFor]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const flat = useMemo(() => sections.flatMap(s => s.items), [sections])
   const rubricHl = useMemo(() => {

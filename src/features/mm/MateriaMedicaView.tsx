@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent } from 'react'
 import { ArrowLeft, ArrowRight, BookText, ChevronDown, ChevronUp, FlaskConical, ListTree, Minus, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Plus, Printer, RotateCw, Search, Tags, X } from 'lucide-react'
 import { useCatalog } from '../../data/CatalogContext'
@@ -36,6 +36,9 @@ function readSideWidth(): number {
 }
 
 const queryTermsOf = (q: string) => queryTerms(q).join(' ')
+/** Section-jump requests carry a sequence number so repeating the same jump still fires. */
+let jumpSeq = 0
+const nextJump = () => ++jumpSeq
 
 export function MateriaMedicaView({ tab }: { tab: MateriaMedicaTab }) {
   const catalog = useCatalog()
@@ -95,7 +98,7 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
   const sectionsBtn = useRef<HTMLButtonElement>(null)
   const moreBtn = useRef<HTMLButtonElement>(null)
   const azRef = useRef<HTMLElement>(null)
-  const viewWidth = useWidth(rootRef)
+  const [viewWidth, viewWidthRef] = useWidth(rootRef)
   const compact = viewWidth > 0 && viewWidth < COMPACT_TOOLBAR
   const tiny = viewWidth > 0 && viewWidth < TINY_TOOLBAR
 
@@ -127,13 +130,14 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
     if (dq.trim()) { setSideMode('results'); if (useMMUi.getState().listHidden) setListHidden(false) }
   }, [dq]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const shownId = useDeferredValue(tab.remedyId)
   const results = useMemo(() => searchDocs(book.docs, dq), [book, dq])
   useEffect(() => { setHitSel(-1) }, [results])
   const terms = results.terms
   const hitRemedies = useMemo(() => [...new Set(results.hits.map(h => h.remedyId))], [results])
   /** Sections of the open monograph that are hits: only these are highlighted and stepped through. */
-  const hitSections = useMemo(() => new Set(results.hits.filter(h => h.remedyId === tab.remedyId).map(h => h.section)), [results, tab.remedyId])
-  const termsFor = (section: number) => (hitSections.has(section) ? terms : NO_TERMS)
+  const hitSections = useMemo(() => new Set(results.hits.filter(h => h.remedyId === shownId).map(h => h.section)), [results, shownId])
+  const termsFor = useCallback((section: number) => (hitSections.has(section) ? terms : NO_TERMS), [hitSections, terms])
   const bookOrder = useMemo(() => new Map(book.items.map((it, i) => [it.remedyId, i])), [book])
 
   // take keyboard focus when the view opens, unless the user is typing somewhere
@@ -154,8 +158,12 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
 
   const items = useMemo(() => filterItems(book.items, filter), [book, filter])
   const selectedIndex = useMemo(() => items.findIndex(it => it.remedyId === tab.remedyId), [items, tab.remedyId])
-  const entry = tab.remedyId != null ? book.entries.get(tab.remedyId) ?? null : null
-  const remedy = tab.remedyId != null ? catalog.remedy(tab.remedyId) : null
+  /**
+   * The monograph shown lags the selection: moving through the list updates the selection at once and
+   * renders the new monograph as a transition, keeping the previous one on screen until it is ready.
+   */
+  const entry = shownId != null ? book.entries.get(shownId) ?? null : null
+  const remedy = useMemo(() => (shownId != null ? catalog.remedy(shownId) : null), [catalog, shownId])
 
   const list = useFixedVirtual(listRef, items.length, ROW)
   const hitsV = useFixedVirtual(hitsRef, results.hits.length, HIT_ROW)
@@ -173,7 +181,7 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
   // scroll requests (section jumps, new remedy → top)
   useLayoutEffect(() => {
     const el = readerRef.current
-    if (!el || !jump || jump.remedyId !== tab.remedyId) return
+    if (!el || !jump || jump.remedyId !== shownId) return
     let section = jump.section
     if (typeof section === 'string') {
       const name = section.toLowerCase()
@@ -185,7 +193,7 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
       const target = el.querySelector<HTMLElement>(`[data-sec="${section}"]`)
       if (target) el.scrollTop = target.offsetTop - 12
     }
-  }, [jump, tab.remedyId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [jump, shownId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // collect in-page marks after each render of the page / query
   const collectMarks = useCallback(() => [...(readerRef.current?.querySelectorAll<HTMLElement>('mark.mm-hit') ?? [])], [])
@@ -204,7 +212,7 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
       }
     }
     setMarkIndex(idx)
-  }, [tab.remedyId, dq, collectMarks])
+  }, [shownId, dq, collectMarks])
 
   useLayoutEffect(() => {
     const marks = collectMarks()
@@ -253,7 +261,7 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
       const idx = marks.findIndex(m => sec?.contains(m))
       pendingMark.current = null
       if (idx >= 0) setMarkIndex(idx)
-      else useMMUi.setState({ jump: { remedyId: h.remedyId, section: h.section, nonce: Date.now() } })
+      else useMMUi.setState({ jump: { remedyId: h.remedyId, section: h.section, nonce: nextJump() } })
       return
     }
     go(h.remedyId, h.section)
@@ -268,11 +276,28 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
     for (const s of secs) { if (s.offsetTop - 24 <= el.scrollTop) cur = Number(s.dataset.sec); else break }
     setActiveSection(cur)
   }, [])
-  useEffect(() => { setActiveSection(-1) }, [tab.remedyId])
+  useEffect(() => { setActiveSection(-1) }, [shownId])
+  // the monograph is rendered after the selection (deferred): a focused link on the page it replaced is
+  // gone by then (and keepMMFocus has already run), so focus falls back to the reader, not the document
+  const focusInReader = useRef(false)
+  useEffect(() => {
+    const el = readerRef.current
+    if (!el) return
+    const onIn = () => { focusInReader.current = true }
+    // a focused node that is removed blurs with no related target: that is not the user leaving
+    const onOut = (e: FocusEvent) => { if (e.relatedTarget && !el.contains(e.relatedTarget as Node)) focusInReader.current = false }
+    el.addEventListener('focusin', onIn)
+    el.addEventListener('focusout', onOut)
+    return () => { el.removeEventListener('focusin', onIn); el.removeEventListener('focusout', onOut) }
+  }, [])
+  useLayoutEffect(() => {
+    const el = readerRef.current
+    if (el && focusInReader.current && !el.contains(document.activeElement)) el.focus({ preventScroll: true })
+  }, [shownId])
 
-  const scrollToSection = (i: number) => {
-    if (tab.remedyId != null) useMMUi.setState({ jump: { remedyId: tab.remedyId, section: i, nonce: Date.now() } })
-  }
+  const scrollToSection = useCallback((i: number) => {
+    if (shownId != null) useMMUi.setState({ jump: { remedyId: shownId, section: i, nonce: nextJump() } })
+  }, [shownId])
 
   const remedyMenu = (rid: number): MenuItem[] => {
     const r = catalog.remedy(rid)
@@ -291,8 +316,8 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
       if (e.shiftKey || !book.has(rid)) openRemedy(rid)
       else go(rid)
     },
-    onRemedyMenu: (rid: number, e: MouseEvent) => cm.open(e, remedyMenu(rid)),
-  }), [book, go, cm, tab.remedyId]) // eslint-disable-line react-hooks/exhaustive-deps
+    onRemedyMenu: (rid: number, e: MouseEvent) => latest.current.openRemedyMenu(e, rid),
+  }), [book, go])
 
   const sectionItems: MenuItem[] = entry ? [
     { label: 'Introduction', run: () => scrollToSection(-1), checked: activeSection === -1 },
@@ -382,11 +407,27 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
     },
   })
 
+  /**
+   * Latest-value handlers for the memoised panes: their callbacks stay the same across renders (so a
+   * selection change does not re-render the monograph) while still reaching the current menus.
+   */
+  const latest = useRef({
+    openRemedyMenu: (e: MouseEvent, rid: number) => cm.open(e, remedyMenu(rid)),
+    readerMenu: (e: MouseEvent) => { const t = readerSelection(); if (t && !(e.target as HTMLElement).closest('.mm-rem')) cm.open(e, selectionMenu(t)) },
+  })
+  useLayoutEffect(() => {
+    latest.current.openRemedyMenu = (e, rid) => cm.open(e, remedyMenu(rid))
+    latest.current.readerMenu = e => { const t = readerSelection(); if (t && !(e.target as HTMLElement).closest('.mm-rem')) cm.open(e, selectionMenu(t)) }
+  })
+  const onListGo = useCallback((rid: number) => go(rid), [go])
+  const onListMenu = useCallback((e: MouseEvent, rid: number) => latest.current.openRemedyMenu(e, rid), [])
+  const onReaderMenu = useCallback((e: MouseEvent) => latest.current.readerMenu(e), [])
+
   const readerFont = Math.round(15 * fontScale * 10) / 10
   const sectionCount = useMemo(() => book.items.reduce((n, it) => n + (book.entries.get(it.remedyId)?.sections.length ?? 0), 0), [book])
 
   return (
-    <div className="mm-view" ref={rootRef} onKeyDown={keys.onRootKey}>
+    <div className="mm-view" ref={viewWidthRef} onKeyDown={keys.onRootKey}>
       <div className="mm-toolbar" role="toolbar" aria-label="Materia medica">
         <button className="icon-btn" aria-label="Back" title="Back (Alt+←)" disabled={!history?.back.length} onClick={() => keepMMFocus(() => historyMove(tab.id, -1))}><ArrowLeft size={15} /></button>
         <button className="icon-btn" aria-label="Forward" title="Forward (Alt+→)" disabled={!history?.forward.length} onClick={() => keepMMFocus(() => historyMove(tab.id, 1))}><ArrowRight size={15} /></button>
@@ -455,7 +496,7 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
             catalog={catalog} width={sideW} mode={sideMode} onMode={setSideMode} bookCount={book.items.length}
             items={items} selectedIndex={selectedIndex} letters={letters} filter={filter} onFilter={setFilter} onFilterKey={onFilterKey}
             list={list} hitsV={hitsV} refs={{ list: listRef, hits: hitsRef, az: azRef, filter: filterRef }} keys={keys}
-            onGo={rid => go(rid)} onInfo={openRemedy} onMenu={(e, rid) => cm.open(e, remedyMenu(rid))} onLetter={keys.jumpToLetter}
+            onGo={onListGo} onInfo={openRemedy} onMenu={onListMenu} onLetter={keys.jumpToLetter}
             remedyId={tab.remedyId} hasTerms={terms.length > 0} query={dq} hits={results.hits} truncated={results.truncated} hitRemedyCount={hitRemedies.length}
             hitSel={hitSel} markSection={markSection} onOpenHit={openHit}
             onResultsTab={() => { setSideMode('results'); if (!q) searchRef.current?.focus() }}
@@ -465,7 +506,7 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
         <MMReaderPane
           readerRef={readerRef} book={book} entry={entry} remedy={remedy} showAbbrevs={showAbbrevs} fontPx={readerFont} termsFor={termsFor} links={links}
           sectionCount={sectionCount} activeSection={activeSection} onScroll={onReaderScroll} onSection={scrollToSection} onInfo={openRemedy}
-          onContextMenu={(e: MouseEvent) => { const t = readerSelection(); if (t && !(e.target as HTMLElement).closest('.mm-rem')) cm.open(e, selectionMenu(t)) }}
+          onContextMenu={onReaderMenu}
         />
       </div>
       {sectionsMenu && <MenuList items={sectionItems} x={sectionsMenu.x} y={sectionsMenu.y} label="Sections" onClose={() => { setSectionsMenu(null); readerRef.current?.focus() }} />}

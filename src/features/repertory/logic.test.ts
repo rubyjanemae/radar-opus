@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { tinyRepertory } from './fixtures'
-import { followExpanded, selectNavigatorTabId, bookmarkFolders, crumbCollapseOrder, crumbFoldCount, findInitial, flattenTree, hiddenRuns, levelItems, rubricLabel, treeRows } from './logic'
+import { followExpanded, selectNavigatorTabId, bookmarkFolders, crumbCollapseOrder, crumbFoldCount, findInitial, flattenTree, hiddenRuns, crumbSegments, levelItems, rubricLabel, treeRows } from './logic'
 import { indexAt, pinnedScrollTop, prefixSums, rebuildPrefix, targetScroll } from './virtual'
 import { Catalog } from '../../data/catalog'
 import { NEAR_ROWS, estimateRow, layoutSizes, remedyChars } from './estimate'
@@ -200,5 +200,24 @@ describe('navigator follow', () => {
     expect(selectNavigatorTabId(s('m', 'b'))).toBe('b')
     expect(selectNavigatorTabId(s('m', 'gone'))).toBe('a')
     expect(selectNavigatorTabId({ ...s(null, null), tabs: [] })).toBe(null)
+  })
+})
+
+describe('crumbSegments', () => {
+  const items = ['Rep', 'Mind', 'Anxiety', 'night', 'waking'].map((label, x) => ({ label, ref: x ? `r:${x}` : null }))
+  it('keeps every level when nothing is hidden, marking the last', () => {
+    const segs = crumbSegments(items, new Set())
+    expect(segs.map(s => s.kind)).toEqual(['item', 'item', 'item', 'item', 'item'])
+    expect(segs[4]).toEqual({ kind: 'item', x: 4, label: 'waking', ref: 'r:4', last: true })
+    expect(segs[0]).toMatchObject({ label: 'Rep', ref: null, last: false })
+  })
+  it('folds each run of hidden levels into one segment', () => {
+    const segs = crumbSegments(items, new Set([0, 2, 3]))
+    expect(segs).toEqual([
+      { kind: 'fold', x: 0, items: [{ x: 0, label: 'Rep', ref: null }] },
+      { kind: 'item', x: 1, label: 'Mind', ref: 'r:1', last: false },
+      { kind: 'fold', x: 2, items: [{ x: 2, label: 'Anxiety', ref: 'r:2' }, { x: 3, label: 'night', ref: 'r:3' }] },
+      { kind: 'item', x: 4, label: 'waking', ref: 'r:4', last: true },
+    ])
   })
 })

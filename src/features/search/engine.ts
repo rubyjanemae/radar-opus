@@ -161,6 +161,42 @@ function lowerBound(words: string[], s: string): number {
   return lo
 }
 
+/**
+ * Prefix buckets: the vocabulary range [from, to) of every word starting with a short prefix, and
+ * the union of those words' postings as one sorted id list. Type-ahead queries ("he", "pa") hit
+ * the same short prefixes over and over; the bucket turns their many postings into one list.
+ */
+const PREFIX_BUCKET_MAX = 3
+const buckets = new WeakMap<WordIndex, Map<string, Int32Array>>()
+
+function prefixRange(words: string[], root: string): [number, number] {
+  const from = lowerBound(words, root)
+  // every word with this prefix sorts before root + U+FFFF
+  const to = lowerBound(words, root + '￿')
+  return [from, to]
+}
+
+/** Sorted, de-duplicated rubric ids whose own text holds a word starting with `prefix` (cached). */
+export function prefixBucket(ix: WordIndex, prefix: string): Int32Array {
+  let m = buckets.get(ix)
+  if (!m) { m = new Map(); buckets.set(ix, m) }
+  let out = m.get(prefix)
+  if (!out) {
+    const [from, to] = prefixRange(ix.words, prefix)
+    let size = 0
+    for (let k = from; k < to; k++) size += ix.postings[k].length
+    const all = new Int32Array(size)
+    let o = 0
+    for (let k = from; k < to; k++) { all.set(ix.postings[k], o); o += ix.postings[k].length }
+    all.sort()
+    let w = 0
+    for (let r = 0; r < all.length; r++) if (r === 0 || all[r] !== all[r - 1]) all[w++] = all[r]
+    out = all.slice(0, w)
+    m.set(prefix, out)
+  }
+  return out
+}
+
 /** Vocabulary ids matching a word term, with 2 = exact, 1 = branch/wildcard. */
 function vocabMatches(ix: WordIndex, term: Extract<Term, { kind: 'word' }>): [number, 1 | 2][] {
   const out: [number, 1 | 2][] = []
@@ -169,7 +205,8 @@ function vocabMatches(ix: WordIndex, term: Extract<Term, { kind: 'word' }>): [nu
     let root = term.text
     // branches of "remedy" include "remedies": scan from the shared stem
     if (term.wildcard === 'none' && root.length >= 4 && root.endsWith('y')) root = root.slice(0, -1)
-    for (let k = lowerBound(words, root); k < words.length && words[k].startsWith(root); k++) {
+    const [from, to] = prefixRange(words, root)
+    for (let k = from; k < to; k++) {
       const m = wordTermMatch(term, words[k], branchMatch)
       if (m) out.push([k, m])
     }
@@ -220,6 +257,15 @@ export interface SearchResult {
   error: string | null
 }
 
+/**
+ * The evaluation is written as generators that `yield` every few thousand steps. `search` runs
+ * one to completion; `searchSliced` runs it in ~8 ms slices so the main thread stays free
+ * (typing, painting) while a large query is evaluated, and drops it when a newer query starts.
+ */
+type Work<T> = Generator<void, T, void>
+/** Iterations between yield points (each is a cheap check; the driver decides whether to pause). */
+const STEP = 4096
+
 interface Ctx {
   rep: Repertory
   ix: WordIndex
@@ -231,10 +277,12 @@ interface Ctx {
 }
 
 /** Expand own-text marks to a path mask (every rubric under a marked one matches). */
-function pathMask(rep: Repertory, own: Uint8Array): Uint8Array {
+function* pathMask(rep: Repertory, own: Uint8Array): Work<Uint8Array> {
   const n = own.length
   const mask = new Uint8Array(n)
+  let next = STEP
   for (let i = 0; i < n; i++) {
+    if (i >= next) { next = i + STEP; yield }
     if (!own[i]) continue
     const end = rep.subtreeEndOf(i)
     mask.fill(1, i, end)
@@ -244,11 +292,23 @@ function pathMask(rep: Repertory, own: Uint8Array): Uint8Array {
   return mask
 }
 
-function wordOwn(ctx: Ctx, term: Extract<Term, { kind: 'word' }>): Uint8Array {
+function* wordOwn(ctx: Ctx, term: Extract<Term, { kind: 'word' }>): Work<Uint8Array> {
   const own = new Uint8Array(ctx.n)
+  // a short prefix (type-ahead "he", "pa"): one precomputed bucket instead of hundreds of postings
+  if (term.wildcard === 'prefix' && term.text.length <= PREFIX_BUCKET_MAX) {
+    const b = prefixBucket(ctx.ix, term.text)
+    for (let j = 0; j < b.length; j++) { own[b[j]] = 1; if ((j & (STEP - 1)) === STEP - 1) yield }
+    // the word itself is an exact match (2); every other word of the bucket a prefix match (1)
+    const k = lowerBound(ctx.ix.words, term.text)
+    if (ctx.ix.words[k] === term.text) { const p = ctx.ix.postings[k]; for (let j = 0; j < p.length; j++) own[p[j]] = 2 }
+    return own
+  }
+  let done = 0
   for (const [k, m] of vocabMatches(ctx.ix, term)) {
     const p = ctx.ix.postings[k]
     for (let j = 0; j < p.length; j++) if (own[p[j]] < m) own[p[j]] = m
+    done += p.length
+    if (done >= STEP) { done = 0; yield }
   }
   return own
 }
@@ -265,12 +325,12 @@ function containsSeq(tokens: string[], words: string[], prefixLast: boolean): bo
   return false
 }
 
-function evalTerm(ctx: Ctx, term: Term): Uint8Array {
+function* evalTerm(ctx: Ctx, term: Term): Work<Uint8Array> {
   const { rep, n } = ctx
   if (term.kind === 'word') {
-    const own = wordOwn(ctx, term)
+    const own = yield* wordOwn(ctx, term)
     ctx.own.set(term, own)
-    return pathMask(rep, own)
+    return yield* pathMask(rep, own)
   }
   if (term.kind === 'remedy') {
     const id = ctx.resolveRemedy?.(term.token) ?? null
@@ -286,11 +346,13 @@ function evalTerm(ctx: Ctx, term: Term): Uint8Array {
   // phrase: candidates are rubrics whose path holds every word, then verify order
   const words = term.words
   let cand: Uint8Array | null = null
-  words.forEach((w, k) => {
-    const m = pathMask(rep, wordOwn(ctx, { kind: 'word', text: w, wildcard: k === words.length - 1 && term.prefixLast ? 'prefix' : 'none' }))
+  for (let k = 0; k < words.length; k++) {
+    const w = words[k]
+    const own = yield* wordOwn(ctx, { kind: 'word', text: w, wildcard: k === words.length - 1 && term.prefixLast ? 'prefix' : 'none' })
+    const m = yield* pathMask(rep, own)
     if (!cand) cand = m
-    else for (let i = 0; i < n; i++) cand[i] &= m[i]
-  })
+    else { const c: Uint8Array = cand; for (let i = 0; i < n; i++) c[i] &= m[i]; yield }
+  }
   const mask = new Uint8Array(n)
   const own = new Uint8Array(n)
   const c = cand as Uint8Array | null
@@ -306,8 +368,10 @@ function evalTerm(ctx: Ctx, term: Term): Uint8Array {
     }
     return t
   }
+  let work = 0
   for (let i = 0; i < n; i++) {
     if (!c[i]) continue
+    if (++work >= 256) { work = 0; yield }
     if (containsSeq(toksOf(i), words, term.prefixLast)) {
       mask[i] = 1
       if (containsSeq(tokenize(rep.text(i)), words, term.prefixLast)) own[i] = 2
@@ -317,18 +381,20 @@ function evalTerm(ctx: Ctx, term: Term): Uint8Array {
   return mask
 }
 
-function evalNode(ctx: Ctx, node: Node): Uint8Array {
-  if (node.t === 'term') return evalTerm(ctx, node.term)
+function* evalNode(ctx: Ctx, node: Node): Work<Uint8Array> {
+  if (node.t === 'term') return yield* evalTerm(ctx, node.term)
   if (node.t === 'not') {
-    const m = evalNode(ctx, node.item)
+    const m = yield* evalNode(ctx, node.item)
     const out = new Uint8Array(ctx.n)
     for (let i = 0; i < ctx.n; i++) out[i] = m[i] ? 0 : 1
+    yield
     return out
   }
-  const parts = node.items.map(x => evalNode(ctx, x))
+  const parts: Uint8Array[] = []
+  for (const x of node.items) parts.push(yield* evalNode(ctx, x))
   const out = parts[0].slice()
-  if (node.t === 'and') { for (let k = 1; k < parts.length; k++) { const p = parts[k]; for (let i = 0; i < ctx.n; i++) out[i] &= p[i] } }
-  else { for (let k = 1; k < parts.length; k++) { const p = parts[k]; for (let i = 0; i < ctx.n; i++) out[i] |= p[i] } }
+  if (node.t === 'and') { for (let k = 1; k < parts.length; k++) { const p = parts[k]; for (let i = 0; i < ctx.n; i++) out[i] &= p[i]; yield } }
+  else { for (let k = 1; k < parts.length; k++) { const p = parts[k]; for (let i = 0; i < ctx.n; i++) out[i] |= p[i]; yield } }
   return out
 }
 
@@ -355,33 +421,155 @@ function score(ctx: Ctx, positive: Term[], i: number): number {
   return s
 }
 
-/** Run a parsed or raw query against one or more targets. */
-export function search(query: string | ParsedQuery, targets: Target[], opts: SearchOptions = {}): SearchResult {
-  const t0 = performance.now()
+/** Result order: higher score first, then book order within a repertory. */
+const byRank = (a: SearchHit, b: SearchHit) => b.score - a.score || (a.rep === b.rep ? a.index - b.index : 0)
+
+/** Stable bottom-up merge sort that yields between runs (a 70k-hit sort would otherwise be one long task). */
+function* sortHits(hits: SearchHit[]): Work<SearchHit[]> {
+  const RUN = 2048
+  for (let i = 0; i < hits.length; i += RUN) {
+    const part = hits.slice(i, i + RUN).sort(byRank)
+    for (let k = 0; k < part.length; k++) hits[i + k] = part[k]
+    yield
+  }
+  let src = hits, dst: SearchHit[] = new Array(hits.length)
+  for (let w = RUN; w < hits.length; w *= 2) {
+    let work = 0
+    for (let lo = 0; lo < hits.length; lo += 2 * w) {
+      const mid = Math.min(lo + w, hits.length), hi = Math.min(lo + 2 * w, hits.length)
+      let a = lo, b = mid, o = lo
+      while (a < mid && b < hi) dst[o++] = byRank(src[b], src[a]) < 0 ? src[b++] : src[a++]
+      while (a < mid) dst[o++] = src[a++]
+      while (b < hi) dst[o++] = src[b++]
+      work += hi - lo
+      if (work >= 16384) { work = 0; yield }
+    }
+    const t = src; src = dst; dst = t
+  }
+  return src
+}
+
+/**
+ * Keeps the best `limit` hits seen so far (a min-heap on rank), so a type-ahead search with a
+ * small page never sorts every match and stops caring about hits that cannot reach the page.
+ */
+class TopK {
+  readonly heap: SearchHit[] = []
+  readonly k: number
+  constructor(k: number) { this.k = k }
+  /** Worse-ranked of two hits is "smaller". */
+  private less(a: SearchHit, b: SearchHit) { return byRank(a, b) > 0 }
+  push(h: SearchHit) {
+    const hp = this.heap
+    if (hp.length < this.k) {
+      hp.push(h)
+      let i = hp.length - 1
+      while (i > 0) { const p = (i - 1) >> 1; if (!this.less(hp[i], hp[p])) break; [hp[i], hp[p]] = [hp[p], hp[i]]; i = p }
+      return
+    }
+    if (!this.k || !this.less(hp[0], h)) return
+    hp[0] = h
+    let i = 0
+    for (;;) {
+      const l = 2 * i + 1, r = l + 1
+      let m = i
+      if (l < hp.length && this.less(hp[l], hp[m])) m = l
+      if (r < hp.length && this.less(hp[r], hp[m])) m = r
+      if (m === i) break;
+      [hp[i], hp[m]] = [hp[m], hp[i]]
+      i = m
+    }
+  }
+}
+
+function* searchWork(query: string | ParsedQuery, targets: Target[], opts: SearchOptions, t0: number): Work<SearchResult> {
   const parsed = typeof query === 'string' ? parseQuery(query, { prefixLast: opts.prefixLast }) : query
   const empty = (error: string | null): SearchResult => ({ hits: [], total: 0, parsed, ms: performance.now() - t0, error })
   if (!parsed.ast) return empty(parsed.error)
   if (!parsed.positive.length) return empty(parsed.error)
-  const hits: SearchHit[] = []
+  const all: SearchHit[] = []
+  const top = opts.limit != null ? new TopK(opts.limit) : null
+  let total = 0
   let unknown: string | null = null
-  targets.forEach((tg, order) => {
+  for (let order = 0; order < targets.length; order++) {
+    const tg = targets[order]
     const rep = tg.rep
     const ctx: Ctx = { rep, ix: getIndex(rep), n: rep.size, resolveRemedy: opts.resolveRemedy, own: new Map(), unknownRemedy: null }
-    const mask = evalNode(ctx, parsed.ast!)
+    const mask = yield* evalNode(ctx, parsed.ast)
     unknown ??= ctx.unknownRemedy
     const start = Math.max(0, tg.start ?? 0), end = Math.min(rep.size, tg.end ?? rep.size)
     // earlier targets (the current repertory) win ties
     const bias = -order * 0.001
+    let work = 0
     for (let i = start; i < end; i++) {
       if (!mask[i]) continue
       if (opts.collapse) { const p = rep.parent(i); if (p >= start && mask[p]) continue }
-      hits.push({ rep, index: i, score: score(ctx, parsed.positive, i) + bias })
+      const h = { rep, index: i, score: score(ctx, parsed.positive, i) + bias }
+      total++
+      if (top) top.push(h); else all.push(h)
+      if (++work >= 1024) { work = 0; yield }
     }
-  })
-  const total = hits.length
-  hits.sort((a, b) => b.score - a.score || (a.rep === b.rep ? a.index - b.index : 0))
-  const out = opts.limit != null && hits.length > opts.limit ? hits.slice(0, opts.limit) : hits
-  return { hits: out, total, parsed, ms: performance.now() - t0, error: parsed.error ?? (unknown ? `Unknown remedy “${unknown}”` : null) }
+  }
+  const hits = top ? top.heap.sort(byRank) : yield* sortHits(all)
+  return { hits, total, parsed, ms: performance.now() - t0, error: parsed.error ?? (unknown ? `Unknown remedy “${unknown}”` : null) }
+}
+
+/** Run a parsed or raw query against one or more targets, synchronously. */
+export function search(query: string | ParsedQuery, targets: Target[], opts: SearchOptions = {}): SearchResult {
+  const g = searchWork(query, targets, opts, performance.now())
+  for (;;) { const r = g.next(); if (r.done) return r.value }
+}
+
+/** Main-thread budget of one search slice (ms). */
+export const SLICE_MS = 8
+
+/** Yield to the event loop (a macrotask, so input and paint can run in between; no 4 ms clamp). */
+export function yieldToEventLoop(): Promise<void> {
+  if (typeof MessageChannel === 'undefined') return new Promise(r => setTimeout(r, 0))
+  return new Promise(r => { const ch = new MessageChannel(); ch.port1.onmessage = () => { ch.port1.close(); r() }; ch.port2.postMessage(0) })
+}
+
+export class SearchAborted extends Error { constructor() { super('Search superseded'); this.name = 'SearchAborted' } }
+
+/**
+ * Same result as `search`, computed in slices of at most ~`sliceMs` of main-thread work. Rejects
+ * with `SearchAborted` once `signal` aborts (a newer query started). The work always starts in a
+ * later task, never inside the caller's (a keystroke's task stays short).
+ */
+export async function searchSliced(query: string | ParsedQuery, targets: Target[], opts: SearchOptions = {}, signal?: AbortSignal, sliceMs = SLICE_MS): Promise<SearchResult> {
+  return runSliced(searchWork(query, targets, opts, performance.now()), signal, sliceMs)
+}
+
+/** Drive a work generator in slices of ~`sliceMs`, yielding to the event loop in between. */
+async function runSliced<T>(g: Work<T>, signal: AbortSignal | undefined, sliceMs: number): Promise<T> {
+  // never in the caller's task: a keystroke's own task (render, commit, effects) stays short
+  await yieldToEventLoop()
+  for (;;) {
+    if (signal?.aborted) { g.return(undefined as never); throw new SearchAborted() }
+    const s0 = performance.now()
+    for (;;) {
+      const r = g.next()
+      if (r.done) return r.value
+      if (performance.now() - s0 >= sliceMs) break
+    }
+    await yieldToEventLoop()
+  }
+}
+
+const hlCache = new WeakMap<ParsedQuery, (norm: string) => boolean>()
+const hlByText = new Map<string, (norm: string) => boolean>()
+
+/** `highlighter`, cached per parsed query (and per query text + mode), so rows share one predicate. */
+export function cachedHighlighter(parsed: ParsedQuery, key?: string): (norm: string) => boolean {
+  let h = hlCache.get(parsed) ?? (key != null ? hlByText.get(key) : undefined)
+  if (!h) {
+    const base = highlighter(parsed)
+    const memo = new Map<string, boolean>()
+    h = (norm: string) => { let v = memo.get(norm); if (v === undefined) { v = base(norm); memo.set(norm, v) } return v }
+    hlCache.set(parsed, h)
+    if (key != null) { if (hlByText.size > 64) hlByText.clear(); hlByText.set(key, h) }
+  }
+  return h
 }
 
 /** Token predicate for highlighting the words a query matched. */
@@ -451,8 +639,19 @@ export function remedyRubrics(rep: Repertory, remedyId: number, o: RemedySearchO
 export interface RemedyFrequency { remedyId: number; count: number; gradeSum: number; byGrade: [number, number, number, number] }
 
 /** How often each remedy occurs across a set of rubrics (the "graphical" search summary). */
-export function remedyFrequency(items: { rep: Repertory; index: number }[], limit = 20): { top: RemedyFrequency[]; distinct: number } {
+export function remedyFrequency(items: readonly { rep: Repertory; index: number }[], limit = 20): { top: RemedyFrequency[]; distinct: number } {
+  const g = frequencyWork(items, limit)
+  for (;;) { const r = g.next(); if (r.done) return r.value }
+}
+
+/** `remedyFrequency` in ~8 ms slices (the summary of 70k results must not block typing). */
+export function remedyFrequencySliced(items: readonly { rep: Repertory; index: number }[], limit = 20, signal?: AbortSignal, sliceMs = SLICE_MS) {
+  return runSliced(frequencyWork(items, limit), signal, sliceMs)
+}
+
+function* frequencyWork(items: readonly { rep: Repertory; index: number }[], limit: number): Work<{ top: RemedyFrequency[]; distinct: number }> {
   const map = new Map<number, RemedyFrequency>()
+  let work = 0
   for (const { rep, index } of items) {
     rep.forEachRemedy(index, (id, g) => {
       let f = map.get(id)
@@ -461,6 +660,7 @@ export function remedyFrequency(items: { rep: Repertory; index: number }[], limi
       f.gradeSum += g
       f.byGrade[g - 1]++
     })
+    if (++work >= 512) { work = 0; yield }
   }
   const all = [...map.values()].sort((a, b) => b.count - a.count || b.gradeSum - a.gradeSum || a.remedyId - b.remedyId)
   return { top: all.slice(0, limit), distinct: all.length }

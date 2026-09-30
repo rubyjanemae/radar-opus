@@ -140,6 +140,10 @@ export function buildMenus(catalog: Catalog): { label: string; items: MenuItem[]
         { command: 'prescription.add' },
         { command: 'consultation.delete' },
         sep,
+        // same commands as File: the case report (print / PDF) and the case file export
+        { command: 'case.report' },
+        { command: 'file.exportCase' },
+        sep,
         { command: 'clipboard.new' },
         { command: 'clipboard.next' },
         { command: 'clipboard.prev' },

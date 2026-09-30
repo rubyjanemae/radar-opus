@@ -34,7 +34,9 @@ const TOOL_COMMANDS = [
   'patients.open', 'mm.open', 'families.open', 'view.toggleTree', 'view.toggleDock', 'view.toggleClipboard',
 ] as const
 
-function ToolButton({ command, icon: Icon, label, state, pressed }: { command: string; icon: typeof ArrowLeft; label?: string; state: CommandState | undefined; pressed?: boolean }) {
+type ToolButtonProps = { command: string; icon: typeof ArrowLeft; label?: string; state: CommandState | undefined; pressed?: boolean }
+/** Memoised on the command's flags (the state objects are rebuilt each render): switching documents re-renders only buttons whose state changed. */
+const ToolButton = memo(function ToolButton({ command, icon: Icon, label, state, pressed }: ToolButtonProps) {
   const cmd = getCommand(command)
   const key = displayKey(cmd?.keys)
   const title = cmd ? `${cmd.title}${key ? ` (${formatKeys(key)})` : ''}` : command
@@ -51,7 +53,8 @@ function ToolButton({ command, icon: Icon, label, state, pressed }: { command: s
       {label && <span>{label}</span>}
     </button>
   )
-}
+}, (a: ToolButtonProps, b: ToolButtonProps) => a.command === b.command && a.icon === b.icon && a.label === b.label && a.pressed === b.pressed
+  && a.state?.enabled === b.state?.enabled && a.state?.checked === b.state?.checked)
 
 export const Toolbar = memo(function Toolbar() {
   const catalog = useCatalog()

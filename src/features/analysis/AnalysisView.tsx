@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   ArrowLeftRight, Ban, ChartBarStacked, ChessKnight, ChevronDown, Download, Ellipsis, Eye, EyeOff, Filter, GitCompare, Grid3x3,
@@ -20,17 +20,27 @@ import { useAnalysis } from './useAnalysis'
 import { useAutoCollapseClipboard } from './useAutoCollapseClipboard'
 import { usePublishStatus } from '../../shell/statusContext'
 import { analysisStatusText } from './labels'
+import { onColor } from '../../shell/color'
 import type { LiveAnalysis } from './useAnalysis'
 import './analysis.css'
 
-const CARD_CAP = 200
-
-/* Bars and cards load on demand: F8 only pays for the grid. They are prefetched once the grid is idle. */
-const loadBars = () => import('./AnalysisBars')
-const loadCards = () => import('./AnalysisCards')
-const AnalysisBars = lazy(() => loadBars().then(m => ({ default: m.AnalysisBars })))
-const GradeLegend = lazy(() => loadBars().then(m => ({ default: m.GradeLegend })))
-const AnalysisCards = lazy(() => loadCards().then(m => ({ default: m.AnalysisCards })))
+/*
+ * Bars and cards load on demand: F8 only pays for the grid. They are prefetched once a result is shown.
+ * When the module is already here, the lazy component resolves synchronously (a thenable that calls back
+ * at once): a lazy component whose factory returns a promise suspends on its first render even for a
+ * loaded module, and React then holds the fallback for its reveal throttle (~300 ms) on the first switch.
+ */
+let barsModule: typeof import('./AnalysisBars') | null = null
+let cardsModule: typeof import('./AnalysisCards') | null = null
+const loadBars = () => import('./AnalysisBars').then(m => (barsModule = m))
+const loadCards = () => import('./AnalysisCards').then(m => (cardsModule = m))
+/** A thenable already resolved to `value`: React.lazy reads it without suspending. */
+function resolved<T>(value: T): PromiseLike<T> {
+  return { then: <R1 = T, R2 = never>(ok?: ((v: T) => R1 | PromiseLike<R1>) | null) => resolved((ok ? ok(value) : value) as R1) as unknown as PromiseLike<R1 | R2> }
+}
+const AnalysisBars = lazy(() => (barsModule ? resolved({ default: barsModule.AnalysisBars }) : loadBars().then(m => ({ default: m.AnalysisBars }))) as Promise<{ default: typeof import('./AnalysisBars').AnalysisBars }>)
+const GradeLegend = lazy(() => (barsModule ? resolved({ default: barsModule.GradeLegend }) : loadBars().then(m => ({ default: m.GradeLegend }))) as Promise<{ default: typeof import('./AnalysisBars').GradeLegend }>)
+const AnalysisCards = lazy(() => (cardsModule ? resolved({ default: cardsModule.AnalysisCards }) : loadCards().then(m => ({ default: m.AnalysisCards }))) as Promise<{ default: typeof import('./AnalysisCards').AnalysisCards }>)
 let prefetched = false
 function prefetchViews() {
   if (prefetched) return
@@ -52,13 +62,15 @@ function OnMount({ fn }: { fn: () => void }) {
  * (visibility, not display) so their scroll position survives, and are inert.
  */
 function KeepAlive({ active, children }: { active: boolean; children: ReactNode }) {
-  const last = useRef<ReactNode>(children)
-  if (active) last.current = children
-  return <div className={`an-keep${active ? ' on' : ''}`} inert={!active} aria-hidden={!active || undefined}>{last.current}</div>
+  return <div className={`an-keep${active ? ' on' : ''}`} inert={!active} aria-hidden={!active || undefined}><Frozen active={active}>{children}</Frozen></div>
 }
+/** Renders its children while active; while inactive memo skips it, so it keeps what it last rendered. */
+const Frozen = memo(function Frozen({ children }: { active: boolean; children: ReactNode }) {
+  return children
+}, (_prev, next) => !next.active)
 
 const LIVE = '.an-main > .an-keep.on'
-const MAIN_FOCUS = `${LIVE} [data-cell][tabindex="0"], ${LIVE} .an-bar-row[tabindex="0"], ${LIVE} .an-card.selected, ${LIVE} .an-card`
+const MAIN_FOCUS = `${LIVE} [data-cell][tabindex="0"], ${LIVE} .an-bar-row[tabindex="0"], ${LIVE} .an-card[tabindex="0"]`
 
 /* Drill-down panel width (resizable; remembered per browser). */
 const PANEL_KEY = 'radar.analysis.panelWidth'
@@ -71,18 +83,27 @@ function savePanelWidth(v: number) {
 }
 
 export function AnalysisView({ tab }: { tab: AnalysisTab }) {
-  const live = useAnalysis(tab.consultationId)
+  const live = useAnalysis(tab.consultationId, { deferFirst: true })
   const { consultation, result, load, catalog, source } = live
   useAutoCollapseClipboard()
   const view: AnalysisViewMode = tab.view ?? 'grid'
-  // displays shown so far stay mounted (KeepAlive)
-  const [visited, setVisited] = useState<ReadonlySet<AnalysisViewMode>>(() => new Set([view]))
-  if (!visited.has(view)) setVisited(new Set([...visited, view]))
+  /*
+   * The display shown follows the toolbar's choice in a transition: the segmented control answers at once,
+   * and mounting a display for the first time renders time-sliced (like the first grid) while the old one
+   * stays up. Displays shown so far stay mounted (KeepAlive), so switching back is only a visibility change.
+   */
+  const shownView = useDeferredValue(view)
+  const [visited, setVisited] = useState<ReadonlySet<AnalysisViewMode>>(() => new Set([shownView]))
+  if (!visited.has(shownView)) setVisited(new Set([...visited, shownView]))
   const [paramsOpen, setParamsOpen] = useState(false)
   useEffect(() => ops.onParamsRequest(id => { if (id === tab.id) setParamsOpen(o => !o) }), [tab.id])
   const [panelW, setPanelW] = useState(readPanelWidth)
   const resizePanel = useCallback((v: number) => { setPanelW(v); savePanelWidth(v) }, [])
-  const [revealReq, setReveal] = useState<{ remedyId: number; nonce: number } | null>(null)
+  // a reveal requested before this tab mounted (F8 from the remedy box / remedy view) is shown on mount
+  const [revealReq, setReveal] = useState<{ remedyId: number; nonce: number } | null>(() => {
+    const id = ops.peekReveal(tab.id)
+    return id === undefined ? null : { remedyId: id, nonce: 0 }
+  })
   const selectedRemedy = typeof tab.remedy === 'number' ? tab.remedy : null
   // the highlighted symptom lives on the tab too, so the panel and highlight survive tab switches
   const symptom = typeof tab.symptom === 'number' && result && tab.symptom < result.symptoms.length ? tab.symptom : null
@@ -109,20 +130,22 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
     return { rows: extra.length ? [...base, ...extra] : base, pinnedExtra: new Set(extra.map(r => r.remedyId)) }
   }, [result, tab.pinnedRemedies])
   usePublishStatus(tab.id, consultation && options ? analysisStatusText(options.strategy, result, limit, load.status === 'loading') : null)
-  const highlight = useMemo(() => (options?.highlight?.length ? new Set(options.highlight) : null), [options?.highlight])
+  const highlighted = options?.highlight
+  const highlight = useMemo(() => (highlighted?.length ? new Set(highlighted) : null), [highlighted])
   const selectedRow = selectedRemedy != null ? rows.find(r => r.remedyId === selectedRemedy) ?? result?.all.find(r => r.remedyId === selectedRemedy) ?? result?.excludedRows.find(r => r.remedyId === selectedRemedy) ?? null : null
 
 
   // jump to a remedy: select it, pin it when beyond the limit, scroll to it and focus it
   const tabRef = useRef(tab)
-  tabRef.current = tab
+  useLayoutEffect(() => { tabRef.current = tab })
   const reveal = useCallback((id: number) => {
     ops.pinAndSelect(tabRef.current, id)
     setReveal({ remedyId: id, nonce: Date.now() })
   }, [])
   useEffect(() => {
+    // the pending reveal is already in revealReq (initial state): pin and select it in the tab
     const pending = ops.takeReveal(tab.id)
-    if (pending !== undefined) reveal(pending)
+    if (pending !== undefined) ops.pinAndSelect(tabRef.current, pending)
     return ops.onReveal((t, id) => { if (t === tab.id) { ops.takeReveal(t); reveal(id) } })
   }, [tab.id, reveal])
 
@@ -132,6 +155,12 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
    * rendered, including a lazily loaded bars / cards view.
    */
   const rootRef = useRef<HTMLDivElement>(null)
+  // the result pane: the grid reads its size once on mount, so its first render already fills the pane
+  const mainRef = useRef<HTMLDivElement>(null)
+  const measureMain = useCallback(() => {
+    const el = mainRef.current
+    return el ? { width: el.clientWidth, height: el.clientHeight } : null
+  }, [])
   const wantFocus = useRef(false)
   const loading = load.status === 'loading'
   const tryFocus = useCallback(() => {
@@ -146,16 +175,18 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
     if (ops.takeFocus(tab.id)) wantFocus.current = true
     return ops.onFocusRequest(id => { if (id === tab.id && ops.takeFocus(id)) { wantFocus.current = true; tryFocus() } })
   }, [tab.id, tryFocus])
-  const prevView = useRef(view)
-  if (prevView.current !== view) {
-    prevView.current = view
+  // the display changed while focus was in the analysis (or nowhere): focus follows into the new view
+  const prevView = useRef(shownView)
+  useLayoutEffect(() => {
+    if (prevView.current === shownView) return
+    prevView.current = shownView
     const a = document.activeElement
     if (!a || a === document.body || rootRef.current?.contains(a)) wantFocus.current = true
-  }
+  }, [shownView])
   useEffect(() => { if (!loading) tryFocus() })
   /** Move keyboard focus into the result (after a toolbar menu choice or closing the drawer). */
   const focusResult = useCallback(() => { wantFocus.current = true; tryFocus() }, [tryFocus])
-  useEffect(() => { if (result && view === 'grid') prefetchViews() }, [result, view])
+  useEffect(() => { if (result) prefetchViews() }, [result])
 
   const remedyMenu = useCallback((row: AnalysisRow): MenuItem[] => {
     const excluded = options?.excludedRemedies.includes(row.remedyId) ?? false
@@ -210,6 +241,13 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
         {Array.from({ length: 8 }, (_, i) => <div key={i} className="skeleton an-skel" style={{ width: `${90 - i * 6}%` }} />)}
       </div>
     )
+  } else if (live.computing) {
+    // the message fades in after 300 ms (CSS), so a fast first render never flashes it
+    body = (
+      <div className="an-loading an-computing" aria-busy="true" data-testid="analysis-computing">
+        <div className="an-loading-msg" role="status"><LoaderCircle size={14} className="spin" /> Computing {catalog.remedies.size.toLocaleString()} remedies…</div>
+      </div>
+    )
   } else if (!result || !options) {
     body = null
   } else if (!options.clipboardIds.some(id => consultation.clipboards.some(c => c.id === id))) {
@@ -243,7 +281,7 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
         selectedRemedy={selectedRemedy} selectedSymptom={symptom} highlight={highlight}
         onSelectRemedy={selectRemedy} onSelectSymptom={setSymptom} onOpenRemedy={openRemedy}
         onOpenSymptom={i => openRubric(result.symptoms[i].symptom.rubrics[0])}
-        remedyMenu={remedyMenu} symptomMenu={symptomMenu} reveal={revealReq} pinned={pinnedExtra}
+        remedyMenu={remedyMenu} symptomMenu={symptomMenu} reveal={revealReq} pinned={pinnedExtra} sizeHint={measureMain}
       />
     )
     // keyed per view: each lazily loaded view gets its own boundary and OnMount
@@ -263,16 +301,15 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
       <Suspense key="cards" fallback={<ViewLoading />}>
         <div className="an-cards-wrap">
           <AnalysisCards
-            result={result} rows={rows.length > CARD_CAP ? [...rows.slice(0, CARD_CAP), ...rows.filter(r => pinnedExtra.has(r.remedyId))] : rows} catalog={catalog} selectedRemedy={selectedRemedy} selectedSymptom={symptom} highlight={highlight}
+            result={result} rows={rows} catalog={catalog} selectedRemedy={selectedRemedy} selectedSymptom={symptom} highlight={highlight}
             onSelectRemedy={selectRemedy} onOpenRemedy={openRemedy} remedyMenu={remedyMenu} reveal={revealReq} pinned={pinnedExtra}
           />
-          {rows.length > CARD_CAP && <div className="an-muted an-cap">Showing the first {CARD_CAP} of {rows.length} remedies as cards. Use the grid or bars for the rest.</div>}
         </div>
         <OnMount fn={tryFocus} />
       </Suspense>
     )
     const views: [AnalysisViewMode, ReactNode][] = [['grid', grid], ['bars', bars], ['cards', cards]]
-    body = views.filter(([v]) => v === view || visited.has(v)).map(([v, el]) => <KeepAlive key={v} active={v === view}>{el}</KeepAlive>)
+    body = views.filter(([v]) => v === shownView || visited.has(v)).map(([v, el]) => <KeepAlive key={v} active={v === shownView}>{el}</KeepAlive>)
   }
 
   return (
@@ -308,7 +345,7 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
         </div>
       )}
       <div className="an-body" style={{ ['--an-panel-w' as string]: `${panelW}px` }}>
-        <div className="an-main" aria-busy={live.stale || undefined}>{body}</div>
+        <div ref={mainRef} className="an-main" aria-busy={live.stale || undefined}>{body}</div>
         {selectedRow && result && (
           <Splitter orientation="vertical" value={panelW} min={PANEL_MIN} max={PANEL_MAX} direction={-1} onChange={resizePanel} label="Resize score details" onReset={() => resizePanel(PANEL_DEFAULT)} />
         )}
@@ -494,20 +531,24 @@ function Toolbar({ live, tab, view, limit, onReveal, paramsOpen, onToggleParams,
       <div className="an-chipbar" role="group" aria-label="Analysed clipboards (click: only this, Ctrl+click: combine)">
       <ChipScroller>
         {consultation.clipboards.map((cb, i) => (
+          // the clipboard pane's tab look (cbp-chip*): numbered disc, name, count badge; dashed when not analysed
           <button
             key={cb.id}
-            className={`an-chip${selected.has(cb.id) ? ' on' : ''}`}
+            className={`cbp-chip an-chip${selected.has(cb.id) ? ' active on' : ' off'}`}
             aria-pressed={selected.has(cb.id)}
-            style={{ ['--chip' as string]: cb.color }}
+            aria-label={`${i + 1}. ${cb.name}, ${cb.symptoms.length} symptom${cb.symptoms.length === 1 ? '' : 's'}`}
+            style={{ ['--chip' as string]: cb.color, ['--chip-fg' as string]: onColor(cb.color) }}
             title={`${cb.name}: ${cb.symptoms.length} symptoms\nClick: analyse only this · Ctrl+click: add/remove`}
             onClick={e => onChip(cb.id, e)}
           >
-            <span className="an-chip-dot" aria-hidden="true" />{i + 1}<span className="an-chip-name">{cb.name.replace(/^Clipboard \d+$/, '')}</span><span className="an-chip-n">{cb.symptoms.length}</span>
+            <span className="cbp-chip-num" aria-hidden="true">{i + 1}</span>
+            {!/^Clipboard \d+$/.test(cb.name) && <span className="cbp-chip-name an-chip-name">{cb.name}</span>}
+            <span className="cbp-chip-count" aria-hidden="true">{cb.symptoms.length}</span>
           </button>
         ))}
       </ChipScroller>
         {consultation.clipboards.length > 1 && (
-          <button className={`an-chip an-chip-all${allSelected ? ' on' : ''}`} aria-pressed={allSelected} title="Analyse all non-empty clipboards" onClick={analyseAll}>All</button>
+          <button className={`cbp-chip an-chip an-chip-all${allSelected ? ' active on' : ''}`} aria-pressed={allSelected} title="Analyse all non-empty clipboards" onClick={analyseAll}>All</button>
         )}
       </div>
       <div className="an-sep" />
@@ -520,7 +561,7 @@ function Toolbar({ live, tab, view, limit, onReveal, paramsOpen, onToggleParams,
       <RemedyBox result={result} catalog={catalog} onPick={onReveal} />
       <div className="an-spacer" />
       <span className="an-count" aria-live="polite">
-        {result ? <><strong>{result.total.toLocaleString()}</strong><span className="an-count-word"> remedies</span></> : '…'}
+        {result && <><strong>{result.total.toLocaleString()}</strong><span className="an-count-word"> remedies</span></>}
       </span>
       <select className="an-select" aria-label="Remedies shown" value={limit} onChange={e => ops.setOptions({ limit: Number(e.target.value) }, consultation.id)}>
         {ops.LIMITS.map(n => <option key={n} value={n}>Top {limitLabel(n)}</option>)}

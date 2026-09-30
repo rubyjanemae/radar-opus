@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
-import { openApp, waitForSaved } from './helpers'
+import { installRenderCounter, openApp, settle, takeRenders, waitForSaved } from './helpers'
 
 test('shell boots with menubar, toolbar, tabs and status bar', async ({ page }) => {
   await openApp(page)
@@ -136,45 +136,18 @@ test('1152px: the document pane keeps at least 640px beside both side panes', as
 })
 
 test('moving through rubrics does not re-render the chrome (menubar, toolbar, tab strip, clipboards)', async ({ page }) => {
-  // a minimal devtools hook: count commits in which a named component actually rendered
-  await page.addInitScript(() => {
-    const w = window as unknown as { __renders: Record<string, number>; __REACT_DEVTOOLS_GLOBAL_HOOK__: unknown }
-    w.__renders = {}
-    type F = { type: unknown; child: F | null; sibling: F | null; alternate: F | null; memoizedProps: unknown; memoizedState: unknown }
-    const seen = new WeakMap<F, { p: unknown; s: unknown }>()
-    const nameOf = (t: unknown): string | null => {
-      if (typeof t === 'function') return (t as { displayName?: string; name: string }).displayName || (t as { name: string }).name
-      const inner = (t as { type?: unknown } | null)?.type
-      return typeof inner === 'function' ? nameOf(inner) : null
-    }
-    w.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
-      supportsFiber: true, renderers: new Map(), inject: () => 1, checkDCE() {}, onCommitFiberUnmount() {}, onPostCommitFiberRoot() {},
-      onCommitFiberRoot(_: unknown, root: { current: F }) {
-        const walk = (f: F | null) => {
-          for (; f; f = f.sibling) {
-            const n = nameOf(f.type)
-            if (n) {
-              const prev = seen.get(f) ?? (f.alternate ? seen.get(f.alternate) : undefined)
-              const rec = { p: f.memoizedProps, s: f.memoizedState }
-              if (prev && (prev.p !== rec.p || prev.s !== rec.s)) w.__renders[n] = (w.__renders[n] ?? 0) + 1
-              seen.set(f, rec)
-              if (f.alternate) seen.set(f.alternate, rec)
-            }
-            walk(f.child)
-          }
-        }
-        walk(root.current.child)
-      },
-    }
-  })
+  await installRenderCounter(page)
   await freshApp(page)
   await page.locator('.rv-row').first().click()
   await page.keyboard.press('ArrowDown')
-  await page.waitForTimeout(200)
-  await page.evaluate(() => { (window as unknown as { __renders: object }).__renders = {} })
-  for (let i = 0; i < 10; i++) { await page.keyboard.press('ArrowDown'); await page.waitForTimeout(30) }
-  await page.waitForTimeout(300)
-  const r = await page.evaluate(() => (window as unknown as { __renders: Record<string, number> }).__renders)
+  await settle(page)
+  await takeRenders(page)
+  const crumb = page.locator('.tab-doc[data-active] .rv-crumb-last')
+  const start = await crumb.textContent()
+  for (let i = 0; i < 10; i++) await page.keyboard.press('ArrowDown')
+  await expect(crumb).not.toHaveText(start!)
+  await settle(page)
+  const r = await takeRenders(page)
   // the book itself did move
   expect(r.RepertoryView ?? 0).toBeGreaterThan(0)
   for (const name of ['MenuBar', 'TabStrip', 'ClipboardPanel', 'AnalysisDock', 'WorkspaceChrome']) expect(r[name] ?? 0, name).toBe(0)
@@ -193,7 +166,14 @@ test('clipboard chip counts sit inside their chip, beside the number', async ({ 
     expect(sup.x).toBeGreaterThanOrEqual(chip!.x)
     expect(sup.x + sup.width).toBeLessThanOrEqual(chip!.x + chip!.width)
     expect(sup.y).toBeGreaterThanOrEqual(chip!.y)
+    // centred vertically in the chip
+    expect(Math.abs(sup.y + sup.height / 2 - (chip!.y + chip!.height / 2))).toBeLessThanOrEqual(1)
   }
+  // filled (active) and outlined chips share the clipboard panel tabs' height and padding
+  const box = (sel: string) => page.locator(sel).first().evaluate(el => { const s = getComputedStyle(el); return [el.getBoundingClientRect().height, s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft] })
+  const tab = await box('.cbp-chip')
+  expect(await box('.clip-chip.active')).toEqual(tab)
+  if (await page.locator('.clip-chip:not(.active)').count()) expect(await box('.clip-chip:not(.active)')).toEqual(tab)
 })
 
 // ───────── P1: modality, key dispatch, tabs, toasts, menus ─────────
@@ -284,7 +264,8 @@ test('recently visited documents stay mounted: switching back does not remount t
   const patId = await page.locator('.tabstrip [role=tab][aria-selected=true]').getAttribute('id')
   await page.locator(`[id="${repId}"]`).click()
   await page.locator(`[id="${patId}"]`).click()
-  await page.waitForTimeout(300)
+  await expect(page.locator('.pt-list').first()).toBeVisible()
+  await settle(page)
   const ms = await page.evaluate(async id => {
     const t0 = performance.now()
     ;(document.getElementById(id!) as HTMLElement).dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
@@ -319,9 +300,12 @@ test('tab strip keyboard keeps focus on the tabs; clicking the active tab focuse
   await tabs.first().click()
   await tabs.first().focus()
   for (const k of ['ArrowRight', 'ArrowRight', 'End', 'Home', 'ArrowLeft']) {
+    const before = await page.evaluate(() => document.querySelector('.tabstrip [aria-selected=true]')?.id)
     await page.keyboard.press(k)
-    await page.waitForTimeout(250)
-    expect(await page.evaluate(() => document.activeElement?.getAttribute('role')), k).toBe('tab')
+    // the key moved the selection (Home from the first tab, End from the last: nothing to wait for)
+    if (k === 'ArrowRight' || k === 'ArrowLeft') await expect.poll(() => page.evaluate(() => document.querySelector('.tabstrip [aria-selected=true]')?.id)).not.toBe(before)
+    await settle(page)
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('role')), { message: k }).toBe('tab')
   }
   // a click on the active tab continues in the document's main list
   await page.locator('.tabstrip [role=tab][aria-selected=true]').click()
@@ -464,4 +448,15 @@ test('context menus, toasts and dialogs sit in labelled landmarks (axe region, l
   await page.keyboard.press('Control+,')
   await expect(page.getByRole('dialog')).toBeVisible()
   expect((await new AxeBuilder({ page }).withRules(rules).analyze()).violations).toEqual([])
+})
+
+test('Case menu offers the case report and case file export (same commands as File)', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('menubar').getByRole('menuitem', { name: 'Case' }).click()
+  const menu = page.getByRole('menu', { name: 'Case' })
+  await expect(menu.getByRole('menuitem', { name: /Case report/ })).toBeVisible()
+  await expect(menu.getByRole('menuitem', { name: /Export case file/ })).toBeVisible()
+  await page.screenshot({ path: '/tmp/claude-0/gauntlet/case-menu-e2e.png' })
+  await menu.getByRole('menuitem', { name: /Case report/ }).click()
+  await expect(page.getByRole('dialog')).toBeVisible()
 })

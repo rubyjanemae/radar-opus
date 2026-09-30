@@ -202,3 +202,10 @@
 .srch-dot.d4 { background: var(--text-2); }
 .srch-dot.d5 { background: var(--g2); }
 
+
+/* while the caret is in the query box the list is not focused: no row may look like the focus */
+.srch:has(input[data-search-input]:focus) .srch-row.cursor { background: transparent; box-shadow: none; }
+.srch-sum-busy { margin-left: 6px; vertical-align: -1px; color: var(--text-3); }
+.srch-bars.stale { opacity: .6; }
+/* the take bar sits under the results, like in the book */
+.srch-main > .rv-takebar { border-bottom: 0; }

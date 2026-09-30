@@ -73,20 +73,25 @@
 .toolbar .qf-input { height: var(--ctl-h); border-radius: var(--radius); font-size: var(--fs-sm); }
 .clip-switch { gap: 3px; }
 .clip-chip {
-  display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 28px; height: var(--ctl-h); padding: 0 6px;
-  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev);
-  font-size: var(--fs-xs); font-weight: 700; color: var(--text-2); box-shadow: inset 0 -2px 0 var(--chip);
+  /* same box as the clipboard panel's .cbp-chip tabs: --row tall, 0 6px 0 3px padding, filled or outlined alike */
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 28px; height: var(--row); padding: 0 6px 0 3px;
+  /* outlined in the clipboard's colour (mixed toward the border token); the active one is filled */
+  border: 1px solid color-mix(in srgb, var(--chip) 55%, var(--border)); border-radius: calc(var(--row) / 2); background: var(--bg-elev); line-height: 1;
+  font-size: var(--fs-xs); font-weight: 700; color: var(--text-2);
 }
-/* symptom count: a small raised pill beside the clipboard number, inside the chip, in the clipboard's
-   colour with its on-colour text (--chip-fg); inverted on the active (filled) chip */
+/* a chip without a count pill is balanced on both sides */
+.clip-chip:has(sup:empty) { padding: 0 6px; }
+/* symptom count: a pill centred vertically beside the clipboard number, in the clipboard's colour
+   with its on-colour text (--chip-fg); inverted on the active (filled) chip */
 .clip-chip sup {
-  align-self: flex-start; margin-top: 3px; min-width: 15px; height: 14px; padding: 0 3px; border-radius: 7px;
-  background: var(--chip); color: var(--chip-fg, #fff); font-size: 10px; font-weight: 700; line-height: 14px; vertical-align: baseline;
+  display: inline-grid; place-items: center; align-self: center; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
+  background: var(--chip); color: var(--chip-fg, var(--on-accent)); font-size: var(--fs-xs); font-weight: 700; line-height: 1;
+  vertical-align: middle; position: static; top: auto; font-variant-numeric: tabular-nums;
 }
 .clip-chip sup:empty { display: none; }
-.clip-chip:hover { border-color: var(--border-strong); }
-.clip-chip.active { background: var(--chip); color: var(--chip-fg, #fff); border-color: var(--chip); }
-.clip-chip.active sup { background: var(--chip-fg, #fff); color: var(--chip); }
+.clip-chip:hover { border-color: var(--chip); }
+.clip-chip.active { background: var(--chip); color: var(--chip-fg, var(--on-accent)); border-color: var(--chip); }
+.clip-chip.active sup { background: var(--chip-fg, var(--on-accent)); color: var(--chip); }
 
 /* ───────── main panes ───────── */
 .shell-main { flex: 1; display: flex; min-height: 0; }

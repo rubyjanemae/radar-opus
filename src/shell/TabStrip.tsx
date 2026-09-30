@@ -26,16 +26,31 @@ function TabTitleText({ kind, title }: { kind: Tab['kind']; title: string }) {
 export const TAB_PANEL_ID = 'document-panel'
 export const tabDomId = (id: string) => `doctab-${id}`
 
-/** What the strip draws for one tab. Only these fields re-render it, not every change inside a tab (a moved cursor). */
-interface TabView { id: string; kind: Tab['kind']; pinned: boolean; title: string; subtitle?: string }
+/**
+ * The strip subscribes only to the tab list's shape (id, kind, pinned); each tab subscribes to its own
+ * title. A moved cursor inside a document (the MM remedy, a rubric) re-renders at most that one tab.
+ */
+interface TabShape { id: string; kind: Tab['kind']; pinned: boolean }
+interface TabView extends TabShape { title: string; subtitle?: string }
 const SEP = '\u0001'
-const tabKey = (t: Tab, catalog: Catalog, s: AppState) => {
-  const { title, subtitle } = tabTitle(t, catalog, s)
-  return [t.id, t.kind, t.pinned ? '1' : '', title, subtitle ?? ''].join(SEP)
+const shapeKey = (t: Tab) => [t.id, t.kind, t.pinned ? '1' : ''].join(SEP)
+const parseShape = (k: string): TabShape => {
+  const [id, kind, pinned] = k.split(SEP)
+  return { id, kind: kind as Tab['kind'], pinned: pinned === '1' }
 }
-const parseKey = (k: string): TabView => {
-  const [id, kind, pinned, title, subtitle] = k.split(SEP)
-  return { id, kind: kind as Tab['kind'], pinned: pinned === '1', title, subtitle: subtitle || undefined }
+const titleKey = (t: Tab | undefined, catalog: Catalog, s: AppState) => {
+  if (!t) return ''
+  const { title, subtitle } = tabTitle(t, catalog, s)
+  return subtitle ? title + SEP + subtitle : title
+}
+const viewOf = (t: TabShape, key: string): TabView => {
+  const [title, subtitle] = key.split(SEP)
+  return { ...t, title, subtitle: subtitle || undefined }
+}
+/** Titles read when a menu opens, rather than subscribed to. */
+const currentView = (t: TabShape, catalog: Catalog): TabView => {
+  const s = useApp.getState()
+  return viewOf(t, titleKey(s.tabs.find(x => x.id === t.id), catalog, s))
 }
 /** The system setting or the app's own Reduce motion setting (WorkspaceChrome sets data-reduce-motion on <html>). */
 const reducedMotion = () => document.documentElement.dataset.reduceMotion === 'true' || !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
@@ -45,9 +60,9 @@ const fullTab = (id: string) => useApp.getState().tabs.find(t => t.id === id)
 
 export const TabStrip = memo(function TabStrip() {
   const catalog = useCatalog()
-  const keys = useApp(useShallow(s => s.tabs.map(t => tabKey(t, catalog, s))))
-  // useShallow keeps `keys` identical while nothing the strip shows has changed
-  const tabs = useMemo(() => keys.map(parseKey), [keys])
+  const keys = useApp(useShallow(s => s.tabs.map(shapeKey)))
+  // useShallow keeps `keys` identical while no tab was opened, closed, moved or (un)pinned
+  const tabs = useMemo(() => keys.map(parseShape), [keys])
   const activeId = useApp(s => s.activeTabId)
   const cm = useContextMenu()
   const all = useContextMenu()
@@ -84,7 +99,7 @@ export const TabStrip = memo(function TabStrip() {
     if (el) el.scrollBy({ left: dir * Math.max(120, el.clientWidth * 0.7), behavior: reducedMotion() ? 'auto' : 'smooth' })
   }
 
-  const menuFor = (t: TabView): MenuItem[] => [
+  const menuFor = (t: TabShape): MenuItem[] => [
     { label: t.pinned ? 'Unpin tab' : 'Pin tab', run: () => actions.togglePinTab(t.id) },
     { label: 'Duplicate tab', run: () => { const full = fullTab(t.id); if (!full) return; const { id: _id, ...rest } = full; void _id; actions.openTab({ ...rest, pinned: false } as NewTab, { reuse: false }) } },
     { type: 'separator' },
@@ -94,9 +109,23 @@ export const TabStrip = memo(function TabStrip() {
   ]
 
   const allTabsMenu = (): MenuItem[] => tabs.map(t => {
-    const { title, subtitle } = t
+    const { title, subtitle } = currentView(t, catalog)
     return { label: subtitle ? `${title} — ${subtitle}` : title, checked: t.id === activeId, run: () => actions.activateTab(t.id) }
   })
+
+  // handlers for the memoised tabs: one stable object reading the latest strip state through a ref
+  const latest = useRef({ drag, menuFor, measure, cm })
+  latest.current = { drag, menuFor, measure, cm }
+  const ctx = useMemo<TabCtx>(() => ({
+    dragStart: (id, i) => setDrag({ id, over: i }),
+    dragOver: i => { const d = latest.current.drag; if (d && d.over !== i) setDrag({ ...d, over: i }) },
+    drop: i => { const d = latest.current.drag; if (d) actions.moveTab(d.id, i); setDrag(null) },
+    dragEnd: () => setDrag(null),
+    menu: t => latest.current.menuFor(t),
+    open: (e, items) => latest.current.cm.open(e, items),
+    openAt: (el, items) => latest.current.cm.openAt(el, items),
+    titleChanged: () => latest.current.measure(),
+  }), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className={`tabstrip${overflow.left || overflow.right ? ' overflowing' : ''}`}>
@@ -118,56 +147,9 @@ export const TabStrip = memo(function TabStrip() {
           }
         }}
       >
-        {tabs.map((t, i) => {
-          const { title, subtitle } = t
-          const Icon = ICONS[t.kind]
-          const active = t.id === activeId
-          const showSub = !!subtitle && subtitle !== title && t.kind !== 'repertory'
-          return (
-            <div
-              key={t.id}
-              data-tab-id={t.id}
-              role="presentation"
-              className={`tab${active ? ' active' : ''}${t.pinned ? ' pinned' : ''}${drag && drag.over === i && drag.id !== t.id ? ' drop-target' : ''}`}
-              title={subtitle && subtitle !== title ? `${title} — ${subtitle}` : title}
-              draggable
-              onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; setDrag({ id: t.id, over: i }) }}
-              onDragOver={e => { e.preventDefault(); if (drag) setDrag({ ...drag, over: i }) }}
-              onDrop={e => { e.preventDefault(); if (drag) actions.moveTab(drag.id, i); setDrag(null) }}
-              onDragEnd={() => setDrag(null)}
-              onMouseDown={e => { if (e.button === 1) { e.preventDefault(); actions.closeTab(t.id) } else if (e.button === 0) actions.activateTab(t.id) }}
-              // a click on a tab (the active one too) continues in its document, as switching with a command does
-              onClick={e => { if (e.button === 0) focusDocumentWhenReady() }}
-              onContextMenu={e => cm.open(e, menuFor(t))}
-            >
-              <div
-                role="tab"
-                id={tabDomId(t.id)}
-                className="tab-main"
-                data-kind={t.kind}
-                aria-selected={active}
-                aria-controls={TAB_PANEL_ID}
-                tabIndex={active ? 0 : -1}
-                onKeyDown={e => {
-                  if (e.key === 'Delete') { e.preventDefault(); actions.closeTab(t.id) }
-                  if (e.key === 'Enter' && active) { e.preventDefault(); focusActiveDocument() }
-                  if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') { e.preventDefault(); cm.openAt(e.currentTarget, menuFor(t)) }
-                }}
-              >
-                <Icon size={13} className="tab-icon" aria-hidden />
-                <TabTitleText kind={t.kind} title={title} />
-                {showSub && <span className="tab-sub">{subtitle}</span>}
-                {t.pinned && <Pin size={11} className="tab-pin" aria-label="Pinned" />}
-              </div>
-              {/* mouse affordance only: the keyboard closes the focused tab with Delete or Alt+W */}
-              {!t.pinned && (
-                <button className="tab-close" tabIndex={-1} aria-hidden="true" title={`Close ${title}`} onMouseDown={e => e.stopPropagation()} onClick={() => actions.closeTab(t.id)}>
-                  <X size={12} aria-hidden />
-                </button>
-              )}
-            </div>
-          )
-        })}
+        {tabs.map((t, i) => (
+          <TabItem key={t.id} tab={t} index={i} active={t.id === activeId} dropTarget={!!drag && drag.over === i && drag.id !== t.id} ctx={ctx} />
+        ))}
       </div>
       {(overflow.left || overflow.right) && (
         <>
@@ -185,6 +167,72 @@ export const TabStrip = memo(function TabStrip() {
       </button>
       {cm.element}
       {all.element}
+    </div>
+  )
+})
+
+interface TabCtx {
+  dragStart(id: string, i: number): void
+  dragOver(i: number): void
+  drop(i: number): void
+  dragEnd(): void
+  menu(t: TabShape): MenuItem[]
+  open(e: React.MouseEvent, items: MenuItem[]): void
+  openAt(el: HTMLElement, items: MenuItem[]): void
+  titleChanged(): void
+}
+
+/** One tab: re-renders when its own title, state or position changes, not when a sibling's does. */
+const TabItem = memo(function TabItem({ tab, index: i, active, dropTarget, ctx }: { tab: TabShape; index: number; active: boolean; dropTarget: boolean; ctx: TabCtx }) {
+  const catalog = useCatalog()
+  const key = useApp(s => titleKey(s.tabs.find(x => x.id === tab.id), catalog, s))
+  const t = useMemo(() => viewOf(tab, key), [tab, key])
+  const { title, subtitle } = t
+  // a longer or shorter title can start or end the strip's overflow
+  useLayoutEffect(() => { ctx.titleChanged() }, [key, ctx])
+  const Icon = ICONS[t.kind]
+  const showSub = !!subtitle && subtitle !== title && t.kind !== 'repertory'
+  return (
+    <div
+      data-tab-id={t.id}
+      role="presentation"
+      className={`tab${active ? ' active' : ''}${t.pinned ? ' pinned' : ''}${dropTarget ? ' drop-target' : ''}`}
+      title={subtitle && subtitle !== title ? `${title} — ${subtitle}` : title}
+      draggable
+      onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; ctx.dragStart(t.id, i) }}
+      onDragOver={e => { e.preventDefault(); ctx.dragOver(i) }}
+      onDrop={e => { e.preventDefault(); ctx.drop(i) }}
+      onDragEnd={() => ctx.dragEnd()}
+      onMouseDown={e => { if (e.button === 1) { e.preventDefault(); actions.closeTab(t.id) } else if (e.button === 0) actions.activateTab(t.id) }}
+      // a click on a tab (the active one too) continues in its document, as switching with a command does
+      onClick={e => { if (e.button === 0) focusDocumentWhenReady() }}
+      onContextMenu={e => ctx.open(e, ctx.menu(t))}
+    >
+      <div
+        role="tab"
+        id={tabDomId(t.id)}
+        className="tab-main"
+        data-kind={t.kind}
+        aria-selected={active}
+        aria-controls={TAB_PANEL_ID}
+        tabIndex={active ? 0 : -1}
+        onKeyDown={e => {
+          if (e.key === 'Delete') { e.preventDefault(); actions.closeTab(t.id) }
+          if (e.key === 'Enter' && active) { e.preventDefault(); focusActiveDocument() }
+          if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') { e.preventDefault(); ctx.openAt(e.currentTarget, ctx.menu(t)) }
+        }}
+      >
+        <Icon size={13} className="tab-icon" aria-hidden />
+        <TabTitleText kind={t.kind} title={title} />
+        {showSub && <span className="tab-sub">{subtitle}</span>}
+        {t.pinned && <Pin size={11} className="tab-pin" aria-label="Pinned" />}
+      </div>
+      {/* mouse affordance only: the keyboard closes the focused tab with Delete or Alt+W */}
+      {!t.pinned && (
+        <button className="tab-close" tabIndex={-1} aria-hidden="true" title={`Close ${title}`} onMouseDown={e => e.stopPropagation()} onClick={() => actions.closeTab(t.id)}>
+          <X size={12} aria-hidden />
+        </button>
+      )}
     </div>
   )
 })

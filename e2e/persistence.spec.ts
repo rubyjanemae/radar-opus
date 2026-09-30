@@ -373,3 +373,42 @@ test('an unknown saved strategy falls back to the default and the label matches 
   await expect(page.locator('.shell')).not.toContainText('magic-strategy')
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/strategy-fallback.png` })
 })
+
+test('2,045 patients: one field edit autosaves only that record in a short task and shows Saved', async ({ page }) => {
+  await page.addInitScript(() => {
+    const ric = window.requestIdleCallback
+    const w = window as unknown as { __idleMs: number[] }
+    w.__idleMs = []
+    window.requestIdleCallback = (fn, o) => ric(d => { const t = performance.now(); fn(d); w.__idleMs.push(performance.now() - t) }, o)
+  })
+  await openApp(page)
+  await page.evaluate(async () => {
+    const { actions } = await (window as unknown as { __radarModules: import('../src/e2eBridge').E2EModules }).__radarModules.store()
+    const now = Date.now()
+    const ps = [], cs = []
+    for (let i = 0; i < 2000; i++) {
+      const id = `bulk${i}`
+      ps.push({ id, firstName: `First${i}`, lastName: `Bulk${i}`, birthDate: null, sex: null, email: '', phone: '', address: '', occupation: '', notes: '', tags: [], createdAt: now, updatedAt: now })
+      for (let k = 0; k < 3; k++) cs.push({ id: `${id}-c${k}`, patientId: id, date: '2025-01-11', title: `Visit ${k}`, kind: 'follow-up', complaint: '', notes: '', assessment: '', clipboards: [{ id: `${id}-cb${k}`, name: 'Clipboard 1', color: '#2f6fdb', symptoms: [{ id: `${id}-s${k}`, rubrics: ['publicum:100'], combine: 'union', weight: 1, eliminatory: false, exclusive: false, group: null, causal: false, addedAt: now }] }], analysis: { strategy: 'sum-symptoms-degrees', clipboardIds: [`${id}-cb${k}`], remedyFilter: null, excludedRemedies: [], minCoverage: 0, limit: 30 }, prescriptions: [], createdAt: now, updatedAt: now })
+    }
+    actions.insertCaseData(ps as never, cs as never)
+  })
+  await waitForSaved(page)
+  const r = await page.evaluate(async () => {
+    const w = window as unknown as { __idleMs: number[]; __radarModules: import('../src/e2eBridge').E2EModules }
+    const { actions } = await w.__radarModules.store()
+    const writes: string[] = []
+    const put = IDBObjectStore.prototype.put
+    IDBObjectStore.prototype.put = function (this: IDBObjectStore, v: unknown, k?: IDBValidKey) { writes.push(String(k)); return put.call(this, v, k) }
+    w.__idleMs.length = 0
+    actions.updatePatient('bulk1234', { occupation: 'Baker' })
+    while (document.querySelector('.save-ind')?.getAttribute('data-state') !== 'pending') await new Promise(r => setTimeout(r, 5))
+    while (document.querySelector('.save-ind')?.getAttribute('data-state') !== 'saved') await new Promise(r => setTimeout(r, 20))
+    IDBObjectStore.prototype.put = put
+    return { writes, idle: [...w.__idleMs] }
+  })
+  await waitForSaved(page)
+  expect(r.writes).toEqual(['p:bulk1234'])
+  console.log(`2,045 patients: autosave task ${Math.max(...r.idle).toFixed(1)} ms`)
+  expect(Math.max(...r.idle)).toBeLessThan(50)
+})

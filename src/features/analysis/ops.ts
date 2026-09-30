@@ -118,6 +118,10 @@ export function requestReveal(tabId: string, remedyId: number) {
   pendingReveal.set(tabId, remedyId)
   revealListeners.forEach(fn => fn(tabId, remedyId))
 }
+/** The reveal waiting for a tab, left in place (takeReveal consumes it). */
+export function peekReveal(tabId: string): number | undefined {
+  return pendingReveal.get(tabId)
+}
 export function takeReveal(tabId: string): number | undefined {
   const r = pendingReveal.get(tabId)
   pendingReveal.delete(tabId)

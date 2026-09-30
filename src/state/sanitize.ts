@@ -14,7 +14,7 @@ import type { Bookmark, Layout, Settings, Tab, TabKind } from './workspace'
  */
 export const SCHEMA_VERSION = 2
 
-export const WORKSPACE_FIELDS = ['tabs', 'activeTabId', 'layout', 'settings', 'bookmarks', 'rubricNotes', 'remedyNotes', 'recentSearches', 'activeConsultationId', 'activeClipboardId'] as const
+export const WORKSPACE_FIELDS = ['tabs', 'activeTabId', 'layout', 'settings', 'bookmarks', 'rubricNotes', 'remedyNotes', 'recentSearches', 'recentRubrics', 'activeConsultationId', 'activeClipboardId'] as const
 export const PERSISTED_FIELDS = ['patients', 'consultations', ...WORKSPACE_FIELDS] as const
 export type PersistedState = Pick<AppState, (typeof PERSISTED_FIELDS)[number]>
 export type WorkspaceState = Pick<AppState, (typeof WORKSPACE_FIELDS)[number]>
@@ -333,6 +333,7 @@ export function sanitizeWorkspace(raw: Raw, patients: Record<string, Patient>, c
     layout: sanitizeLayout(raw.layout), settings: sanitizeSettings(raw.settings), bookmarks,
     rubricNotes: stringRecord<RubricRef>(raw.rubricNotes), remedyNotes: stringRecord<number>(raw.remedyNotes),
     recentSearches: strings(raw.recentSearches).slice(0, 20),
+    recentRubrics: (strings(raw.recentRubrics) as RubricRef[]).filter(r => /^[^:]+:\d+$/.test(r)).slice(0, 50),
     activeConsultationId: active?.id ?? null, activeClipboardId,
   }
 }

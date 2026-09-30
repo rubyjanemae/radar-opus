@@ -11,7 +11,7 @@ import type { MenuItem } from '../../ui/Menu'
 import { openCompare, setOptions, targetConsultationId } from '../analysis/ops'
 import { useFixedVirtual } from '../repertory/virtual'
 import { openRemedySearch } from '../search/ops'
-import { useBook } from './book'
+import { useBook, useCitations } from './book'
 import type { MMBook } from './book'
 import { Paragraph } from './components'
 import type { RemedyLinkHandlers } from './components'
@@ -55,7 +55,7 @@ export function RemedyView({ tab }: { tab: RemedyTab }) {
   const cm = useContextMenu()
   const rootRef = useRef<HTMLDivElement>(null)
   const moreRef = useRef<HTMLButtonElement>(null)
-  const width = useWidth(rootRef)
+  const [width, widthRef] = useWidth(rootRef)
   const compact = width > 0 && width < COMPACT_HEAD
 
   const known = catalog.remedies.has(tab.remedyId)
@@ -69,7 +69,9 @@ export function RemedyView({ tab }: { tab: RemedyTab }) {
   const secBook = secReady ? book : null
   const relations = useMemo(() => (secBook ? secBook.relationships(tab.remedyId) : []), [secBook, tab.remedyId])
   const relCount = relations.reduce((n, g) => n + g.remedies.length, 0)
-  const citations = useMemo(() => secBook?.citations.get(tab.remedyId) ?? [], [secBook, tab.remedyId])
+  // citing monographs need a scan of the whole book: built in slices, null until then
+  const citeMap = useCitations(secBook)
+  const citations = citeMap?.get(tab.remedyId) ?? []
 
   useEffect(() => { if (section === 'families' && !groups) setSection('overview') }, [groups, section]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -172,7 +174,7 @@ export function RemedyView({ tab }: { tab: RemedyTab }) {
   ]
 
   return (
-    <div className="ri-view" ref={rootRef} tabIndex={-1} onKeyDown={onKey}>
+    <div className="ri-view" ref={widthRef} tabIndex={-1} onKeyDown={onKey}>
       <header className="ri-head">
         <button className="icon-btn ri-back" aria-label="Back to previous remedy" title="Back (Backspace)" disabled={!back.length} onClick={goBack}><ArrowLeft size={15} /></button>
         <div className="ri-badge" aria-hidden="true"><FlaskConical size={18} /></div>
@@ -214,7 +216,7 @@ export function RemedyView({ tab }: { tab: RemedyTab }) {
 
       <div className="ri-body" role="tabpanel" ref={bodyRef}>
         {section === 'overview' && (
-          <Overview book={book} secondary={secReady} mmError={mmError} remedyId={tab.remedyId} links={links} citations={citations.length} relCount={relCount}
+          <Overview book={book} secondary={secReady} mmError={mmError} remedyId={tab.remedyId} links={links} citeReady={!!citeMap} citations={citations.length} relCount={relCount}
             groups={groups} onSection={setSection} onRemedy={showRemedy} onMenu={(rid, e) => cm.open(e, remedyMenu(rid))} />
         )}
         {section === 'relations' && (
@@ -248,14 +250,14 @@ function Chip({ rid, onRemedy, onMenu, dim, compact }: { rid: number; onRemedy: 
 
 const KEY_SECTIONS = /^(mind|mental|modalities)$/i
 
-function Overview({ book, secondary, mmError, remedyId, links, citations, relCount, groups, onSection, onRemedy, onMenu }: {
-  book: MMBook | null; secondary: boolean; mmError: Error | null; remedyId: number; links: RemedyLinkHandlers; citations: number; relCount: number
+function Overview({ book, secondary, mmError, remedyId, links, citeReady, citations, relCount, groups, onSection, onRemedy, onMenu }: {
+  book: MMBook | null; secondary: boolean; mmError: Error | null; remedyId: number; links: RemedyLinkHandlers; citeReady: boolean; citations: number; relCount: number
   groups: RemedyGroup[] | null; onSection: (s: Section) => void; onRemedy: (rid: number, e: MouseEvent) => void; onMenu: (rid: number, e: MouseEvent) => void
 }) {
   const catalog = useCatalog()
   const fontScale = useApp(s => s.settings.fontScale)
   const entry = book?.entries.get(remedyId) ?? null
-  const cites = (secondary && book?.citations.get(remedyId)) || []
+  const cites = (secondary && citeReady && book?.citationsIfReady()?.get(remedyId)) || []
   const citing = [...new Set(cites.map(c => c.remedyId))]
   const note = useApp(s => s.remedyNotes[remedyId] ?? '')
   return (
@@ -278,13 +280,18 @@ function Overview({ book, secondary, mmError, remedyId, links, citations, relCou
           ) : (
             <div className="ri-mono-text" style={{ ['--mm-fs' as string]: `${Math.round(14 * fontScale)}px` }}>
               <h2 className="ri-mono-title">{titleCase(entry.heading)}</h2>
-              <Paragraph text={entry.intro} book={book} selfId={remedyId} terms={[]} links={links} />
-              {entry.sections.map((s, i) => KEY_SECTIONS.test(s.heading) && (
-                <div key={i} className="ri-keysec">
-                  <h3>{s.heading}</h3>
-                  <Paragraph text={s.text} book={book} selfId={remedyId} terms={[]} links={links} />
-                </div>
-              ))}
+              {/* the monograph text is parsed and rendered with the secondary pass (an interruptible
+                  transition), so opening the window paints its frame without one long task */}
+              {!secondary ? <div className="ri-mono-skel" aria-busy="true">{Array.from({ length: 5 }, (_, i) => <div key={i} className="skeleton" style={{ height: 12, margin: '9px 0', width: `${65 + ((i * 23) % 35)}%` }} />)}</div>
+                : <>
+                  <Paragraph text={entry.intro} book={book} selfId={remedyId} terms={[]} links={links} />
+                  {entry.sections.map((s, i) => KEY_SECTIONS.test(s.heading) && (
+                    <div key={i} className="ri-keysec">
+                      <h3>{s.heading}</h3>
+                      <Paragraph text={s.text} book={book} selfId={remedyId} terms={[]} links={links} />
+                    </div>
+                  ))}
+                </>}
               <div className="ri-mono-foot">
                 Sections: {entry.sections.map((s, i) => <button key={i} className="ri-seclink" onClick={() => openMM(remedyId, { section: i })}>{s.heading}</button>)}
               </div>
@@ -299,7 +306,7 @@ function Overview({ book, secondary, mmError, remedyId, links, citations, relCou
             <dt>Abbreviation</dt><dd>{catalog.remedy(remedyId).abbrev}</dd>
             <dt>Boericke</dt><dd>{book ? (entry ? `${entry.sections.length} sections` : 'no monograph') : '…'}</dd>
             <dt>Relationships</dt><dd>{book && secondary ? (relCount ? <button className="ri-link" onClick={() => onSection('relations')}>{relCount} remedies</button> : 'none listed') : '…'}</dd>
-            <dt>Cited by</dt><dd>{book && secondary ? (citations ? `${citations} section${citations > 1 ? 's' : ''} in ${citing.length} monograph${citing.length > 1 ? 's' : ''}` : 'no other monograph') : '…'}</dd>
+            <dt>Cited by</dt><dd>{book && secondary && citeReady ? (citations ? `${citations} section${citations > 1 ? 's' : ''} in ${citing.length} monograph${citing.length > 1 ? 's' : ''}` : 'no other monograph') : '…'}</dd>
             {groups?.map((g, i) => <FactRow key={i} label={g.system} value={g.open ? <button className="ri-link" onClick={g.open}>{g.label}</button> : g.label} />)}
             <FactRow label="Your note" value={<button className="ri-link" onClick={() => onSection('sources')}>{note ? (note.length > 60 ? `${note.slice(0, 58)}…` : note) : 'add a note'}</button>} />
           </dl>
@@ -390,7 +397,8 @@ function Sources({ book, mmError, remedyId }: { book: MMBook | null; mmError: Er
     return () => clearTimeout(t)
   }, [draft, dirty]) // eslint-disable-line react-hooks/exhaustive-deps
   const entry = book?.entries.get(remedyId) ?? null
-  const cites = book?.citations.get(remedyId) ?? []
+  const citeMap = useCitations(book)
+  const cites = citeMap?.get(remedyId) ?? []
   const load = (abbrev: string) => {
     setLoading(abbrev)
     catalog.loadRepertory(abbrev).then(() => { setLoading(null); setTick(t => t + 1) }, e => { setLoading(null); actions.toast(e instanceof Error ? e.message : 'Could not load repertory', 'error') })
@@ -419,7 +427,7 @@ function Sources({ book, mmError, remedyId }: { book: MMBook | null; mmError: Er
           <dl className="ri-facts">
             <dt>Source</dt><dd>{book.sourceLine}</dd>
             <dt>Monograph</dt><dd>{entry ? <button className="ri-link" onClick={() => openMM(remedyId)}>{titleCase(entry.heading)} · {entry.sections.length} sections</button> : 'none in this book'}</dd>
-            <dt>Cited in</dt><dd>{cites.length ? `${cites.length} section${cites.length > 1 ? 's' : ''} of ${new Set(cites.map(c => c.remedyId)).size} other monographs` : 'no other monograph'}</dd>
+            <dt>Cited in</dt><dd>{!citeMap ? '…' : cites.length ? `${cites.length} section${cites.length > 1 ? 's' : ''} of ${new Set(cites.map(c => c.remedyId)).size} other monographs` : 'no other monograph'}</dd>
             <dt>Text</dt><dd>via OOREP (GPL-3.0)</dd>
           </dl>
         )}
@@ -449,7 +457,7 @@ function Relations({ book, remedyId, links, onRemedy, onMenu }: {
 }) {
   const groups = book.relationships(remedyId)
   const entry = book.entries.get(remedyId)
-  const cites = book.citations.get(remedyId) ?? []
+  const cites = useCitations(book)?.get(remedyId) ?? []
   const comparedBy = [...new Set(cites.filter(c => /relation/i.test(c.heading)).map(c => c.remedyId))]
   const [raw, setRaw] = useState(false)
   if (!entry) {
@@ -675,7 +683,7 @@ function Members({ members, label, onRemedy, onMenu }: {
   const [all, setAll] = useState(false)
   const [filter, setFilter] = useState('')
   const boxRef = useRef<HTMLDivElement>(null)
-  const width = useWidth(boxRef)
+  const [width, widthRef] = useWidth(boxRef)
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase()
     const list = members.map(id => catalog.remedy(id))
@@ -701,7 +709,7 @@ function Members({ members, label, onRemedy, onMenu }: {
         <span className="ri-dim">{shown.length.toLocaleString()} shown</span>
         <button className="btn btn-sm btn-ghost" onClick={() => { setAll(false); setFilter('') }}>Show fewer</button>
       </div>
-      <div ref={boxRef} className="ri-members-grid" role="list" aria-label={`Members of ${label}`}>
+      <div ref={widthRef} className="ri-members-grid" role="list" aria-label={`Members of ${label}`}>
         {!shown.length ? <div className="ri-dim ri-members-none">No member matches “{filter}”</div> : (
           <div style={{ height: rows * MEMBER_ROW, position: 'relative' }}>
             {Array.from({ length: v.end - v.start }, (_, k) => {

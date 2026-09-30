@@ -344,6 +344,17 @@ export interface Citation { remedyId: number; section: number; heading: string }
  * (remedy links in parentheses and Relationship sections).
  */
 export function buildCitations(entries: Iterable<MateriaMedicaEntry>, resolver: RemedyResolver): Map<number, Citation[]> {
+  const it = citationSteps(entries, resolver)
+  let r = it.next()
+  while (!r.done) r = it.next()
+  return r.value
+}
+
+/**
+ * The citation scan as a generator that yields after each monograph, so it can run in time
+ * slices (`buildCitationsChunked`) instead of one long task over the whole book.
+ */
+export function* citationSteps(entries: Iterable<MateriaMedicaEntry>, resolver: RemedyResolver): Generator<void, Map<number, Citation[]>, void> {
   const out = new Map<number, Citation[]>()
   const add = (target: number, c: Citation) => {
     let list = out.get(target)
@@ -357,8 +368,28 @@ export function buildCitations(entries: Iterable<MateriaMedicaEntry>, resolver: 
       const spans = parseParagraph(text, resolver, { relationship: /relation/i.test(heading), selfId: e.remedyId })
       for (const s of spans) if (s.remedyId !== undefined) add(s.remedyId, { remedyId: e.remedyId, section, heading })
     }
+    yield
   }
   return out
+}
+
+/** `buildCitations` in slices of ~`sliceMs`, yielding to the event loop between them. */
+export function buildCitationsChunked(entries: Iterable<MateriaMedicaEntry>, resolver: RemedyResolver, sliceMs = 8): Promise<Map<number, Citation[]>> {
+  const it = citationSteps(entries, resolver)
+  return new Promise((resolve, reject) => {
+    const slice = () => {
+      try {
+        const end = performance.now() + sliceMs
+        for (;;) {
+          const r = it.next()
+          if (r.done) { resolve(r.value); return }
+          if (performance.now() >= end) break
+        }
+        setTimeout(slice, 0)
+      } catch (e) { reject(e) }
+    }
+    slice()
+  })
 }
 
 /** Title-case a Boericke heading ("NATRIUM MURIATICUM" → "Natrium Muriaticum"). */

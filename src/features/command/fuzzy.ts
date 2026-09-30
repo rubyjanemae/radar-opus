@@ -8,7 +8,7 @@ export interface FuzzyMatch { score: number; positions: number[] }
 
 const isSep = (c: string) => c === ' ' || c === '-' || c === '_' || c === '.' || c === '/' || c === ',' || c === '(' || c === ':' || c === '›'
 
-function lowerFold(s: string) { return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '') }
+export function lowerFold(s: string) { return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '') }
 
 /** Fold a haystack for matching (lowercase, accents stripped; plain lowercase if folding changes lengths). */
 export function foldHay(text: string): string {
@@ -35,7 +35,8 @@ export function fuzzy(query: string, text: string): FuzzyMatch | null {
   return fuzzyFolded(lowerFold(query.trim()), foldHay(text))
 }
 
-function fuzzyFolded(q: string, hay: string): FuzzyMatch | null {
+/** Match an already-folded query against an already-folded haystack (see `foldHay`). */
+export function fuzzyFolded(q: string, hay: string): FuzzyMatch | null {
   if (!q) return { score: 0, positions: [] }
 
   // contiguous substring beats everything else

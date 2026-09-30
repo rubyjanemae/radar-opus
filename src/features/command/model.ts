@@ -4,7 +4,7 @@ import type { Repertory } from '../../data/repertory'
 import type { Remedy, RubricRef } from '../../data/types'
 import type { Patient } from '../../state/patients'
 import type { RemedyMatch } from '../search/remedies'
-import { fuzzy as fuzzyPlain } from './fuzzy'
+import { foldHay, fuzzy as fuzzyPlain, fuzzyFolded, lowerFold } from './fuzzy'
 import type { FuzzyMatch } from './fuzzy'
 import { patientName } from '../patients/logic'
 
@@ -45,6 +45,8 @@ export interface PaletteInput {
   counts?: Record<string, number>
   tabs: { id: string; title: string; subtitle?: string; active?: boolean }[]
   patients: Patient[]
+  /** Pre-folded patient entries (`patientEntries`, built once per open); derived from `patients` when absent. */
+  patientEntries?: PatientEntry[]
   remedies: (q: string) => RemedyMatch[]
   rubrics: (q: string) => { hits: { ref: RubricRef; rep: Repertory; index: number }[]; pending: boolean }
   /** Matcher with cached folded haystacks (the palette builds one per open); defaults to plain `fuzzy`. */
@@ -81,6 +83,23 @@ export function keywordReason(q: string, c: Pick<Command, 'title' | 'category' |
   return viaKeyword ? found.join(', ') : null
 }
 
+
+/** A patient prepared for palette matching: display label and folded haystacks, newest first. */
+export interface PatientEntry { patient: Patient; label: string; hay: string; alt: string | null }
+
+/** Most patient matches scanned per query: enough to rank a useful top list, bounded for big practices. */
+export const PATIENT_MATCH_CAP = 200
+
+/** Build the patient entries once per open (memoise on the patients map identity). */
+export function patientEntries(patients: Record<string, Patient> | Patient[]): PatientEntry[] {
+  const list = Array.isArray(patients) ? patients : Object.values(patients)
+  return list.map(p => {
+    const label = patientName(p)
+    const hay = foldHay(label)
+    const alt = foldHay(`${p.firstName} ${p.lastName}`)
+    return { patient: p, label, hay, alt: alt === hay ? null : alt }
+  }).sort((a, b) => b.patient.updatedAt - a.patient.updatedAt)
+}
 
 /** Build the palette sections for a query, strongest section first in mixed mode. */
 export function paletteItems(inp: PaletteInput): Section[] {
@@ -150,15 +169,24 @@ export function paletteItems(inp: PaletteInput): Section[] {
 
   // patients
   if ((all && sq) || mode === 'patients') {
+    const entries = inp.patientEntries ?? patientEntries(inp.patients)
+    const cap = lim(5, 100)
     const items: PaletteItem[] = []
-    for (const p of inp.patients) {
-      const label = patientName(p)
-      if (!sq) { items.push({ kind: 'patient', patient: p, label, score: p.updatedAt }); continue }
-      const m = fuzzy(sq, label) ?? fuzzy(sq, `${p.firstName} ${p.lastName}`)
-      if (m) items.push({ kind: 'patient', patient: p, label, positions: fuzzy(sq, label)?.positions, score: m.score })
+    if (!sq) {
+      for (const e of entries.slice(0, cap)) items.push({ kind: 'patient', patient: e.patient, label: e.label, score: e.patient.updatedAt })
+    } else {
+      const fq = lowerFold(sq)
+      // entries are newest first, so the cap keeps the most recently seen matching patients
+      for (const e of entries) {
+        const m = fuzzyFolded(fq, e.hay)
+        const alt = m ? null : e.alt != null ? fuzzyFolded(fq, e.alt) : null
+        if (!m && !alt) continue
+        items.push({ kind: 'patient', patient: e.patient, label: e.label, positions: m?.positions, score: (m ?? alt)!.score })
+        if (items.length >= PATIENT_MATCH_CAP) break
+      }
+      items.sort((a, b) => b.score - a.score)
     }
-    items.sort((a, b) => b.score - a.score)
-    if (items.length) sections.push({ key: 'patients', label: 'Patients', strength: sq ? items[0].score : 1000, items: items.slice(0, lim(5, 100)) })
+    if (items.length) sections.push({ key: 'patients', label: 'Patients', strength: sq ? items[0].score : 1000, items: items.slice(0, cap) })
   }
 
   // remedies

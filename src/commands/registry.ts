@@ -38,9 +38,13 @@ export interface Command {
 
 const commands = new Map<string, Command>()
 const listeners = new Set<() => void>()
+let snapshot: Command[] | null = null
+/** Stable snapshot of all commands for useSyncExternalStore (a new array only after the registry changes). */
+export function commandsSnapshot(): Command[] { return (snapshot ??= [...commands.values()]) }
 
 export function registerCommands(list: Command[]) {
   for (const c of list) commands.set(c.id, c.keys ? { ...c, keys: dedupe(c.keys.map(normaliseChord)) } : c)
+  snapshot = null
   listeners.forEach(fn => fn())
 }
 

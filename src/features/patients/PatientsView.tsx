@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, startTransition, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, Download, FileUp, Search, UserPlus, Users, X } from 'lucide-react'
 import { useCatalog } from '../../data/CatalogContext'
 import { displayKey, formatKeys, getCommand, runCommand } from '../../commands/registry'
@@ -67,11 +67,12 @@ const listCache = (() => {
 
 let remembered: { query: string; tags: string[]; sort: Sort; selected: string | null } = { query: '', tags: [], sort: { key: 'lastVisit', dir: -1 }, selected: null }
 
-export function PatientsView() {
+/** Kept alive in a hidden tab: memoised so parent re-renders (tab strip, other documents) never reach it. */
+export const PatientsView = memo(function PatientsView() {
   const catalog = useCatalog()
   const patients = useApp(s => s.patients)
   const consultations = useApp(s => s.consultations)
-  const activeConsultation = useApp(s => (s.activeConsultationId ? s.consultations[s.activeConsultationId] : null))
+  const activePatientId = useApp(s => (s.activeConsultationId ? s.consultations[s.activeConsultationId]?.patientId ?? null : null))
   const [query, setQuery] = useState(remembered.query)
   const [tags, setTags] = useState<string[]>(remembered.tags)
   const [sort, setSort] = useState<Sort>(remembered.sort)
@@ -151,6 +152,10 @@ export function PatientsView() {
         }
     }
   }
+  // stable across renders so memoised rows only re-render when their own props change
+  const latest = useRef({ menuFor, cm })
+  useLayoutEffect(() => { latest.current = { menuFor, cm } })
+  const onRowMenu = useCallback((e: React.MouseEvent, r: PatientRow) => { setSelected(r.patient.id); latest.current.cm.open(e, latest.current.menuFor(r)) }, [])
   const openMenuAtRow = (row: PatientRow) => {
     const el = scroller.current?.querySelector<HTMLElement>(`[data-pid="${row.patient.id}"]`) ?? grid.current
     if (el) cm.openAt(el, menuFor(row))
@@ -238,29 +243,7 @@ export function PatientsView() {
             <div style={{ height: v.total, position: 'relative' }}>
               {rows.slice(v.start, v.end).map((r, k) => {
                 const i = v.start + k
-                const p = r.patient
-                const isActiveCase = activeConsultation?.patientId === p.id
-                return (
-                  <div
-                    key={p.id} id={`pt-row-${p.id}`} data-pid={p.id} role="row" aria-rowindex={i + 2} aria-selected={i === index}
-                    className={`pt-row${i === index ? ' selected' : ''}${i % 2 ? ' odd' : ''}`}
-                    style={{ position: 'absolute', top: i * ROW_H, height: ROW_H, left: 0, right: 0 }}
-                    onMouseDown={() => setSelected(p.id)}
-                    onDoubleClick={() => ops.openPatient(p.id)}
-                    onContextMenu={e => { setSelected(p.id); cm.open(e, menuFor(r)) }}
-                  >
-                    <div role="gridcell" className="pt-cell c-name" title={p.tags.length ? `${r.name}\nTags: ${p.tags.join(', ')}` : r.name}>
-                      <span className="pt-name">{r.name}</span>
-                      {isActiveCase && <span className="pt-active-dot" title="Active case" aria-label="Active case" />}
-                    </div>
-                    <div role="gridcell" className="pt-cell c-age num">{r.ageLabel}</div>
-                    <div role="gridcell" className="pt-cell c-sex">{p.sex ? SEX_SHORT[p.sex] : ''}</div>
-                    <TagCell tags={p.tags} />
-                    <div role="gridcell" className="pt-cell c-visit" title={r.lastVisit ? relativeDate(r.lastVisit) : undefined}>{formatDate(r.lastVisit)}</div>
-                    <div role="gridcell" className="pt-cell c-count num">{r.consultations || ''}</div>
-                    <div role="gridcell" className="pt-cell c-rx" title={r.lastRx ? `${catalog.remedy(r.lastRx.remedyId).name} ${r.lastRx.potency}, ${formatDate(r.lastRx.date)}` : undefined}>{r.lastRx && <><b>{abbrev(r.lastRx.remedyId)}</b> {r.lastRx.potency}</>}</div>
-                  </div>
-                )
+                return <PatientRowView key={r.patient.id} row={r} i={i} selected={i === index} activeCase={activePatientId === r.patient.id} catalog={catalog} abbrev={abbrev} onSelect={setSelected} onMenu={onRowMenu} />
               })}
             </div>
           )}
@@ -276,10 +259,38 @@ export function PatientsView() {
       {cm.element}
     </div>
   )
-}
+})
+
+const PatientRowView = memo(function PatientRowView({ row: r, i, selected, activeCase, catalog, abbrev, onSelect, onMenu }: {
+  row: PatientRow; i: number; selected: boolean; activeCase: boolean; catalog: Catalog; abbrev: (id: number) => string
+  onSelect: (id: string) => void; onMenu: (e: React.MouseEvent, r: PatientRow) => void
+}) {
+  const p = r.patient
+  return (
+    <div
+      id={`pt-row-${p.id}`} data-pid={p.id} role="row" aria-rowindex={i + 2} aria-selected={selected}
+      className={`pt-row${selected ? ' selected' : ''}${i % 2 ? ' odd' : ''}`}
+      style={{ position: 'absolute', top: i * ROW_H, height: ROW_H, left: 0, right: 0 }}
+      onMouseDown={() => onSelect(p.id)}
+      onDoubleClick={() => ops.openPatient(p.id)}
+      onContextMenu={e => onMenu(e, r)}
+    >
+      <div role="gridcell" className="pt-cell c-name" title={p.tags.length ? `${r.name}\nTags: ${p.tags.join(', ')}` : r.name}>
+        <span className="pt-name">{r.name}</span>
+        {activeCase && <span className="pt-active-dot" title="Active case" aria-label="Active case" />}
+      </div>
+      <div role="gridcell" className="pt-cell c-age num">{r.ageLabel}</div>
+      <div role="gridcell" className="pt-cell c-sex">{p.sex ? SEX_SHORT[p.sex] : ''}</div>
+      <TagCell tags={p.tags} />
+      <div role="gridcell" className="pt-cell c-visit" title={r.lastVisit ? relativeDate(r.lastVisit) : undefined}>{formatDate(r.lastVisit)}</div>
+      <div role="gridcell" className="pt-cell c-count num">{r.consultations || ''}</div>
+      <div role="gridcell" className="pt-cell c-rx" title={r.lastRx ? `${catalog.remedy(r.lastRx.remedyId).name} ${r.lastRx.potency}, ${formatDate(r.lastRx.date)}` : undefined}>{r.lastRx && <><b>{abbrev(r.lastRx.remedyId)}</b> {r.lastRx.potency}</>}</div>
+    </div>
+  )
+})
 
 /** Tag chips that fit on one line, whole, followed by a "+N" badge for the rest (full list in the tooltip). */
-function TagCell({ tags }: { tags: string[] }) {
+const TagCell = memo(function TagCell({ tags }: { tags: string[] }) {
   const box = useRef<HTMLSpanElement>(null)
   const [more, setMore] = useState<{ hidden: number; left: number }>({ hidden: 0, left: 0 })
   useLayoutEffect(() => {
@@ -305,4 +316,4 @@ function TagCell({ tags }: { tags: string[] }) {
       {more.hidden > 0 && <span className="pt-tag-more" style={{ left: more.left + 8 }} aria-label={`${more.hidden} more tag${more.hidden === 1 ? '' : 's'}`}>+{more.hidden}</span>}
     </div>
   )
-}
+})

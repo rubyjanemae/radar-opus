@@ -17,6 +17,20 @@ const PatientView = lazyRetry(() => import('../features/patients/PatientView'), 
 const SearchView = lazyRetry(() => import('../features/search/SearchView'), m => m.SearchView)
 const FamiliesView = lazyRetry(() => import('../features/families/FamiliesView'), m => m.FamiliesView)
 
+/**
+ * The analysis is the next document most sessions open (F8): its code loads in idle time after start-up,
+ * so the first F8 renders at once instead of showing the loading skeleton while the chunk arrives.
+ */
+function preloadAnalysisWhenIdle() {
+  const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (h: number) => void }
+  if (w.requestIdleCallback) {
+    const h = w.requestIdleCallback(() => void AnalysisView.preload(), { timeout: 3000 })
+    return () => w.cancelIdleCallback?.(h)
+  }
+  const t = setTimeout(() => void AnalysisView.preload(), 1500)
+  return () => clearTimeout(t)
+}
+
 /** How many recently visited documents stay mounted (the active one included). */
 export const KEEP_MOUNTED = 3
 
@@ -140,6 +154,7 @@ export function TabDeck({ activeTabId }: { activeTabId: string }) {
  */
 export function TabHost({ tabId }: { tabId: string }) {
   const tab = useApp(s => s.tabs.find(t => t.id === tabId) ?? null)
+  useEffect(preloadAnalysisWhenIdle, [])
 
   // runs on mount and each time <Activity> shows the document again
   useEffect(() => {

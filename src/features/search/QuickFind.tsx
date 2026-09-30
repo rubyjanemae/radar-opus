@@ -1,14 +1,18 @@
-import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react'
 import { History, Loader2, Pill, Search, SearchCode, X } from 'lucide-react'
 import { formatKeys, isMac } from '../../commands/registry'
 import { useCatalog } from '../../data/CatalogContext'
 import type { Repertory } from '../../data/repertory'
+import type { RubricRef } from '../../data/types'
 import { useShallow } from 'zustand/react/shallow'
 import { actions, useApp } from '../../state/store'
-import { goToRef, takeRefs } from '../repertory/ops'
+import { goToRef, recentOf, takeRefs } from '../repertory/ops'
 import { DEFAULT_TAKE } from '../repertory/take'
-import { highlighter, search } from './engine'
+import { SearchAborted, cachedHighlighter, searchSliced, yieldToEventLoop } from './engine'
+import type { SearchResult, Target } from './engine'
+import { parseQuery } from './query'
 import { findRemedies, remedyIntent } from './remedies'
+import type { RemedyMatch } from './remedies'
 import type { Catalog } from '../../data/catalog'
 import type { RepertoryTab } from '../../state/workspace'
 import { currentRepertory, openRemedySearch, openSearch, prepare, readyTargets, remedyResolver } from './ops'
@@ -34,7 +38,7 @@ export function QuickFind() {
   const recentTab = useApp(useShallow((s): RecentSource => {
     const a = s.tabs.find(t => t.id === s.activeTabId)
     const t = a?.kind === 'repertory' ? a : s.tabs.find(x => x.kind === 'repertory')
-    return t?.kind === 'repertory' ? { repertory: t.repertory, recent: t.recent, back: t.back } : { repertory: null, recent: undefined, back: undefined }
+    return t?.kind === 'repertory' ? { repertory: t.repertory, rubrics: s.recentRubrics, recent: t.recent, back: t.back } : { repertory: null, rubrics: s.recentRubrics, recent: undefined, back: undefined }
   }))
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -44,7 +48,6 @@ export function QuickFind() {
   const inputRef = useRef<HTMLInputElement>(null)
   const popRef = useRef<HTMLDivElement>(null)
   const restoreRef = useRef<HTMLElement | null>(null)
-  const deferred = useDeferredValue(query)
   const all = catalog.repertoryInfos.map(r => r.abbrev)
   const first = open ? currentRepertory() : all[0]
   const tabLike = useMemo(() => ({ scope: 'all' as const, repertories: [first] }), [first])
@@ -60,7 +63,34 @@ export function QuickFind() {
     return () => { alive = false }
   }, [open, tabLike])
 
-  const q = deferred.trim()
+  const q = query.trim()
+  // Nothing is searched in the keystroke's own task: the rubric search runs in ~8 ms slices from the
+  // next task on (a newer keystroke aborts it) and keeps only the best RUBRIC_LIMIT hits; the remedy
+  // matches are found right after it. The dropdown keeps showing the previous matches meanwhile.
+  const [found, setFound] = useState<{ query: string; targets: Target[]; res: SearchResult | null; rem: RemedyMatch[] } | null>(null)
+  const { targets: readyNow, pending: pendingNow } = useMemo(
+    () => (open ? readyTargets(tabLike) : { targets: [] as Target[], pending: [] as string[] }),
+    [open, tabLike, version], // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  useEffect(() => {
+    if (!open || !q) return
+    const ac = new AbortController()
+    const targets = readyNow
+    const run = async () => {
+      const res = q.length >= 2 && targets.length
+        ? await searchSliced(query, targets, { prefixLast: true, limit: RUBRIC_LIMIT, resolveRemedy: remedyResolver }, ac.signal)
+        : (await yieldToEventLoop(), null)
+      if (ac.signal.aborted) return
+      // a remedy abbreviation typed on purpose (sulph, lach, nat-m) goes before the rubrics
+      const rem = findRemedies(catalog, q.replace(/^#/, ''), 5).filter(m => m.score >= 55)
+      setFound({ query, targets, res, rem })
+    }
+    run().catch(e => { if (!(e instanceof SearchAborted)) setError(e instanceof Error ? e.message : String(e)) })
+    return () => ac.abort()
+  }, [open, q, query, readyNow, catalog])
+  // the dropdown is up to date with the box (Enter waits for this)
+  const settled = !q || (found?.query === query && found.targets === readyNow)
+
   const { groups, flat, total, pending } = useMemo(() => {
     const groups: Group[] = []
     const flat: Item[] = []
@@ -68,7 +98,7 @@ export function QuickFind() {
     const push = (g: Group, item: Item) => { g.items.push({ item, n: flat.length }); flat.push(item) }
     // closed: nothing is shown, so nothing is searched (keeps typing elsewhere free of this work)
     if (!open) return { groups, flat, total, pending: [] as string[] }
-    const { targets, pending } = readyTargets(tabLike)
+    const targets = readyNow, pending = pendingNow
     if (!q) {
       if (recent.length) {
         const g: Group = { key: 'recent', label: 'Recent searches', items: [] }
@@ -83,8 +113,7 @@ export function QuickFind() {
       }
       return { groups, flat, total, pending }
     }
-    // a remedy abbreviation typed on purpose (sulph, lach, nat-m) goes before the rubrics
-    const rem = findRemedies(catalog, q.replace(/^#/, ''), 5).filter(m => m.score >= 55)
+    const rem = found?.rem ?? []
     const remedyFirst = remedyIntent(q, rem)
     const pushRemedies = () => {
       if (!rem.length) return
@@ -93,8 +122,8 @@ export function QuickFind() {
       groups.push(g)
     }
     if (remedyFirst) pushRemedies()
-    if (q.length >= 2 && targets.length) {
-      const res = search(deferred, targets, { prefixLast: true, limit: RUBRIC_LIMIT, resolveRemedy: remedyResolver })
+    const res = q.length >= 2 ? found?.res ?? null : null
+    if (q.length >= 2 && targets.length && res) {
       total = res.total
       const byKey = new Map<string, Group>()
       for (const h of res.hits) {
@@ -113,17 +142,19 @@ export function QuickFind() {
     }
     if (!remedyFirst) pushRemedies()
     const g: Group = { key: 'more', label: '', items: [] }
-    push(g, { kind: 'search', query: deferred })
+    push(g, { kind: 'search', query })
     groups.push(g)
     return { groups, flat, total, pending }
-  }, [open, deferred, q, tabLike, recent, recentTab, catalog, version]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, query, q, readyNow, pendingNow, found, recent, recentTab, catalog]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const hl = useMemo(() => {
-    const res = q ? search(deferred, [], { prefixLast: true }) : null
-    return res?.parsed.positive.length ? highlighter(res.parsed) : null
-  }, [deferred, q])
+    if (!q) return null
+    const parsed = parseQuery(query, { prefixLast: true })
+    return parsed.positive.length ? cachedHighlighter(parsed, `qf:${query}`) : null
+  }, [query, q])
 
-  useEffect(() => { setActive(0) }, [deferred])
+  // the highlighted option goes back to the top when the list changes
+  useEffect(() => { setActive(0) }, [query, found])
   const pendingEnter = useRef<'open' | 'take' | null>(null)
   useEffect(() => {
     popRef.current?.querySelector(`[data-n="${active}"]`)?.scrollIntoView({ block: 'nearest' })
@@ -163,7 +194,7 @@ export function QuickFind() {
 
   // Enter pressed while results were still catching up with the typing
   useEffect(() => {
-    if (!pendingEnter.current || deferred !== query) return
+    if (!pendingEnter.current || !settled) return
     const how = pendingEnter.current
     pendingEnter.current = null
     run(flat[0], how)
@@ -178,7 +209,7 @@ export function QuickFind() {
     else if (e.key === 'Enter') {
       e.preventDefault()
       if (mod) run({ kind: 'search', query }, 'search')
-      else if (deferred !== query) pendingEnter.current = e.altKey ? 'take' : 'open' // run once results catch up
+      else if (!settled) pendingEnter.current = e.altKey ? 'take' : 'open' // run once results catch up
       else run(flat[active], e.altKey ? 'take' : 'open')
     } else if (e.key === 'Escape') {
       e.preventDefault(); e.stopPropagation()
@@ -229,7 +260,7 @@ export function QuickFind() {
           )}
           {error && <div className="qf-status err">{error}</div>}
           {q.length === 1 && <div className="qf-status">Type another letter to search rubrics</div>}
-          {q.length >= 2 && total === 0 && !pending.length && groups.every(g => g.key === 'more' || g.key === 'remedies') && (
+          {q.length >= 2 && settled && total === 0 && !pending.length && groups.every(g => g.key === 'more' || g.key === 'remedies') && (
             <div className="qf-status">No rubric matches “{q}”</div>
           )}
           {groups.map(g => (
@@ -296,13 +327,15 @@ function OptionBody({ item, hl, total }: { item: Item; hl: ((n: string) => boole
   )
 }
 
-type RecentSource = { repertory: string | null; recent: RepertoryTab['recent']; back: RepertoryTab['back'] | undefined }
+/** `rubrics`: the workspace Recent list (all repertories); `recent`: a tab's own list from before it. */
+type RecentSource = { repertory: string | null; rubrics: readonly RubricRef[]; recent: RepertoryTab['recent']; back: RepertoryTab['back'] | undefined }
 
 function recentRubrics(catalog: Catalog, tab: RecentSource): { rep: Repertory | undefined; items: number[] } {
   if (!tab.repertory) return { rep: undefined, items: [] }
   const rep = catalog.repertory(tab.repertory)
   if (!rep) return { rep, items: [] }
-  const src = tab.recent?.length ? tab.recent : [...(tab.back ?? [])].reverse()
+  const own = recentOf(tab.rubrics, tab.repertory, tab.recent)
+  const src = own.length ? own : [...(tab.back ?? [])].reverse()
   const seen = new Set<number>()
   const items: number[] = []
   for (const i of src) {

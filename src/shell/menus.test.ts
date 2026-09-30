@@ -49,6 +49,18 @@ describe('menus', () => {
     expect(refs.some(r => r.id.startsWith('analysis.strategy.'))).toBe(true)
   })
 
+  it('offers case report print/export in the Case menu, reusing the File commands', () => {
+    const items = menus.find(m => m.label === 'Case')!.items
+    const ids = items.map(i => (i.type === 'separator' || i.type === 'label') ? '|' : i.command)
+    const at = ids.indexOf('case.report')
+    expect(at).toBeGreaterThan(0)
+    expect(ids[at - 1]).toBe('|')
+    expect(ids[at + 1]).toBe('file.exportCase')
+    const file = refs.filter(r => r.path.startsWith('File')).map(r => r.id)
+    expect(file).toContain('case.report')
+    expect(file).toContain('file.exportCase')
+  })
+
   it('gives every registered command a title and category', () => {
     for (const c of allCommands()) {
       expect(c.title, c.id).toBeTruthy()

@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Search, X } from 'lucide-react'
 import { Dialog } from '../../ui/Dialog'
-import { allCommands, formatKeys, getCommand, isEnabled, onCommandsChanged, runCommand } from '../../commands/registry'
+import { formatKeys, getCommand, isEnabled, commandsSnapshot, onCommandsChanged, runCommand } from '../../commands/registry'
 import { actions } from '../../state/store'
 import { REFERENCE_SECTIONS, filterSection, overriddenBrowserKeys, referenceRowKey, shortcutGroups } from './shortcuts'
 import type { ReferenceSection } from './shortcuts'
@@ -24,12 +24,10 @@ function Keys({ keys, raw }: { keys: string[]; raw?: boolean }) {
 export function ShortcutsDialog({ onClose, query: initialQuery }: { onClose: () => void; query?: string }) {
   const [q, setQ] = useState(typeof initialQuery === 'string' ? initialQuery : '')
   const [all, setAll] = useState(false)
-  const [version, setVersion] = useState(0)
-  useEffect(() => onCommandsChanged(() => setVersion(v => v + 1)), [])
+  const commands = useSyncExternalStore(onCommandsChanged, commandsSnapshot)
 
-  const groups = useMemo(() => shortcutGroups(allCommands(), q, { includeUnbound: all }), [q, all, version])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const refs = useMemo(() => [...REFERENCE_SECTIONS, overriddenBrowserKeys(allCommands())].map(s => filterSection(s, q)).filter(s => s.rows.length), [q, version])
+  const groups = useMemo(() => shortcutGroups(commands, q, { includeUnbound: all }), [commands, q, all])
+  const refs = useMemo(() => [...REFERENCE_SECTIONS, overriddenBrowserKeys(commands)].map(s => filterSection(s, q)).filter(s => s.rows.length), [commands, q])
   const total = groups.reduce((n, g) => n + g.rows.length, 0)
   const run = (id: string) => {
     const c = getCommand(id)

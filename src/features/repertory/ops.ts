@@ -11,6 +11,7 @@ import { DEFAULT_TAKE, bookAbbrev, describeTake, rubricHtml, rubricPlainText, we
 import { alphaRemedies, GRADE_WORD } from './remedies'
 import { getHighlight, setHighlight } from './highlight'
 import type { TakeOptions } from './take'
+import { broadTakeWarning } from '../clipboard/logic'
 
 /**
  * Repertory operations shared by the book view, the navigator, dialogs and commands.
@@ -119,21 +120,37 @@ export function refShort(ref: RubricRef): string {
 
 export const MAX_RECENT = 20
 
-/** Most-recent-first list with `index` moved to the front. */
-export function pushRecent(list: readonly number[] | undefined, index: number, max = MAX_RECENT): number[] {
-  const out = [index, ...(list ?? []).filter(x => x !== index)]
+/** Rubrics kept in the workspace Recent list (all repertories together). */
+export const MAX_RECENT_RUBRICS = 60
+
+/** Most-recent-first list with `item` moved to the front. */
+export function pushRecent<T>(list: readonly T[] | undefined, item: T, max = MAX_RECENT): T[] {
+  const out = [item, ...(list ?? []).filter(x => x !== item)]
   return out.length > max ? out.slice(0, max) : out
 }
 
-/** Record a rubric in the Recent list of the repertory tab(s) showing its repertory (active tab first). */
-export function recordRecent(ref: RubricRef, tabId?: string) {
-  const { repertory, index } = parseRef(ref)
-  const s = st()
-  const active = selectActiveTab(s)
-  const own = tabId ? s.tabs.find((t): t is RepertoryTab => t.id === tabId && t.kind === 'repertory' && t.repertory === repertory) : undefined
-  const tab = own ?? (active?.kind === 'repertory' && active.repertory === repertory ? active : s.tabs.find((t): t is RepertoryTab => t.kind === 'repertory' && t.repertory === repertory))
-  if (!tab || tab.recent?.[0] === index) return
-  actions.updateTab<RepertoryTab>(tab.id, { recent: pushRecent(tab.recent, index) })
+/**
+ * Record a rubric in the workspace Recent list. It lives in workspace state (`recentRubrics`), which the
+ * autosave writes, so it survives reloads and closing the tab; the navigator lists the entries of the
+ * repertory it shows.
+ */
+export function recordRecent(ref: RubricRef) {
+  const list = st().recentRubrics
+  if (list[0] === ref) return
+  useApp.setState({ recentRubrics: pushRecent(list, ref, MAX_RECENT_RUBRICS) })
+}
+
+/**
+ * The Recent rubrics of one repertory, most recent first. Tabs saved before the list moved to the
+ * workspace contribute their own `recent` indexes after the workspace entries.
+ */
+export function recentOf(list: readonly RubricRef[], repertory: string, legacy: readonly number[] = [], max = MAX_RECENT): number[] {
+  const out: number[] = []
+  const seen = new Set<number>()
+  const add = (i: number) => { if (out.length < max && !seen.has(i)) { seen.add(i); out.push(i) } }
+  for (const r of list) { const p = parseRef(r); if (p.repertory === repertory) add(p.index) }
+  for (const i of legacy) add(i)
+  return out
 }
 
 // ───────────── taking ─────────────
@@ -207,11 +224,29 @@ export function takeToastText(log: readonly TakeRecord[], single: string): strin
 
 let takeLog: { toastId: string; log: TakeRecord[] } | null = null
 
-export function takeToast(record: TakeRecord, single: string, undo: () => void) {
+/** Is the rubric a chapter, and how many remedies does the take cover (the whole subtree with /s)? */
+function takeBreadth(ref: RubricRef, subRubrics: boolean): { chapter: boolean; remedies: number } {
+  const r = resolve(ref)
+  if (!r) return { chapter: false, remedies: 0 }
+  const chapter = r.rep.lineage(r.index).length === 1
+  if (!subRubrics) return { chapter, remedies: r.rep.remedies(r.index).length }
+  const ids = new Set<number>()
+  for (const x of subtreeRefs(r.rep, r.index)) { const y = resolve(x); if (y) y.rep.forEachRemedy(y.index, id => ids.add(id)) }
+  return { chapter, remedies: ids.size }
+}
+
+/** `warning` (a broad take) leads the toast, which then stays up longer and cannot be merged away by the next take. */
+export function takeToast(record: TakeRecord, single: string, undo: () => void, warning = '') {
   const s = st()
-  const prev = takeLog && s.toasts.some(t => t.id === takeLog!.toastId) ? takeLog : null
+  const prev = !warning && takeLog && s.toasts.some(t => t.id === takeLog!.toastId) ? takeLog : null
   if (prev) actions.dismissToast(prev.toastId)
   if (lastToast && lastToast.kind !== 'take' && s.toasts.some(t => t.id === lastToast!.id)) actions.dismissToast(lastToast.id)
+  if (warning) {
+    // its own toast: a later take must not merge it away before the warning was read
+    actions.toast(`${warning} · ${single}`, 'info', { label: 'Undo', run: undo }, 12000)
+    takeLog = null; lastToast = null
+    return
+  }
   const log = [...(prev?.log ?? []), record]
   actions.toast(takeToastText(log, single), 'success', { label: log.length > 1 ? 'Undo last' : 'Undo', run: undo })
   const t = st().toasts[st().toasts.length - 1]
@@ -291,6 +326,7 @@ export function takeRefs(refs: RubricRef[], o: TakeOptions): number {
   const what = refs.length === 1 ? refShort(refs[0]) : `${refs.length} rubrics`
   const leafNote = o.subRubrics && refs.length === 1 && (() => { const r = resolve(refs[0]); return !!r && r.rep.childCountOf(r.index) === 0 })() ? ' · no sub-rubrics' : ''
   const caseNote = newCase ? ' · new unsaved case' : ''
+  const broad = broadTakeWarning(refs.map(ref => takeBreadth(ref, o.subRubrics)))
   if (added + updated === 0) { featureToast('same', () => `Already in ${clipboardTitle(target.n, target.name)}: ${what}`, 'info'); return 0 }
   // the history entry this take pushed: Undo only undoes it while it is still the latest change
   const entry = st().past !== pastBefore ? st().past[st().past.length - 1] : null
@@ -304,7 +340,7 @@ export function takeRefs(refs: RubricRef[], o: TakeOptions): number {
   // one line, no brackets: "Taken Mind - morning · ×2 · group a → Clipboard 1"
   const how = describeTake({ ...o, clipboard: null })
   const last = `${leafText(refs[refs.length - 1])}${refs.length > 1 ? ` and ${refs.length - 1} more` : ''} ${how}`
-  takeToast({ count: added + updated, target: target.name, last }, `${verb} ${what} · ${how} → ${target.name}${leafNote}${caseNote}`, undo)
+  takeToast({ count: added + updated, target: target.name, last }, `${verb} ${what} · ${how} → ${target.name}${leafNote}${caseNote}`, undo, broad)
   return added + updated
 }
 

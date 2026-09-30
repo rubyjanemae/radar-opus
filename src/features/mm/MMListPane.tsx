@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { memo, useCallback, useMemo, useState } from 'react'
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent, RefObject } from 'react'
 import { SearchCode } from 'lucide-react'
 import type { Catalog } from '../../data/catalog'
@@ -55,6 +55,15 @@ export function MMListPane(p: {
   const activeIndex = selectedIndex >= 0 ? selectedIndex : listFocused && items.length ? 0 : -1
   // the abbreviation column is as wide as the longest abbreviation in the book
   const abbrCh = useMemo(() => items.reduce((m, it) => Math.max(m, it.abbrev.length), 4), [items])
+  const { onGo, onInfo, onMenu } = p
+  /** One delegated handler per event for every row: the row is found from its data-rid. */
+  const rowOf = (e: MouseEvent) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-rid]')
+    return el ? Number(el.dataset.rid) : null
+  }
+  const onRowClick = useCallback((e: MouseEvent) => { const id = rowOf(e); if (id != null) onGo(id) }, [onGo])
+  const onRowDouble = useCallback((e: MouseEvent) => { const id = rowOf(e); if (id != null) onInfo(id) }, [onInfo])
+  const onRowMenu = useCallback((e: MouseEvent) => { const id = rowOf(e); if (id != null) onMenu(e, id) }, [onMenu])
   const hitOn = p.markSection !== null && p.remedyId != null ? p.hits.findIndex(h => h.remedyId === p.remedyId && h.section === p.markSection) : p.hitSel
   return (
     <aside className="mm-side" style={{ width: p.width }}>
@@ -85,6 +94,9 @@ export function MMListPane(p: {
               onFocus={e => { if (e.target === e.currentTarget) setListFocused(true) }}
               onBlur={() => setListFocused(false)}
               onKeyDown={p.keys.onListKey}
+              onClick={onRowClick}
+              onDoubleClick={onRowDouble}
+              onContextMenu={onRowMenu}
             >
               {items.length === 0 ? (
                 <div className="empty-state"><strong>No remedy matches “{p.filter}”</strong><span>Boericke has {p.bookCount} monographs. Try an abbreviation or a common name.</span></div>
@@ -92,7 +104,7 @@ export function MMListPane(p: {
                 <div style={{ height: list.total, position: 'relative' }}>
                   {items.slice(list.start, list.end).map((it, k) => {
                     const i = list.start + k
-                    return <ListRow key={it.remedyId} item={it} top={i * ROW} selected={i === selectedIndex} active={i === activeIndex} onClick={() => p.onGo(it.remedyId)} onDoubleClick={() => p.onInfo(it.remedyId)} onContextMenu={e => p.onMenu(e, it.remedyId)} />
+                    return <ListRow key={it.remedyId} item={it} top={i * ROW} selected={i === selectedIndex} active={i === activeIndex} />
                   })}
                 </div>
               )}
@@ -150,10 +162,8 @@ export function MMListPane(p: {
   )
 }
 
-function ListRow({ item, top, selected, active, onClick, onDoubleClick, onContextMenu }: {
-  item: BookItem; top: number; selected: boolean; active: boolean
-  onClick: () => void; onDoubleClick: () => void; onContextMenu: (e: MouseEvent) => void
-}) {
+/** A remedy row. Memoised: moving the selection re-renders only the rows whose state changed. */
+const ListRow = memo(function ListRow({ item, top, selected, active }: { item: BookItem; top: number; selected: boolean; active: boolean }) {
   return (
     <div
       id={`mm-opt-${item.remedyId}`}
@@ -163,14 +173,10 @@ function ListRow({ item, top, selected, active, onClick, onDoubleClick, onContex
       className={`mm-row${selected ? ' on' : ''}${active && !selected ? ' active' : ''}`}
       style={{ top, height: ROW }}
       title={`${item.title}${item.commonName ? ` · ${item.commonName}` : ''}\nDouble-click: remedy information`}
-      onClick={onClick}
-      onDoubleClick={onDoubleClick}
-      onContextMenu={onContextMenu}
     >
       <span className="mm-row-abbr">{item.abbrev}</span>
       <span className="mm-row-title">{item.title}</span>
       {item.commonName && <span className="mm-row-common">{item.commonName}</span>}
     </div>
   )
-}
-
+})

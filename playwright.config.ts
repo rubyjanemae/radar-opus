@@ -13,6 +13,8 @@ export default defineConfig({
   testDir: 'e2e',
   outputDir: process.env.PW_OUTPUT ?? 'test-results',
   timeout: 60_000,
+  // assertions poll for up to 10 s: parallel runs load the machine, and waits are expectations, never sleeps
+  expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: 1,
   reporter: [['list']],
@@ -21,6 +23,8 @@ export default defineConfig({
     url: process.env.E2E_URL ?? baseURL,
     reuseExistingServer: true,
     timeout: 60_000,
+  // assertions poll for up to 10 s: parallel runs load the machine, and waits are expectations, never sleeps
+  expect: { timeout: 10_000 },
     stdout: 'ignore',
     stderr: 'pipe',
   },

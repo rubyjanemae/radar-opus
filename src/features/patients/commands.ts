@@ -18,7 +18,7 @@ export function register(catalog: Catalog) {
   const hasConsultation = () => !!ops.contextConsultationId()
 
   registerCommands([
-    { id: 'patients.open', title: 'Patients', category: 'File', keys: ['Mod+3'], allowInInput: true, keywords: 'patient list database toc', run: () => ops.openPatients() },
+    { id: 'patients.open', title: 'Patients', category: 'File', keys: ['Mod+3', 'Alt+3'], allowInInput: true, keywords: 'patient list database toc', run: () => ops.openPatients() },
     { id: 'patient.new', title: 'New patient…', category: 'File', keys: ['Mod+Alt+N'], allowInInput: true, keywords: 'create add patient', run: ops.newPatient },
     {
       id: 'consultation.new', title: 'New consultation', category: 'File', keys: ['Mod+Alt+C'], allowInInput: true, enabled: hasPatient,

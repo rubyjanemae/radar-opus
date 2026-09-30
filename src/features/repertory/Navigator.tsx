@@ -1,4 +1,4 @@
-import { memo, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Bookmark, ChevronDown, ChevronRight, History, Library, ListTree, LoaderCircle, Search, Settings2, X } from 'lucide-react'
 import { useCatalog, useRepertory } from '../../data/CatalogContext'
@@ -13,7 +13,7 @@ import { runCommand } from '../../commands/registry'
 import { useFixedVirtual } from './virtual'
 import { matchChapters } from './take'
 import { followExpanded, selectNavigatorTabId, treeRows } from './logic'
-import { goToRef, openRepertory, toggleBookmark } from './ops'
+import { goToRef, openRepertory, recentOf, toggleBookmark } from './ops'
 import { RUBRIC_MIME } from '../clipboard/logic'
 import './repertory.css'
 
@@ -29,19 +29,23 @@ function loadSections(): Record<string, boolean> {
 }
 
 export function Navigator() {
-  const tabId = useApp(selectNavigatorTabId)
+  // the navigator follows the book in a transition: switching repertories (or tabs) renders the book
+  // first, and the tree of the other repertory renders afterwards, interruptibly
+  const tabId = useDeferredValue(useApp(selectNavigatorTabId))
   const [sections, setSections] = useState(loadSections)
-  const toggleSection = (k: string) => setSections(s => {
+  const toggleSection = useCallback((k: string) => setSections(s => {
     const next = { ...s, [k]: !s[k] }
     try { localStorage.setItem('rnav.sections', JSON.stringify(next)) } catch { /* private mode */ }
     return next
-  })
+  }), [])
+  const toggleBookmarks = useCallback(() => toggleSection('bookmarks'), [toggleSection])
+  const toggleRecent = useCallback(() => toggleSection('recent'), [toggleSection])
 
   return (
     <div className="rnav">
       {tabId ? <TreeSection tabId={tabId} /> : <NoRepertory />}
-      <BookmarksSection collapsed={!!sections.bookmarks} onToggle={() => toggleSection('bookmarks')} />
-      {tabId && <RecentSection tabId={tabId} collapsed={!!sections.recent} onToggle={() => toggleSection('recent')} />}
+      <BookmarksSection collapsed={!!sections.bookmarks} onToggle={toggleBookmarks} />
+      {tabId && <RecentSection tabId={tabId} collapsed={!!sections.recent} onToggle={toggleRecent} />}
     </div>
   )
 }
@@ -67,15 +71,55 @@ function NoRepertory() {
   )
 }
 
-function TreeSection({ tabId }: { tabId: string }) {
+/**
+ * The repertory's name in the pane head, taking the free space; when the full name does not fit,
+ * the abbreviation stands in (the full name stays in the tooltip and the accessible name).
+ */
+function PaneTitle({ title, abbrev }: { title: string; abbrev: string }) {
+  const boxRef = useRef<HTMLSpanElement>(null)
+  const fullRef = useRef<HTMLSpanElement>(null)
+  const [short, setShort] = useState(false)
+  useEffect(() => {
+    const box = boxRef.current, full = fullRef.current
+    if (!box || !full) return
+    // widths come from the observer's entries (it reports every observed element once on observe),
+    // never from a synchronous layout read; the full name is always laid out, hidden when short
+    let boxW = -1, fullW = -1
+    const ro = new ResizeObserver(entries => {
+      for (const e of entries) {
+        const w = e.borderBoxSize?.[0]?.inlineSize ?? e.contentRect.width
+        if (e.target === box) boxW = e.contentBoxSize?.[0]?.inlineSize ?? e.contentRect.width
+        else if (e.target === full) fullW = w
+      }
+      if (boxW >= 0 && fullW >= 0) setShort(fullW > boxW + 0.5)
+    })
+    ro.observe(box)
+    ro.observe(full)
+    return () => ro.disconnect()
+  }, [title])
+  return (
+    <span className={`rnav-title${short ? ' rnav-title-short' : ''}`} ref={boxRef} title={title} aria-label={title}>
+      <span className="rnav-title-full" ref={fullRef}>{title}</span>
+      {short && <span className="rnav-title-abbr" aria-hidden="true">{abbrev}</span>}
+    </span>
+  )
+}
+
+/** Memoised: while the navigator waits for its deferred tab, the urgent render skips the tree. */
+const TreeSection = memo(function TreeSection({ tabId }: { tabId: string }) {
   const repertory = useApp(s => repTab(s, tabId)?.repertory ?? '')
-  const { rep, error } = useRepertory(repertory)
   const catalog = useCatalog()
+  const loading = useRepertory(repertory)
+  // a loaded repertory is taken from the catalog in this very render (the loader's state catches up
+  // in an effect): switching to a loaded book renders its tree in the navigator's transition, never
+  // the previous book's tree for the new tab
+  const rep = catalog.repertory(repertory) ?? (loading.rep?.abbrev === repertory ? loading.rep : null)
+  const error = rep ? null : loading.error
   const title = catalog.repertoryInfos.find(r => r.abbrev === repertory)?.title ?? repertory
   return (
     <div className="rnav-tree-wrap">
-      <div className="pane-head">
-        <ListTree size={13} /><span className="rnav-title" title={title}>{title}</span><span className="grow" />
+      <div className="pane-head rnav-head">
+        <ListTree size={13} /><PaneTitle title={title} abbrev={repertory} />
         <button className="icon-btn" title="Repertories (Ctrl+1)" aria-label="Repertories table of contents" onClick={() => runCommand('repertory.toc')}><Library size={13} /></button>
         <button className="icon-btn" title="Find rubric (F2)" aria-label="Find rubric" onClick={() => runCommand('nav.chapter')}><Search size={13} /></button>
       </div>
@@ -89,18 +133,19 @@ function TreeSection({ tabId }: { tabId: string }) {
           : <Tree key={rep.abbrev} tabId={tabId} rep={rep} />}
     </div>
   )
-}
+})
 
-function Tree({ tabId, rep }: { tabId: string; rep: Repertory }) {
+const Tree = memo(function Tree({ tabId, rep }: { tabId: string; rep: Repertory }) {
   const showCounts = useApp(s => s.settings.showRemedyCounts)
   // the book's current rubric; following it is deferred, so a key press in the book renders the book first
   const liveRubric = useApp(s => repTab(s, tabId)?.rubric ?? 0)
   const rubric = Math.min(useDeferredValue(liveRubric), rep.size - 1)
   const [filter, setFilter] = useState('')
-  const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => expandedByRep.get(rep.abbrev) ?? new Set())
+  // the first render already follows the current rubric (no render-phase update on mount)
+  const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => followExpanded(rep, expandedByRep.get(rep.abbrev) ?? new Set(), rubric, null))
   // the rubric (and its chapter) the tree last followed; a new current rubric re-derives the expansion
   // and puts the cursor back on it (adjusting state while rendering, not in an effect)
-  const [followed, setFollowed] = useState<{ rubric: number; chapter: number } | null>(null)
+  const [followed, setFollowed] = useState<{ rubric: number; chapter: number } | null>(() => ({ rubric, chapter: rep.chapterRoot(rubric) }))
   const [cursorAt, setCursorAt] = useState({ rubric, cursor: rubric })
   if (followed?.rubric !== rubric) {
     setExpanded(followExpanded(rep, expanded, rubric, followed?.chapter ?? null))
@@ -116,11 +161,6 @@ function Tree({ tabId, rep }: { tabId: string; rep: Repertory }) {
   const [menuTarget, setMenuTarget] = useState<number | null>(null)
   const menuOpen = cm.element != null
   const markedRow = menuOpen ? menuTarget : null
-  const openMenu = (i: number, at: { e?: React.MouseEvent; el?: HTMLElement }) => {
-    setMenuTarget(i)
-    if (at.e) cm.open(at.e, menuFor(i))
-    else if (at.el) cm.openAt(at.el, menuFor(i))
-  }
 
   const chapters = useMemo(() => {
     if (!filter.trim()) return rep.chapters
@@ -129,7 +169,8 @@ function Tree({ tabId, rep }: { tabId: string; rep: Repertory }) {
   const tree = useMemo(() => treeRows(rep, chapters, expanded), [rep, chapters, expanded])
   const rows = tree.rows
   const pos = useMemo(() => { const m = new Map<number, number>(); rows.forEach((r, k) => m.set(r, k)); return m }, [rows])
-  const v = useFixedVirtual(scrollRef, rows.length, ROW, 8, { deferScroll: true })
+  // assume a window-high pane until it is measured: the rows mount in one pass
+  const v = useFixedVirtual(scrollRef, rows.length, ROW, 8, { deferScroll: true, initialHeight: typeof window === 'undefined' ? 0 : window.innerHeight })
 
   const cursorRow = pos.get(cursor) ?? -1
   // keep the cursor in view, also when the tree pane shrinks (the Bookmarks / Recent sections grow)
@@ -156,15 +197,6 @@ function Tree({ tabId, rep }: { tabId: string; rep: Repertory }) {
     if (useApp.getState().activeTabId !== tabId) actions.activateTab(tabId)
   }
 
-  /** Row event handlers, stable across renders so unchanged rows skip rendering. */
-  const handlers = useRef<{ go: typeof go; toggle: typeof toggle; openMenu: typeof openMenu } | null>(null)
-  useLayoutEffect(() => { handlers.current = { go, toggle, openMenu } })
-  const rowActions = useMemo<RowActions>(() => ({
-    click: i => { handlers.current?.go(i); scrollRef.current?.focus() },
-    twist: i => handlers.current?.toggle(i),
-    menu: (i, e) => handlers.current?.openMenu(i, { e }),
-  }), [])
-
   const menuFor = (i: number): MenuItem[] => [
     { label: 'Show in book', run: () => go(i) },
     { label: 'Open in new tab', run: () => void goToRef(rep.ref(i), { newTab: true }) },
@@ -175,6 +207,21 @@ function Tree({ tabId, rep }: { tabId: string; rep: Repertory }) {
     { label: useApp.getState().bookmarks.some(b => b.ref === rep.ref(i)) ? 'Remove bookmark' : 'Bookmark', run: () => toggleBookmark(rep.ref(i)) },
     { label: 'Find from here…', run: () => actions.openDialog('repertory.find', { repertory: rep.abbrev, from: i }) },
   ]
+  const openMenu = (i: number, at: { e?: React.MouseEvent; el?: HTMLElement }) => {
+    setMenuTarget(i)
+    if (at.e) cm.open(at.e, menuFor(i))
+    else if (at.el) cm.openAt(at.el, menuFor(i))
+  }
+
+  /** Row event handlers, stable across renders so unchanged rows skip rendering. */
+  const handlers = useRef<{ go: typeof go; toggle: typeof toggle; openMenu: typeof openMenu } | null>(null)
+  useLayoutEffect(() => { handlers.current = { go, toggle, openMenu } })
+  const rowActions = useMemo<RowActions>(() => ({
+    click: i => { handlers.current?.go(i); scrollRef.current?.focus() },
+    twist: i => handlers.current?.toggle(i),
+    menu: (i, e) => handlers.current?.openMenu(i, { e }),
+  }), [])
+
 
   const onKeyDown = (e: ReactKeyboardEvent) => {
     if (e.target !== scrollRef.current) return
@@ -259,7 +306,7 @@ function Tree({ tabId, rep }: { tabId: string; rep: Repertory }) {
       {cm.element}
     </>
   )
-}
+})
 
 interface RowActions {
   click: (i: number) => void
@@ -293,7 +340,7 @@ const TreeRow = memo(function TreeRow({ rep, i, top, posinset, setsize, open, cu
       onContextMenu={e => act.menu(i, e)}
     >
       <span className="rnav-twist" onClick={() => kids && act.twist(i)} aria-hidden="true">
-        {kids ? (open ? <ChevronDown size={12} /> : <ChevronRight size={12} />) : null}
+        {kids ? <span className={`rnav-chev${open ? ' open' : ''}`} /> : null}
       </span>
       <span className="rnav-text">{rep.text(i)}</span>
       {showCounts && count > 0 && <span className="rnav-count" title={`${countFormat.format(count)} ${count === 1 ? 'remedy' : 'remedies'}`}>{countFormat.format(count)}</span>}
@@ -302,7 +349,7 @@ const TreeRow = memo(function TreeRow({ rep, i, top, posinset, setsize, open, cu
 })
 const countFormat = new Intl.NumberFormat()
 
-function BookmarksSection({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+const BookmarksSection = memo(function BookmarksSection({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const bookmarks = useApp(s => s.bookmarks)
   const catalog = useCatalog()
   const cm = useContextMenu()
@@ -347,24 +394,20 @@ function BookmarksSection({ collapsed, onToggle }: { collapsed: boolean; onToggl
       {cm.element}
     </section>
   )
-}
+})
 
-function RecentSection({ tabId, collapsed, onToggle }: { tabId: string; collapsed: boolean; onToggle: () => void }) {
+const RecentSection = memo(function RecentSection({ tabId, collapsed, onToggle }: { tabId: string; collapsed: boolean; onToggle: () => void }) {
   const tab = useApp(s => repTab(s, tabId))
+  const recentRubrics = useApp(s => s.recentRubrics)
   const catalog = useCatalog()
   const rep = tab ? catalog.repertory(tab.repertory) : undefined
+  // the workspace Recent list (saved with the workspace) for this repertory, then the list a tab saved
+  // before it existed; with neither, the tab's jump history
   const recent = useMemo(() => {
     if (!tab) return []
-    if (tab.recent?.length) return tab.recent.slice(0, 15)
-    // tabs from before the Recent list existed: fall back to the jump history
-    const seen = new Set<number>()
-    const out: number[] = []
-    for (let k = tab.back.length - 1; k >= 0 && out.length < 15; k--) {
-      const r = tab.back[k]
-      if (!seen.has(r)) { seen.add(r); out.push(r) }
-    }
-    return out
-  }, [tab])
+    const out = recentOf(recentRubrics, tab.repertory, tab.recent, 15)
+    return (out.length ? out : recentOf([], tab.repertory, [...tab.back].reverse(), 15)).filter(r => !rep || r < rep.size)
+  }, [tab, recentRubrics, rep])
   if (!rep || !tab) return null
   return (
     <section className={`rnav-sec${collapsed ? ' collapsed' : ''}`} aria-label="Recent rubrics">
@@ -390,4 +433,4 @@ function RecentSection({ tabId, collapsed, onToggle }: { tabId: string; collapse
       )}
     </section>
   )
-}
+})

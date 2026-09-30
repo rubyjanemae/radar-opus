@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { Catalog } from '../../data/catalog'
 import { actions, selectActiveConsultation, useApp } from '../../state/store'
 import { DEFAULT_TAKE } from './take'
-import { clipboardMembership, clipboardTitle, currentRefs, ensureClipboard, existingSymptom, highlightRemedy, openRepertory, remedyMenuItems, subtreeRefs, setRepertoryCatalog, takePatch, takeRefs, takeToastText, takeUndoLabel, toggleBookmark } from './ops'
+import { clipboardMembership, clipboardTitle, currentRefs, ensureClipboard, existingSymptom, highlightRemedy, openRepertory, recentOf, remedyMenuItems, subtreeRefs, setRepertoryCatalog, takePatch, takeRefs, takeToastText, takeUndoLabel, toggleBookmark } from './ops'
 import { parseTake } from './take'
 import type { TakeOptions } from './take'
 import { getHighlight } from './highlight'
@@ -20,7 +20,7 @@ setRepertoryCatalog(catalog)
 const consultation = () => selectActiveConsultation(useApp.getState())!
 
 beforeEach(() => {
-  useApp.setState({ patients: {}, consultations: {}, activeConsultationId: null, activeClipboardId: null, selectedSymptomIds: [], past: [], future: [], toasts: [], bookmarks: [], tabs: [], activeTabId: null })
+  useApp.setState({ patients: {}, consultations: {}, activeConsultationId: null, activeClipboardId: null, selectedSymptomIds: [], past: [], future: [], toasts: [], bookmarks: [], tabs: [], activeTabId: null, recentRubrics: [] })
 })
 
 describe('taking rubrics', () => {
@@ -89,13 +89,17 @@ describe('taking rubrics', () => {
     expect(text).toMatch(/^Taken .+ · ×2 → Clipboard 1/)
     expect(text).not.toMatch(/[()]/)
   })
-  it('records taken rubrics in the Recent list of the repertory tab', () => {
+  it('records taken rubrics in the workspace Recent list', () => {
     actions.openTab({ kind: 'repertory', repertory: 't', rubric: 0, back: [], forward: [] }, { reuse: false })
     takeRefs(['t:2'], { ...DEFAULT_TAKE })
     takeRefs(['t:3'], { ...DEFAULT_TAKE })
     takeRefs(['t:2'], { ...DEFAULT_TAKE, weight: 2 })
-    const tab = useApp.getState().tabs[0]
-    expect(tab.kind === 'repertory' && tab.recent).toEqual([2, 3])
+    expect(useApp.getState().recentRubrics).toEqual(['t:2', 't:3'])
+    // kept when the tab closes (workspace state, saved by the autosave)
+    actions.closeTab(useApp.getState().tabs[0].id)
+    expect(useApp.getState().recentRubrics).toEqual(['t:2', 't:3'])
+    expect(recentOf(useApp.getState().recentRubrics, 't', [5, 2])).toEqual([2, 3, 5])
+    expect(recentOf(['x:1', 't:4'], 't')).toEqual([4])
   })
   it('creates clipboards up to the requested number and keeps the active one', () => {
     takeRefs(['t:4'], { ...DEFAULT_TAKE, clipboard: 3 })

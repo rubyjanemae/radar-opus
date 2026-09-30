@@ -123,7 +123,7 @@ function CaseHeader({ consultation }: { consultation: Consultation | null }) {
         {consultation ? (
           <>
             <span className="cbp-case-patient">{name}</span>
-            <span className="cbp-case-cons">{consultation.title || 'Consultation'} · {formatDate(consultation.date)}</span>
+            <span className="cbp-case-cons">{consultation.title || 'Consultation'}<span className="cbp-case-date"> · {formatDate(consultation.date)}</span></span>
           </>
         ) : <span className="cbp-case-none">No active case</span>}
         <ChevronDown size={14} className="cbp-case-caret" />
@@ -684,7 +684,7 @@ const SymptomRow = memo(function SymptomRow(p: RowProps) {
               {labels.map((l, i) => (
                 <li key={s.rubrics[i]} onDoubleClick={e => { e.stopPropagation(); ops.openRubric(s.rubrics[i]) }}>
                   <span className="cbp-op-sm">{i === 0 ? '' : op}</span>
-                  <RubricText l={l} failed={p.failed} />
+                  <span className="cbp-part-text"><RubricText l={l} failed={p.failed} /></span>
                 </li>
               ))}
             </ul>

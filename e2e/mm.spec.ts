@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { openApp } from './helpers'
+import { installRenderCounter, openApp, openRemedy, settle, takeRenders, withinBudget } from './helpers'
 
 const reader = (page: Page) => page.locator('.mm-reader')
 
@@ -122,16 +122,16 @@ test('remedy picker (Ctrl+4) and the remedy information window', async ({ page }
 
   // Open in MM from the remedy window
   await page.keyboard.press('Control+4')
-  await page.keyboard.type('sepia')
+  await expect(page.getByRole('dialog', { name: 'Remedies' })).toBeVisible()
+  await page.getByLabel('Search remedies').fill('sepia')
+  await expect(page.getByRole('dialog', { name: 'Remedies' }).getByRole('option').first()).toContainText('Sep')
   await page.keyboard.press('Alt+Enter')
   await expect(reader(page).locator('.mm-head h1')).toHaveText('SEPIA OFFICINALIS')
 })
 
 test('remedy without a monograph shows a helpful state', async ({ page }) => {
   await openApp(page)
-  await page.keyboard.press('Control+4')
-  await page.keyboard.type('Accipiter')
-  await page.keyboard.press('Enter')
+  await openRemedy(page, 'Accipiter')
   const view = page.locator('.tab-doc[data-active] .ri-view')
   await expect(view.locator('.ri-nomono')).toContainText('No monograph in Boericke')
   await expect(view.getByRole('button', { name: /Open in MM/ })).toBeDisabled()
@@ -234,9 +234,7 @@ test.describe('remedy information window at 1152x720', () => {
 
   test('fits with the side panes open; keynotes survive a repertory switch; keys work after tab switch', async ({ page }) => {
     await openApp(page)
-    await page.keyboard.press('Control+4')
-    await page.keyboard.type('sulphur')
-    await page.keyboard.press('Enter')
+    await openRemedy(page, 'sulphur', /Sulph/)
     const view = page.locator('.tab-doc[data-active] .ri-view')
     await expect(view.locator('h1')).toHaveText('Sulphur')
     // name and actions on their own rows, secondary actions in a More menu
@@ -277,9 +275,7 @@ test('relationships that trailed other sections are parsed (Ars, Lyc→Calc, Cal
   await openApp(page)
   const view = page.locator('.tab-doc[data-active] .ri-view')
   const open = async (q: string, name: string) => {
-    await page.keyboard.press('Control+4')
-    await page.keyboard.type(q)
-    await page.keyboard.press('Enter')
+    await openRemedy(page, q, new RegExp(`^${q}`, 'i'))
     await expect(view.locator('h1')).toHaveText(name)
     await view.getByRole('tab', { name: 'Relationships' }).click()
   }
@@ -359,9 +355,7 @@ for (const vp of [{ width: 1440, height: 900 }, { width: 1152, height: 720 }]) {
 
     test('remedy window shows the full name; MM toolbar controls stay reachable', async ({ page }) => {
       await openApp(page)
-      await page.keyboard.press('Control+4')
-      await page.keyboard.type('nat-m')
-      await page.keyboard.press('Enter')
+      await openRemedy(page, 'nat-m', /Nat-m/)
       const h1 = page.locator('.ri-view h1')
       await expect(h1).toHaveText('Natrium Muriaticum')
       expect(await h1.evaluate(el => el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().width > 0)).toBe(true)
@@ -412,12 +406,11 @@ test('materia medica: the remedy list can be hidden (L) and search shows it agai
 
 test('remedy window: families expand into a virtual grid; sources and notes', async ({ page }) => {
   await openApp(page)
-  await page.keyboard.press('Control+4')
-  await page.keyboard.type('puls')
-  await page.keyboard.press('Enter')
+  await openRemedy(page, 'puls', /Puls/)
   const view = page.locator('.tab-doc[data-active] .ri-view')
   await view.getByRole('tab', { name: 'Families' }).click()
   const plants = view.locator('.ri-relgroup', { hasText: /Kingdom: Plant/i })
+  await expect(plants.locator('h3 .badge')).toHaveText(/\d{3,}/)
   const total = Number((await plants.locator('h3 .badge').textContent())!.replace(/\D/g, ''))
   expect(total).toBeGreaterThan(500)
   expect(await plants.locator('.ri-chip').count()).toBeLessThanOrEqual(40)
@@ -465,6 +458,7 @@ test('remedy picker: announces the count, list is focusable, Esc gives focus bac
   await expect(list).toBeFocused()
   await page.keyboard.press('Control+4')
   const dlg = page.getByRole('dialog', { name: 'Remedies' })
+  await expect(dlg).toBeVisible()
   await page.keyboard.type('nat')
   await expect(dlg.getByRole('status')).toHaveText(/^\d+ remedies match$/)
   // the list is a tab stop and navigable itself
@@ -484,9 +478,7 @@ test('relationships: labels ending in “.”, “;” or “.:” (Apis, Nux-v)
   await openApp(page)
   const view = page.locator('.tab-doc[data-active] .ri-view')
   const open = async (q: string, name: RegExp) => {
-    await page.keyboard.press('Control+4')
-    await page.keyboard.type(q)
-    await page.keyboard.press('Enter')
+    await openRemedy(page, q, new RegExp(`^${q}`, 'i'))
     await expect(view.locator('h1')).toHaveText(name)
     await view.getByRole('tab', { name: 'Relationships' }).click()
   }
@@ -522,4 +514,85 @@ test('materia medica: active option on focus, plain subtitles, results active de
   await hits.focus()
   await page.keyboard.press('ArrowDown')
   await expect(hits).toHaveAttribute('aria-activedescendant', /^mm-hit-\d+$/)
+})
+
+test('remedy information opens without a long task; citations and keynotes arrive', async ({ page }) => {
+  await openMM(page)
+  await page.getByRole('listbox', { name: 'Boericke remedies' }).getByRole('option').nth(3).click()
+  await expect(reader(page).locator('.mm-head h1')).toBeVisible()
+  await settle(page)
+  await page.evaluate(() => {
+    const w = window as unknown as { __lt: number[] }
+    w.__lt = []
+    new PerformanceObserver(l => { for (const e of l.getEntries()) w.__lt.push(e.duration) }).observe({ type: 'longtask' })
+  })
+  await page.keyboard.press('Control+k')
+  await page.keyboard.type('Remedy information')
+  await expect(page.getByRole('option', { name: /Remedy information/ }).first()).toBeVisible()
+  await page.evaluate(() => { (window as unknown as { __lt: number[] }).__lt = [] })
+  await page.keyboard.press('Enter')
+  const view = page.locator('.tab-doc[data-active] .ri-view')
+  await expect(view.locator('.ri-mono-text p').first()).toBeVisible()
+  await expect(view.locator('.ri-facts')).not.toContainText('…', { timeout: 15000 })
+  await settle(page)
+  const lt = await page.evaluate(() => (window as unknown as { __lt: number[] }).__lt)
+  // the dev server's React is several times slower than production: allow for it there
+  expect(Math.max(0, ...lt)).toBeLessThan(process.env.E2E_URL?.includes('4173') ? 50 : 120)
+})
+
+test('materia medica: ArrowDown moves the selection within a frame; the monograph follows', async ({ page }) => {
+  await openMM(page)
+  const list = page.getByRole('listbox', { name: 'Boericke remedies' })
+  await list.getByRole('option').nth(0).click()
+  await expect(reader(page).locator('.mm-head h1')).toHaveText(/ABIES CANADENSIS/)
+  await list.focus()
+  // time from each keydown to the selection moving in the DOM (the monograph renders after, deferred)
+  await page.evaluate(() => {
+    const w = window as unknown as { __mmLat: number[]; __mmT: number }
+    w.__mmLat = []
+    const box = document.querySelector('.mm-list')!
+    box.addEventListener('keydown', () => { w.__mmT = performance.now() }, { capture: true })
+    new MutationObserver(recs => {
+      if (recs.some(r => r.attributeName === 'aria-selected' && (r.target as Element).getAttribute('aria-selected') === 'true') && w.__mmT) {
+        w.__mmLat.push(performance.now() - w.__mmT); w.__mmT = 0
+      }
+    }).observe(box, { attributes: true, subtree: true, attributeFilter: ['aria-selected'] })
+  })
+  for (let i = 0; i < 20; i++) { await page.keyboard.press('ArrowDown'); await page.waitForTimeout(60) }
+  const lat = await page.evaluate(() => (window as unknown as { __mmLat: number[] }).__mmLat)
+  expect(lat.length).toBeGreaterThanOrEqual(18)
+  lat.sort((a, b) => a - b)
+  const median = lat[Math.floor(lat.length / 2)]
+  // production target is one frame; the dev server's React is several times slower
+  expect(median).toBeLessThan(process.env.E2E_URL?.includes('4173') ? 16 : 60)
+  // the reader catches up with the selection
+  const sel = await list.locator('[aria-selected="true"] .mm-row-title').textContent()
+  await expect(reader(page).locator('.mm-head h1')).toHaveText(new RegExp(sel!.trim().split(/\s+/)[0], 'i'))
+  await expect(list).toBeFocused()
+})
+
+test('browser-safe alternates: Alt+Shift+2 opens the materia medica, Alt+Shift+4 the remedy picker', async ({ page }) => {
+  await openApp(page)
+  await page.keyboard.press('Alt+Shift+2')
+  await expect(page.getByRole('listbox', { name: 'Boericke remedies' })).toBeVisible()
+  await page.keyboard.press('Alt+Shift+4')
+  await expect(page.getByRole('dialog')).toBeVisible()
+})
+
+test('materia medica: moving the remedy cursor re-renders only the MM tab, not the tab strip', async ({ page }) => {
+  await installRenderCounter(page)
+  await openMM(page)
+  const list = page.getByRole('listbox', { name: 'Boericke remedies' })
+  await list.getByRole('option').nth(0).click()
+  await expect(reader(page).locator('.mm-head h1')).toHaveText(/ABIES CANADENSIS/)
+  await list.focus()
+  await takeRenders(page)
+  for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowDown')
+  // the MM tab's subtitle follows the remedy (its title did change), the strip itself stays put
+  const sel = list.locator('[aria-selected="true"] .mm-row-title')
+  await expect(page.locator('.tab.active .tab-sub')).not.toHaveText('Abies-c')
+  await expect.poll(async () => (await sel.textContent())?.trim().length ?? 0).toBeGreaterThan(0)
+  const r = await takeRenders(page)
+  expect(r.TabStrip ?? 0, 'TabStrip').toBe(0)
+  expect(r.MenuBar ?? 0, 'MenuBar').toBe(0)
 })

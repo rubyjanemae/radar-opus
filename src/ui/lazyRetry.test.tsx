@@ -26,6 +26,16 @@ describe('lazyRetry', () => {
     expect(load).toHaveBeenCalledTimes(2)
   })
 
+  it('renders a preloaded module at once, without showing the Suspense fallback', async () => {
+    const load = vi.fn(() => Promise.resolve({ Hello: () => <p>hello</p> }))
+    const Hello = lazyRetry(load, m => m.Hello)
+    await Hello.preload()
+    const { container } = render(<Suspense fallback={<p>loading</p>}><Hello /></Suspense>)
+    // synchronously on the first render: no fallback, no reveal throttle
+    expect(container.textContent).toBe('hello')
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
   it('reads the failed module URL and recognises chunk errors', () => {
     expect(failedModuleUrl(new TypeError('Failed to fetch dynamically imported module: http://x/assets/A-1.js'))).toBe('http://x/assets/A-1.js')
     expect(failedModuleUrl(new TypeError('error loading dynamically imported module: http://x/a.js'))).toBe('http://x/a.js')

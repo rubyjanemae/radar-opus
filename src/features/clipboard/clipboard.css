@@ -23,6 +23,11 @@
 .cbp-case-btn:hover, .cbp-case-btn[aria-expanded="true"] { background: var(--bg-hover); border-color: var(--border); }
 .cbp-case-patient { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
 .cbp-case-cons { color: var(--text-3); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 0; }
+/* the patient name keeps priority: the consultation title and date go first when the dock is narrow */
+.cbp { container-type: inline-size; container-name: cbp; }
+.cbp-case-date { white-space: nowrap; }
+@container cbp (max-width: 340px) { .cbp-case-date { display: none; } }
+@container cbp (max-width: 240px) { .cbp-case-cons { display: none; } }
 .cbp-case-none { color: var(--text-3); flex: 1; }
 .cbp-case-caret { flex: none; align-self: center; color: var(--text-3); }
 
@@ -70,8 +75,8 @@
 .cbp-warn { display: flex; align-items: center; gap: 6px; margin: 4px 6px; padding: 4px 8px; border-radius: 4px; background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--text); font-size: var(--fs-xs); }
 
 .cbp-row {
-  position: relative; display: grid; grid-template-columns: 20px 32px minmax(0, 1fr) auto; align-items: start; column-gap: 6px;
-  min-height: var(--row); padding: 3px 8px 3px 4px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  position: relative; display: grid; grid-template-columns: 20px 32px minmax(0, 1fr) auto; align-items: start; align-content: center; column-gap: 6px;
+  min-height: var(--row); padding: 2px 8px 2px 4px; box-sizing: border-box; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   font-size: var(--fs-sm); line-height: 18px; outline: none; user-select: none;
 }
 .cbp-row:hover { background: var(--bg-hover); }
@@ -100,12 +105,12 @@
 .cbp-int.w3 .cbp-int-num, .cbp-int.w4 .cbp-int-num { color: var(--accent); font-weight: 800; }
 
 .cbp-text { min-width: 0; }
-/* rubric text wraps in full (no truncation): the whole symptom is always readable */
-.cbp-path { overflow-wrap: anywhere; }
+/* one line per rubric (uniform 24px rows); the full path is in the row's title tooltip */
+.cbp-path { height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cbp-chapter { font-weight: 700; text-transform: uppercase; letter-spacing: .02em; font-size: .92em; color: var(--text); }
 .cbp-rest { color: var(--text); }
 .cbp-chapter + .cbp-rest::before { content: " – "; color: var(--text-3); font-weight: 400; }
-.cbp-loading { display: block; overflow-wrap: anywhere; color: var(--text-3); font-style: italic; }
+.cbp-loading { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); font-style: italic; }
 .cbp-loading > .cbp-skel { margin-right: 6px; vertical-align: middle; }
 .cbp-parts .cbp-loading { display: inline; }
 .cbp-skel {
@@ -118,11 +123,11 @@
 @media (prefers-reduced-motion: reduce) { .cbp-skel { animation: none; } }
 .cbp-combined-head { display: flex; align-items: flex-start; gap: 5px; color: var(--text-2); font-size: var(--fs-xs); font-weight: 600; }
 .cbp-combined-head .cbp-op { flex: none; margin-top: 1px; }
-.cbp-combined-label { min-width: 0; overflow-wrap: anywhere; }
+.cbp-combined-label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cbp-op { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 3px; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 12px; }
 .cbp-parts { list-style: none; margin: 1px 0 0; padding: 0 0 0 4px; border-left: 2px solid var(--accent-soft); }
 .cbp-parts li { display: flex; gap: 4px; line-height: 17px; }
-.cbp-parts li > :last-child { min-width: 0; overflow-wrap: anywhere; }
+.cbp-parts li > :last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cbp-op-sm { flex: none; width: 10px; color: var(--accent); font-weight: 700; }
 
 .cbp-meta { display: flex; align-items: center; gap: 3px; height: 18px; }

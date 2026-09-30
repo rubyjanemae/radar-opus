@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { openApp, waitForSaved } from './helpers'
+import { openApp, settle, waitForSaved } from './helpers'
 
 const view = (page: Page) => page.getByTestId('analysis-view')
 const headers = (page: Page) => view(page).locator('.an-hcell')
@@ -569,4 +569,116 @@ test('the repertory view (minimum grade) applies before scoring', async ({ page 
   await view(page).getByRole('button', { name: 'Show all grades' }).click()
   await expect(view(page).locator('.an-pill.view')).toHaveCount(0)
   await expect(view(page).locator('.an-row').first().locator('.an-size')).toHaveText(String(size))
+})
+
+test('first F8 renders the grid fast and autosave settles to Saved', async ({ page }) => {
+  // the seeded demo case: F8 straight after start-up
+  const t0 = Date.now()
+  await page.keyboard.press('F8')
+  await expect(view(page)).toBeVisible()
+  await expect(headers(page).first()).toBeVisible({ timeout: 10_000 })
+  const gridMs = Date.now() - t0
+  // generous for CI: about 0.5 s locally; the regression was 8 to 12 s of skeleton
+  expect(gridMs).toBeLessThan(4000)
+  await expect(page.locator('.save-ind')).toHaveAttribute('data-state', 'saved', { timeout: 3000 })
+  await expect(page.locator('.save-ind')).toHaveText(/Saved/)
+  await expect(page.locator('.save-ind .spin')).toHaveCount(0)
+})
+
+test('overflowing remedy columns show a right-edge cue that scrolls to them', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.keyboard.press('F8')
+  await expect(headers(page).first()).toBeVisible({ timeout: 20_000 })
+  const grid = view(page).locator('.an-grid')
+  await expect(view(page).locator('.an-grid-fade')).toBeVisible()
+  const more = view(page).locator('.an-more-cols')
+  await expect(more).toHaveText(/^\d+ more remedies ›$/)
+  const hidden = Number((await more.textContent())!.match(/\d+/)![0])
+  // the last visible column is whole: it ends at the scroll box's edge
+  const box = (await grid.boundingBox())!
+  const edges = await headers(page).evaluateAll(els => els.map(e => e.getBoundingClientRect().right))
+  const inside = edges.filter(r => r <= box.x + box.width + 0.5)
+  expect(Math.abs(Math.max(...inside) - (box.x + (await grid.evaluate(e => e.clientWidth))))).toBeLessThanOrEqual(1)
+  await more.click()
+  await expect.poll(() => grid.evaluate(e => e.scrollLeft)).toBeGreaterThan(0)
+  await expect.poll(async () => Number(((await more.textContent()) ?? '0').match(/\d+/)?.[0] ?? 0)).toBeLessThan(hidden)
+})
+
+test('clipboard chips in the analysis toolbar look like the clipboard pane tabs', async ({ page }) => {
+  await page.keyboard.press('F8')
+  await expect(headers(page).first()).toBeVisible({ timeout: 20_000 })
+  const chip = view(page).locator('.an-chips .an-chip').first()
+  const tab = page.getByTestId('clipboard-panel').locator('.cbp-chip').first()
+  const style = (el: Element) => { const s = getComputedStyle(el); return [s.borderRadius, s.height, s.fontSize] }
+  expect(await chip.evaluate(style)).toEqual(await tab.evaluate(style))
+  await expect(chip.locator('.cbp-chip-num')).toHaveText('1')
+  await expect(chip.locator('.cbp-chip-count')).toBeVisible()
+})
+
+test('first F8 at 1920×1080 in dark mode shows the grid fast, every visible column in the first commit', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await expect.poll(() => page.evaluate(() => innerWidth)).toBe(1920)
+  await settle(page)
+  const t0 = Date.now()
+  await page.keyboard.press('F8')
+  await expect(headers(page).first()).toBeVisible({ timeout: 10_000 })
+  expect(Date.now() - t0).toBeLessThan(4000)
+  // the grid fills the pane at once: no column is missing on the right of the visible area
+  const box = await view(page).locator('.an-grid').boundingBox()
+  const last = await headers(page).evaluateAll(els => Math.max(...els.map(e => e.getBoundingClientRect().right)))
+  expect(last).toBeGreaterThanOrEqual(box!.x + box!.width - 40)
+  await expect(page.locator('.save-ind')).toHaveAttribute('data-state', 'saved', { timeout: 5000 })
+})
+
+test('analysis toolbar: no orphan ellipsis, controls 24px high', async ({ page }) => {
+  await page.keyboard.press('F8')
+  await expect(headers(page).first()).toBeVisible()
+  const tb = view(page).getByRole('toolbar', { name: 'Analysis toolbar' })
+  // the remedy count reads "125 remedies" once there is a result, never a bare "…"
+  await expect(tb.locator('.an-count')).toHaveText(/^\d[\d,]* remedies$/)
+  for (const sel of ['.an-select', '.an-seg', '.an-tb-btn', '.an-rbox']) {
+    const h = await tb.locator(sel).first().evaluate(e => e.getBoundingClientRect().height)
+    expect(h, sel).toBe(24)
+  }
+})
+
+test('switching displays answers within 100 ms; cards are virtualised', async ({ page }) => {
+  await page.keyboard.press('F8')
+  await expect(headers(page).first()).toBeVisible()
+  // the bars and cards code is prefetched in idle time after the grid shows
+  await settle(page)
+  await view(page).getByRole('radio', { name: 'Grid' }).focus()
+  // [ms until the segmented control shows the choice, ms until the display is on screen]
+  const timeSwitch = (key: string, sel: string) => page.evaluate(([key, sel]) => new Promise<[number, number]>(done => {
+    const t0 = performance.now()
+    let pressed = 0
+    document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    const tick = () => {
+      if (!pressed && document.querySelector('.an-seg [aria-checked="true"]')?.getAttribute('title')?.endsWith(`(${key.toUpperCase()})`)) pressed = performance.now() - t0
+      if (pressed && document.querySelector(sel)) done([pressed, performance.now() - t0])
+      else requestAnimationFrame(tick)
+    }
+    tick()
+  }), [key, sel] as const)
+  // a production build shows each display within 100 ms (about 30-70 ms); the dev server's React runs several times slower
+  const dev = await page.evaluate(() => !!document.querySelector('script[src*="@vite/client"]'))
+  for (const [key, sel] of [['b', '.an-keep.on .an-bar-row'], ['c', '.an-keep.on .an-card'], ['g', '.an-keep.on .an-hcell'], ['c', '.an-keep.on .an-card']] as const) {
+    const [pressed, shown] = await timeSwitch(key, sel)
+    expect(pressed, `${key} pressed`).toBeLessThan(100)
+    expect(shown, `${key} shown`).toBeLessThan(dev ? 400 : 100)
+  }
+  // Top All: thousands of remedies, only the visible card rows are in the DOM
+  await view(page).getByLabel('Remedies shown').selectOption({ label: 'Top All' })
+  await expect(view(page).locator('.an-count strong')).not.toHaveText('')
+  const cards = view(page).locator('.an-keep.on .an-card')
+  await expect(cards.first()).toBeVisible()
+  expect(await cards.count()).toBeLessThan(120)
+  // keyboard: End reaches the last card (rendered on demand), Home the first
+  await cards.first().focus()
+  await page.keyboard.press('End')
+  const lastRank = await view(page).locator('.an-keep.on .an-card:focus .an-card-rank').textContent()
+  expect(Number(lastRank!.replace(/\D/g, '') || 0)).toBeGreaterThan(100)
+  await page.keyboard.press('Home')
+  await expect(view(page).locator('.an-keep.on .an-card:focus')).toContainText('#1')
 })

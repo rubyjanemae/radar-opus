@@ -22,32 +22,15 @@ export class RemedyIndex {
   /** Highest grade used in this repertory (Kent: 3, some books: 4). */
   readonly maxGrade: Grade
 
-  constructor(rep: Repertory) {
+  /** Build synchronously (tests, and callers that need the index right now). */
+  constructor(rep: Repertory, built?: BuiltArrays) {
     this.rep = rep
-    const { offsets, data } = rep.rawEntries()
-    const total = offsets[rep.size] ?? data.length
-    let maxId = 0, maxCode = 0
-    for (let k = 0; k < total; k++) {
-      const v = data[k], id = v >> 2
-      if (id > maxId) maxId = id
-      if ((v & 3) > maxCode) maxCode = v & 3
-    }
-    const count = new Int32Array(maxId + 2)
-    for (let k = 0; k < total; k++) count[(data[k] >> 2) + 1]++
-    for (let id = 1; id < count.length; id++) count[id] += count[id - 1]
-    this.start = count
-    const rubrics = new Int32Array(total), grades = new Uint8Array(total)
-    const fill = count.slice(0, maxId + 1)
-    for (let i = 0, n = rep.size; i < n; i++) {
-      for (let k = offsets[i], e = offsets[i + 1]; k < e; k++) {
-        const v = data[k], p = fill[v >> 2]++
-        rubrics[p] = i
-        grades[p] = (v & 3) + 1
-      }
-    }
-    this.rubrics = rubrics
-    this.grades = grades
-    this.maxGrade = (maxCode + 1) as Grade
+    let b = built
+    if (!b) { const it = buildSteps(rep); let r = it.next(); while (!r.done) r = it.next(); b = r.value }
+    this.start = b.start
+    this.rubrics = b.rubrics
+    this.grades = b.grades
+    this.maxGrade = b.maxGrade
   }
 
   /** The slice of `rubrics` / `grades` that belongs to a remedy: [from, to). */
@@ -74,6 +57,73 @@ export class RemedyIndex {
     if (!s) { s = computeStats(this, remedyId); this.statsCache.set(remedyId, s) }
     return s
   }
+}
+
+interface BuiltArrays { start: Int32Array; rubrics: Int32Array; grades: Uint8Array; maxGrade: Grade }
+
+/** Entries processed between deadline checks while building. */
+const STEP = 32768
+
+/**
+ * The counting sort, as a generator that yields every STEP entries so an async build can give
+ * the main thread back between slices (see `buildRemedyIndexChunked`).
+ */
+function* buildSteps(rep: Repertory): Generator<void, BuiltArrays, void> {
+  const { offsets, data } = rep.rawEntries()
+  const total = offsets[rep.size] ?? data.length
+  let maxId = 0, maxCode = 0
+  for (let k0 = 0; k0 < total; k0 += STEP) {
+    for (let k = k0, e = Math.min(total, k0 + STEP); k < e; k++) {
+      const v = data[k], id = v >> 2
+      if (id > maxId) maxId = id
+      if ((v & 3) > maxCode) maxCode = v & 3
+    }
+    yield
+  }
+  const count = new Int32Array(maxId + 2)
+  for (let k0 = 0; k0 < total; k0 += STEP) {
+    for (let k = k0, e = Math.min(total, k0 + STEP); k < e; k++) count[(data[k] >> 2) + 1]++
+    yield
+  }
+  for (let id = 1; id < count.length; id++) count[id] += count[id - 1]
+  const rubrics = new Int32Array(total), grades = new Uint8Array(total)
+  const fill = count.slice(0, maxId + 1)
+  let done = 0
+  for (let i = 0, n = rep.size; i < n; i++) {
+    for (let k = offsets[i], e = offsets[i + 1]; k < e; k++) {
+      const v = data[k], p = fill[v >> 2]++
+      rubrics[p] = i
+      grades[p] = (v & 3) + 1
+    }
+    done += offsets[i + 1] - offsets[i]
+    if (done >= STEP) { done = 0; yield }
+  }
+  return { start: count, rubrics, grades, maxGrade: (maxCode + 1) as Grade }
+}
+
+/** Time slice per task while building in the background (ms). */
+const SLICE_MS = 8
+
+/**
+ * Build a remedy index in slices of ~8 ms, yielding to the event loop between them, so building
+ * the index of a ~1M-entry repertory never blocks input or paint with a long task.
+ */
+export function buildRemedyIndexChunked(rep: Repertory): Promise<RemedyIndex> {
+  const it = buildSteps(rep)
+  return new Promise((resolve, reject) => {
+    const slice = () => {
+      try {
+        const end = performance.now() + SLICE_MS
+        for (;;) {
+          const r = it.next()
+          if (r.done) { resolve(new RemedyIndex(rep, r.value)); return }
+          if (performance.now() >= end) break
+        }
+        setTimeout(slice, 0)
+      } catch (e) { reject(e) }
+    }
+    slice()
+  })
 }
 
 export interface ChapterShare {
@@ -125,18 +175,22 @@ function computeStats(idx: RemedyIndex, remedyId: number): RemedyStats {
 
 const cache = new WeakMap<Repertory, RemedyIndex>()
 const pending = new WeakMap<Repertory, Promise<RemedyIndex>>()
+/** Chunked builds in flight (an urgent request joins an idle build that has already started). */
+const building = new WeakMap<Repertory, Promise<RemedyIndex>>()
 const listeners = new Set<() => void>()
 let version = 0
 
 /** The (cached) remedy index of a repertory, built now if needed. Prefer `remedyIndexIfReady` in render. */
 export function remedyIndex(rep: Repertory): RemedyIndex {
-  let idx = cache.get(rep)
-  if (!idx) {
-    idx = new RemedyIndex(rep)
-    cache.set(rep, idx)
-    version++
-    for (const fn of listeners) fn()
-  }
+  return cache.get(rep) ?? publish(rep, new RemedyIndex(rep))
+}
+
+function publish(rep: Repertory, idx: RemedyIndex): RemedyIndex {
+  const hit = cache.get(rep)
+  if (hit) return hit
+  cache.set(rep, idx)
+  version++
+  for (const fn of listeners) fn()
   return idx
 }
 
@@ -148,16 +202,27 @@ export function remedyIndexIfReady(rep: Repertory): RemedyIndex | null {
 type IdleGlobal = { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }
 
 /**
- * Build the index off the critical path: in an idle callback, or on the next task when
- * `urgent` (someone is waiting for it). Resolves with the index; repeated calls share one build.
+ * Build the index off the critical path, in ~8 ms slices: starting in an idle callback, or on the
+ * next task when `urgent` (someone is waiting for it). Resolves with the index; repeated calls share one build.
  */
 export function warmRemedyIndex(rep: Repertory, urgent = false): Promise<RemedyIndex> {
   const hit = cache.get(rep)
   if (hit) return Promise.resolve(hit)
   let p = pending.get(rep)
   if (p && !urgent) return p
+  // both paths build in slices (never one long task); `urgent` only skips waiting for idle time
   const run = new Promise<RemedyIndex>((resolve, reject) => {
-    const go = () => { try { resolve(remedyIndex(rep)) } catch (e) { reject(e) } }
+    const go = () => {
+      const hit = cache.get(rep)
+      if (hit) { resolve(hit); return }
+      let b = building.get(rep)
+      if (!b) {
+        b = buildRemedyIndexChunked(rep).then(idx => publish(rep, idx))
+        building.set(rep, b)
+        void b.finally(() => building.delete(rep)).catch(() => {})
+      }
+      b.then(resolve, reject)
+    }
     const idle = (globalThis as IdleGlobal).requestIdleCallback
     if (!urgent && idle) idle(go, { timeout: 3000 })
     else setTimeout(go, 0)

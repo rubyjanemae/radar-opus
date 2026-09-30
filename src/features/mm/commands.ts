@@ -25,7 +25,8 @@ export function register(catalog: Catalog) {
 
   registerCommands([
     {
-      id: 'mm.open', title: 'Materia medica', category: 'Tools', keys: ['Mod+2'], allowInInput: true, keywords: 'references boericke book library reader',
+      // Alt+1..9 select clipboards, so the browser-safe alternates (Ctrl+digit switches browser tabs) add Shift
+      id: 'mm.open', title: 'Materia medica', category: 'Tools', keys: ['Mod+2', 'Alt+Shift+2'], allowInInput: true, keywords: 'references boericke book library reader',
       run: () => {
         const t = activeRemedyTab()
         if (!t) { openMM(); return }
@@ -38,7 +39,7 @@ export function register(catalog: Catalog) {
       run: () => openMM(undefined, { focusSearch: true }),
     },
     {
-      id: 'remedy.open', title: 'Remedies…', category: 'Tools', keys: ['Mod+4'], allowInInput: true, keywords: 'remedy list information picker lookup riw',
+      id: 'remedy.open', title: 'Remedies…', category: 'Tools', keys: ['Mod+4', 'Alt+Shift+4'], allowInInput: true, keywords: 'remedy list information picker lookup riw',
       run: () => actions.openDialog(REMEDY_PICKER),
     },
     {

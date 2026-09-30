@@ -70,6 +70,31 @@ export function hiddenRuns(items: number, hidden: Set<number>): number[][] {
   return runs
 }
 
+export interface Crumb { label: string; ref: string | null }
+/** One piece of the symptom path: a visible level, or a fold holding hidden levels. `x` is the level index. */
+export type CrumbSegment =
+  | { kind: 'item'; x: number; label: string; ref: string | null; last: boolean }
+  | { kind: 'fold'; x: number; items: (Crumb & { x: number })[] }
+
+/**
+ * The symptom path as segment data: each level is shown whole unless hidden, and each run of
+ * consecutive hidden levels folds into one segment. Pure; the component maps segments to JSX.
+ */
+export function crumbSegments(items: readonly Crumb[], hidden: Set<number>): CrumbSegment[] {
+  const out: CrumbSegment[] = []
+  let fold: (Crumb & { x: number })[] | null = null
+  items.forEach((c, x) => {
+    if (hidden.has(x)) {
+      if (!fold) { fold = []; out.push({ kind: 'fold', x, items: fold }) }
+      fold.push({ ...c, x })
+      return
+    }
+    fold = null
+    out.push({ kind: 'item', x, label: c.label, ref: c.ref, last: x === items.length - 1 })
+  })
+  return out
+}
+
 /**
  * Concise accessible name of a rubric row: its path, its remedy count and its marks, e.g.
  * "Mind, morning, 200 remedies, in clipboard 1". The remedy list is not part of it.
@@ -149,4 +174,81 @@ export function selectNavigatorTabId(s: AppState): string | null {
   const active = s.tabs.find(t => t.id === s.activeTabId)
   if (active?.kind === 'repertory') return active.id
   return (s.tabs.find(t => t.id === s.lastRepertoryTabId && t.kind === 'repertory') ?? s.tabs.find(t => t.kind === 'repertory'))?.id ?? null
+}
+
+// ───────────── Find: paths and deeper matches ─────────────
+
+type FindRep = Pick<Repertory, 'size' | 'chapters' | 'depth' | 'text' | 'subtreeEndOf'>
+
+/** Lower-cased rubric texts per repertory, built once (Find scans a whole chapter or book per keystroke). */
+const lowerTexts = new WeakMap<object, string[]>()
+function lowerText(rep: FindRep, i: number): string {
+  let t = lowerTexts.get(rep)
+  if (!t) { t = new Array<string>(rep.size); lowerTexts.set(rep, t) }
+  return (t[i] ??= rep.text(i).toLowerCase())
+}
+
+/** Whether a word of `text` (lower case) starts with `token`. */
+export function wordStarts(text: string, token: string): boolean {
+  if (!token) return false
+  for (let at = text.indexOf(token); at >= 0; at = text.indexOf(token, at + 1)) {
+    if (at === 0 || !/[\p{L}\p{N}]/u.test(text[at - 1])) return true
+  }
+  return false
+}
+
+/** Split a Find filter into lower-cased words ("head pain forehead" → head, pain, forehead). */
+export function findTokens(filter: string): string[] {
+  return filter.toLowerCase().split(/[\s,›>/]+/).filter(Boolean)
+}
+
+/** One deeper Find match: a rubric below the level, with the part of its path below the level. */
+export interface DeepMatch { id: number; path: number[] }
+
+/**
+ * Rubrics below `level` (the chapters when -1) whose path from the level matches the words in order:
+ * "head pain forehead" finds Head › pain › forehead. Each word matches the start of a word of one
+ * path segment (a segment may take several words, and segments that take none are skipped); the
+ * rubric itself must take the last word. At the chapter level the chapter must take the first word.
+ * `within` narrows the search to that subtree (the current context). In book order, at most `limit`.
+ */
+export function pathMatches(rep: FindRep, level: number, filter: string, opts: { within?: number; limit?: number } = {}): DeepMatch[] {
+  const tokens = findTokens(filter)
+  const limit = opts.limit ?? 200
+  if (!tokens.length) return []
+  const root = opts.within != null && opts.within >= 0 ? opts.within : level
+  const ranges: [number, number, number][] = root >= 0
+    ? [[root + 1, rep.subtreeEndOf(root), rep.depth(root) + 1]]
+    : rep.chapters.map(c => [c, rep.subtreeEndOf(c), 0] as [number, number, number])
+  // words the context's own path (from the level down to `within`) already takes
+  let pre = 0
+  if (root !== level && root >= 0) {
+    const segs: number[] = []
+    for (let r = root; r >= 0 && r !== level; ) { segs.unshift(r); const d = rep.depth(r); let p = r - 1; while (p >= 0 && rep.depth(p) >= d) p--; r = p }
+    for (const s of segs) pre = take(lowerText(rep, s), tokens, pre)
+  }
+  const out: DeepMatch[] = []
+  const taken: number[] = [] // words taken down to each depth (relative)
+  const stack: number[] = [] // the path below the level, by relative depth
+  for (const [lo, hi, base] of ranges) {
+    for (let i = lo; i < hi && out.length < limit; i++) {
+      const d = rep.depth(i) - base
+      const before = d === 0 ? pre : taken[d - 1]
+      if (before >= tokens.length) { i = rep.subtreeEndOf(i) - 1; continue }
+      const after = take(lowerText(rep, i), tokens, before)
+      // at the chapter level the chapter must take the first word, else nothing below it matches
+      if (root < 0 && d === 0 && after === before) { i = rep.subtreeEndOf(i) - 1; continue }
+      taken[d] = after
+      stack[d] = i
+      if (after === tokens.length && after > before) out.push({ id: i, path: stack.slice(0, d + 1) })
+    }
+  }
+  return out
+}
+
+/** Words taken greedily in order by one path segment, from word `from`. */
+function take(text: string, tokens: string[], from: number): number {
+  let t = from
+  while (t < tokens.length && wordStarts(text, tokens[t])) t++
+  return t
 }

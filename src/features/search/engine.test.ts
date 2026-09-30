@@ -3,7 +3,7 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { Repertory } from '../../data/repertory'
 import type { RepertoryFile, RepertoryInfo } from '../../data/types'
-import { IndexBuilder, getIndex, hasIndex, highlighter, remedyFrequency, remedyRubrics, search } from './engine'
+import { IndexBuilder, SearchAborted, cachedHighlighter, getIndex, hasIndex, highlighter, prefixBucket, remedyFrequency, remedyRubrics, search, searchSliced } from './engine'
 import { describeQuery, parseQuery } from './query'
 import { branchMatch, fold, highlightSegments, tokenize } from './text'
 import { fastest } from '../../testing/timing'
@@ -244,6 +244,17 @@ describe.skipIf(!haveData)('performance on 140k rubrics', () => {
     expect(r.total).toBeGreaterThan(0)
   })
 
+  it.each(['he', 'pa', 'fear | anxiety night', '"as if"', 'a*'])('sliced search of “%s” returns what the one-go search returns', async q => {
+    const opts = { prefixLast: true }
+    const once = search(q, targets, opts)
+    const sliced = await searchSliced(q, targets, opts, undefined, 2)
+    expect(sliced.total).toBe(once.total)
+    expect(sliced.hits.slice(0, 200).map(h => h.index)).toEqual(once.hits.slice(0, 200).map(h => h.index))
+    const top = search(q, targets, { ...opts, limit: 30 })
+    expect(top.total).toBe(once.total)
+    expect(top.hits.map(h => h.index)).toEqual(once.hits.slice(0, 30).map(h => h.index))
+  })
+
   it('finds sensible top results in the real repertory', () => {
     const r = search('head pain', [{ rep: reps[0] }], { limit: 5 })
     expect(reps[0].path(r.hits[0].index)).toBe('Head - pain')
@@ -274,5 +285,54 @@ describe('IndexBuilder (time-sliced word index)', () => {
     expect(hasIndex(a)).toBe(false)
     expect(search('fear', [{ rep: a }]).total).toBeGreaterThan(0)
     expect(b.result).not.toBeNull()
+  })
+})
+
+describe('sliced search, top-k and prefix buckets', () => {
+  const T = [{ rep: R }]
+  it.each(['fear', 'night', 'fe', 'n', 'dogs ! cats', '"cats and"', 'fear | dreams', '*ght'])('searchSliced(“%s”) equals search', async q => {
+    for (const prefixLast of [false, true]) {
+      const a = search(q, T, { prefixLast })
+      const b = await searchSliced(q, T, { prefixLast }, undefined, 0)
+      expect(b.hits.map(h => [h.index, h.score])).toEqual(a.hits.map(h => [h.index, h.score]))
+      expect(b.total).toBe(a.total)
+      expect(b.error).toBe(a.error)
+    }
+  })
+
+  it('a limit keeps exactly the best hits of the full ranking', () => {
+    for (const q of ['night', 'n', 'fear | dreams | head']) {
+      const full = search(q, T, { prefixLast: true })
+      for (const limit of [0, 1, 2, 3, 5, 50]) {
+        const r = search(q, T, { prefixLast: true, limit })
+        expect(r.total).toBe(full.total)
+        expect(r.hits.map(h => h.index)).toEqual(full.hits.slice(0, limit).map(h => h.index))
+      }
+    }
+  })
+
+  it('rejects with SearchAborted once the signal aborts', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    await expect(searchSliced('fear', T, {}, ac.signal)).rejects.toBeInstanceOf(SearchAborted)
+  })
+
+  it('prefix buckets hold the sorted union of the postings of every word with the prefix', () => {
+    const ix = getIndex(R)
+    const b = prefixBucket(ix, 'd')
+    const expected = new Set<number>()
+    ix.words.forEach((w, k) => { if (w.startsWith('d')) ix.postings[k].forEach(i => expected.add(i)) })
+    expect([...b]).toEqual([...expected].sort((x, y) => x - y))
+    expect(prefixBucket(ix, 'd')).toBe(b)
+    expect(prefixBucket(ix, 'zz').length).toBe(0)
+  })
+
+  it('caches the highlighter per parsed query', () => {
+    const p = parseQuery('fear night')
+    const h = cachedHighlighter(p)
+    expect(cachedHighlighter(p)).toBe(h)
+    expect(h('fear')).toBe(true)
+    expect(h('head')).toBe(false)
+    expect(cachedHighlighter(parseQuery('fear night'), 'k:fear night')).toBe(cachedHighlighter(parseQuery('fear night'), 'k:fear night'))
   })
 })

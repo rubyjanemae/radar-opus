@@ -32,6 +32,15 @@
   --on-accent: #fff;
   /* printed-page surface (case report preview) */
   --paper: #fff;
+  /* printed output (@media print): black ink on white paper in both themes */
+  --print-paper: #fff;
+  --print-ink: #000;
+  --print-ink-2: #444;
+  --print-ink-3: #888;
+  --print-rule: #bbb;
+  --print-g2: #1c55b8;
+  --print-g3: #c2261b;
+  --print-g4: #8a1911;
   /* secondary text on filled accent surfaces */
   --on-accent-muted: rgba(255, 255, 255, .8);
   --accent-fill: #2459c9;

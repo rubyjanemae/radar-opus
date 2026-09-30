@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { MouseEvent, RefObject } from 'react'
 import { BookText } from 'lucide-react'
 import type { MateriaMedicaEntry, Remedy } from '../../data/types'
@@ -9,7 +10,8 @@ import type { RemedyLinkHandlers } from './components'
  * The reading pane: the monograph (or a welcome page) and the "On this page" outline.
  * Presentational: scrolling, marks and links are driven by the reader.
  */
-export function MMReaderPane({ readerRef, book, entry, remedy, showAbbrevs, fontPx, termsFor, links, sectionCount, activeSection, onScroll, onContextMenu, onSection, onInfo }: {
+/** Memoised: it re-renders only when the monograph, the marks or the outline change, not on list moves. */
+export const MMReaderPane = memo(function MMReaderPane({ readerRef, book, entry, remedy, showAbbrevs, fontPx, termsFor, links, sectionCount, activeSection, onScroll, onContextMenu, onSection, onInfo }: {
   readerRef: RefObject<HTMLElement | null>
   book: MMBook
   entry: MateriaMedicaEntry | null
@@ -85,4 +87,4 @@ export function MMReaderPane({ readerRef, book, entry, remedy, showAbbrevs, font
       )}
     </>
   )
-}
+})

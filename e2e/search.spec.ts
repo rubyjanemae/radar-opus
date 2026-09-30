@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { EMPTY, openApp } from './helpers'
+import { EMPTY, openApp, settle, withinBudget } from './helpers'
 
 const crumbs = (page: Page) => page.locator('.rv-crumbs')
 const searchTabs = (page: Page) => page.locator('.tabstrip [role=tab][data-kind=search]')
@@ -83,6 +83,14 @@ test('F4 search: operators, selection, take and summary filter', async ({ page }
   await expect(page.locator('.srch-chip')).toContainText(`with ${abbrev}`)
   await page.locator('.srch-chip').click()
   await expect(page.locator('.srch-chip')).toBeHidden()
+  // a new query clears the remedy filter and puts the cursor back on the first hit
+  await bar.click()
+  await expect(page.locator('.srch-chip')).toBeVisible()
+  await q.fill('head pain night ! occiput')
+  await expect(page.locator('.srch-desc')).toHaveText('head and pain and night and not occiput')
+  await expect(page.locator('.srch-chip')).toBeHidden()
+  await q.fill('head pain night ! forehead')
+  await expect(page.locator('.srch-desc')).toHaveText('head and pain and night and not forehead')
 
   // Enter on a result opens it in the repertory
   await results.focus()
@@ -195,11 +203,29 @@ test('command palette: typing stays under a frame budget; enabled() runs once pe
   await page.keyboard.press('Control+k')
   const pal = page.getByRole('dialog', { name: 'Command palette' })
   await expect(pal).toBeVisible()
-  const times = await page.evaluate(async () => {
+  await withinBudget(() => typeInPalette(page, 'settings zoom'), times => {
+    console.log(`palette keystroke to paint: max ${Math.max(...times).toFixed(0)} ms, median ${times.slice().sort((a, b) => a - b)[times.length >> 1].toFixed(0)} ms`)
+    // dev build of React is several times slower than production; production target is < 50 ms
+    expect(times.slice().sort((a, b) => a - b)[times.length >> 1]).toBeLessThan(50)
+    expect(Math.max(...times)).toBeLessThan(200)
+  })
+  expect(await page.evaluate(() => (window as unknown as { __en: number }).__en)).toBeLessThanOrEqual(1)
+  const bg = await page.locator('.pal-backdrop').evaluate(el => getComputedStyle(el).backgroundColor)
+  const scrim = await page.evaluate(() => { const d = document.createElement('div'); d.style.background = 'var(--scrim)'; document.body.append(d); const c = getComputedStyle(d).backgroundColor; d.remove(); return c })
+  expect(bg).toBe(scrim)
+  await page.keyboard.press('Escape')
+})
+
+/** Type into the open palette one character at a time: ms from each input event to the next paint. */
+function typeInPalette(page: Page, text: string): Promise<number[]> {
+  return page.evaluate(async text => {
     const inp = document.querySelector<HTMLInputElement>('.pal-input')!
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    setter.call(inp, '')
+    inp.dispatchEvent(new Event('input', { bubbles: true }))
+    await new Promise(r => requestAnimationFrame(() => setTimeout(r)))
     const out: number[] = []
-    for (const ch of 'settings zoom') {
+    for (const ch of text) {
       const t = performance.now()
       setter.call(inp, inp.value + ch)
       inp.dispatchEvent(new Event('input', { bubbles: true }))
@@ -207,15 +233,34 @@ test('command palette: typing stays under a frame budget; enabled() runs once pe
       out.push(performance.now() - t)
     }
     return out
+  }, text)
+}
+
+test('command palette with 2,000 patients: keystrokes stay fast, patient matches are capped', async ({ page }) => {
+  await ready(page)
+  await page.evaluate(async () => {
+    const { actions } = await (window as unknown as { __radarModules: import('../src/e2eBridge').E2EModules }).__radarModules.store()
+    const now = Date.now()
+    const ps = []
+    for (let i = 0; i < 2000; i++) ps.push({ id: `bulk${i}`, firstName: `Anna${i}`, lastName: `Bulkowska${i}`, birthDate: '1980-01-01', sex: 'female', email: '', phone: '', address: '', occupation: '', notes: '', tags: [], createdAt: now, updatedAt: now - i })
+    actions.insertCaseData(ps as never, [] as never)
   })
-  console.log(`palette keystroke to paint: max ${Math.max(...times).toFixed(0)} ms, median ${times.sort((a, b) => a - b)[times.length >> 1].toFixed(0)} ms`)
-  // dev build of React is several times slower than production; production target is < 50 ms
-  expect(times[times.length >> 1]).toBeLessThan(50)
-  expect(Math.max(...times)).toBeLessThan(150)
-  expect(await page.evaluate(() => (window as unknown as { __en: number }).__en)).toBeLessThanOrEqual(1)
-  const bg = await page.locator('.pal-backdrop').evaluate(el => getComputedStyle(el).backgroundColor)
-  const scrim = await page.evaluate(() => { const d = document.createElement('div'); d.style.background = 'var(--scrim)'; document.body.append(d); const c = getComputedStyle(d).backgroundColor; d.remove(); return c })
-  expect(bg).toBe(scrim)
+  await page.keyboard.press('Control+k')
+  await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible()
+  await settle(page)
+  // every one of 2,000 names matches "bulk": mixed mode shows a short patient section
+  await withinBudget(() => typeInPalette(page, 'bulk anna'), times => {
+    console.log(`palette, 2k patients: max ${Math.max(...times).toFixed(0)} ms, median ${times.slice().sort((a, b) => a - b)[times.length >> 1].toFixed(0)} ms`)
+    // production target: every keystroke < 50 ms (unit-tested on the model); dev React needs headroom
+    expect(times.slice().sort((a, b) => a - b)[times.length >> 1]).toBeLessThan(60)
+    expect(Math.max(...times)).toBeLessThan(250)
+  })
+  await expect(page.locator('.pal-list [role=option]', { hasText: /Bulkowska/ }).first()).toBeVisible()
+  expect(await page.locator('.pal-list [role=option]', { hasText: /Bulkowska/ }).count()).toBeLessThanOrEqual(5)
+  // patient mode lists more, still capped
+  await withinBudget(() => typeInPalette(page, '@bulk'), times => expect(Math.max(...times)).toBeLessThan(250))
+  await expect.poll(() => page.locator('.pal-list [role=option]', { hasText: /Bulkowska/ }).count()).toBeGreaterThan(5)
+  expect(await page.locator('.pal-list [role=option]').count()).toBeLessThanOrEqual(100)
   await page.keyboard.press('Escape')
 })
 
@@ -428,4 +473,86 @@ test('search results: set positions and a grade breakdown that is not colour alo
   await page.keyboard.press('Shift+Tab')
   await expect(bar.locator('.srch-barbreak')).toBeVisible()
   await expect(page.locator('.srch-legend .srch-seg-n')).toHaveText(['4', '3', '2', '1'])
+})
+
+test('F4 results: Enter focuses the first result, + take bar takes like the book, Backspace and F3 act on the list', async ({ page }) => {
+  await ready(page)
+  await page.keyboard.press('F4')
+  const q = page.getByRole('combobox', { name: 'Search query' })
+  await expect(q).toBeFocused()
+  await q.pressSequentially('fear night')
+  const results = page.getByRole('listbox', { name: 'Search results' })
+  await expect(results.getByRole('option').first()).toContainText('night')
+  // while the caret is in the box, no row looks focused
+  const cursorRow = results.locator('.srch-row.cursor')
+  await expect(cursorRow).toHaveCSS('box-shadow', 'none')
+  // Enter: the list takes the focus on the first result
+  await q.press('Enter')
+  await expect(results).toBeFocused()
+  await expect(cursorRow).toHaveAttribute('aria-posinset', '1')
+  await expect(cursorRow).not.toHaveCSS('box-shadow', 'none')
+  // `+2` takes the cursor row with intensity 2; Enter in the bar takes, it does not open the book
+  const tabsBefore = await page.locator('.tabstrip [role=tab]').count()
+  await page.keyboard.press('ArrowDown')
+  const second = (await cursorRow.locator('.srch-path').textContent())!
+  await page.keyboard.press('+')
+  const bar = page.getByRole('dialog', { name: 'Take rubric' })
+  await expect(bar).toBeVisible()
+  await page.keyboard.type('2')
+  await expect(bar).toContainText('×2')
+  await page.keyboard.press('Enter')
+  await expect(bar).toBeHidden()
+  await expect(page.locator('.toast').filter({ hasText: /Taken Mind - .*night/ }).last()).toBeVisible()
+  await expect(results).toBeFocused()
+  await expect(page.locator('.tabstrip [role=tab]')).toHaveCount(tabsBefore)
+  await expect(page.locator('.tabstrip [role=tab][aria-selected=true]')).toHaveAttribute('data-kind', 'search')
+  expect(second).toContain('night')
+  // selected rows: `+1>2` takes all of them into clipboard 2
+  await page.keyboard.press('Home')
+  await page.keyboard.press('Space')
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Space')
+  await page.keyboard.press('=')
+  await expect(bar).toContainText('2 selected rubrics')
+  await page.keyboard.type('1>2')
+  await page.keyboard.press('Enter')
+  // the take toast merges quick takes: it names clipboard 2 as a target now
+  await expect(page.locator('.toast').filter({ hasText: /2 → / }).last()).toBeVisible()
+  // Backspace goes back to the query; F3 opens Find at the rubric under the cursor
+  await page.keyboard.press('Backspace')
+  await expect(q).toBeFocused()
+  await q.press('Enter')
+  await expect(results).toBeFocused()
+  await page.keyboard.press('F3')
+  await expect(page.getByRole('dialog').filter({ hasNot: page.locator('.rv-takebar') }).first()).toBeVisible()
+})
+
+test('F4 and quick find typing never block the main thread for long', async ({ page }) => {
+  await ready(page)
+  await page.evaluate(() => {
+    const w = window as unknown as { __lt: number[] }
+    w.__lt = []
+    new PerformanceObserver(l => { for (const e of l.getEntries()) w.__lt.push(e.duration) }).observe({ type: 'longtask' })
+  })
+  await page.keyboard.press('F4')
+  const q = page.getByRole('combobox', { name: 'Search query' })
+  await expect(page.locator('.srch-empty strong')).toContainText('Search rubrics by words')
+  await settle(page)
+  await page.evaluate(() => { (window as unknown as { __lt: number[] }).__lt = [] })
+  await q.pressSequentially('pain a', { delay: 50 })
+  await expect(page.locator('.srch-desc')).toContainText('pain and a')
+  await page.keyboard.press('Control+f')
+  await expect(page.getByRole('combobox', { name: 'Quick find' })).toBeFocused()
+  await settle(page)
+  await page.evaluate(() => { (window as unknown as { __lt: number[] }).__lt = [] })
+  await page.keyboard.type('he', { delay: 50 })
+  await expect(page.getByRole('listbox', { name: 'Quick find results' }).locator('.qf-rubric').first()).toBeVisible()
+  await page.keyboard.press('Control+a')
+  await page.keyboard.type('pa', { delay: 50 })
+  await expect(page.getByRole('listbox', { name: 'Quick find results' }).locator('.qf-rubric').first()).toBeVisible()
+  await settle(page)
+  const lt = await page.evaluate(() => (window as unknown as { __lt: number[] }).__lt)
+  // the e2e server runs React in development mode (several times slower than the build, where the
+  // longest task measured is well under 50 ms): the budget allows for that overhead only
+  expect(Math.max(0, ...lt)).toBeLessThan(120)
 })

@@ -38,4 +38,16 @@ export function register(catalog: Catalog) {
     },
   ]
   registerCommands(cmds)
+  prefetchAnalysisView()
+}
+
+/**
+ * The analysis tab's code (view, grid, engine glue) loads when the browser is idle after start-up, so the
+ * first F8 does not wait for it: F8 then only pays for computing and drawing the result.
+ */
+function prefetchAnalysisView() {
+  if (typeof window === 'undefined') return
+  const idle = (globalThis as { requestIdleCallback?: (fn: () => void, o?: { timeout: number }) => void }).requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 1500))
+  // a failed prefetch is harmless: the tab imports the chunk itself (with retry) when it opens
+  idle(() => { void import('./AnalysisView').catch(() => {}) }, { timeout: 5000 })
 }

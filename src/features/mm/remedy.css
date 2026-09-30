@@ -193,3 +193,6 @@
 .rp-alt { color: var(--text-3); }
 .rp-mm { flex: none; font-size: 10px; font-weight: 700; padding: 0 5px; border: 1px solid var(--border-strong); border-radius: 8px; color: var(--text-2); }
 .rp-hint { margin-right: auto; align-self: center; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: var(--fs-xs); color: var(--text-3); }
+
+/* long off-screen parts of the remedy window skip layout and paint until scrolled near */
+.ri-keysec, .ri-mono-foot, .ri-relgroup { content-visibility: auto; contain-intrinsic-size: auto 120px; }

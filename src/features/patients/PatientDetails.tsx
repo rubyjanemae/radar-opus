@@ -1,7 +1,7 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { actions, useApp } from '../../state/store'
 import type { Patient } from '../../state/patients'
-import { Field } from './dialogs'
+import { Field, todayIso } from './dialogs'
 import { formatAge, formatDateTime, tagCounts, validatePatient } from './logic'
 import type { PatientDraft } from './logic'
 import { TagEditor } from './TagEditor'
@@ -28,16 +28,17 @@ export function PatientDetails({ patient }: { patient: Patient }) {
   const birthError = validatePatient({ birthDate: patient.birthDate, firstName: 'x' }).birthDate
   const notes = useDraft(patient.notes, v => actions.updatePatient(patient.id, { notes: v }))
   const age = formatAge(patient.birthDate)
+  const [today] = useState(todayIso)
   return (
     <div className="pt-details" data-testid="patient-details">
       <section className="pt-details-sec">
         <h3>Personal data</h3>
         <div className="pt-form-grid">
-          <DemoField key={`f${patient.id}`} patient={patient} k="firstName" label="First name" />
           <DemoField key={`l${patient.id}`} patient={patient} k="lastName" label="Last name" />
+          <DemoField key={`f${patient.id}`} patient={patient} k="firstName" label="First name" />
           <Field label="Birth date" error={birthError} hint={age ? `Age ${age}` : undefined}>
             <input
-              name="birthDate" type="date" className="input" value={patient.birthDate ?? ''} max={new Date().toISOString().slice(0, 10)}
+              name="birthDate" type="date" className="input" value={patient.birthDate ?? ''} max={today}
               onChange={e => { const v = e.target.value || null; if (!validatePatient({ birthDate: v, firstName: 'x' }).birthDate) actions.updatePatient(patient.id, { birthDate: v }) }}
             />
           </Field>

@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { Catalog } from '../../data/catalog'
 import type { MateriaMedicaEntry } from '../../data/types'
 import { RemedyResolver, normToken, parseAltNames } from './resolve'
-import { buildCitations, buildDocs, groupRelations, parseRelationships, plainText, titleCase } from './text'
+import { buildCitations, buildCitationsChunked, buildDocs, groupRelations, parseRelationships, plainText, titleCase } from './text'
 import type { Citation, MMDoc, Relation, RelationKind } from './text'
 
 export interface BookItem {
@@ -92,6 +92,29 @@ export class MMBook {
     return this._citations
   }
 
+  private _citing: Promise<Map<number, Citation[]>> | null = null
+  private readonly citationListeners = new Set<() => void>()
+
+  /** The citations if they have been built, else null (never builds). */
+  citationsIfReady(): Map<number, Citation[]> | null { return this._citations }
+
+  /** Build the citations in time slices (no long task); repeated calls share one build. */
+  warmCitations(): Promise<Map<number, Citation[]>> {
+    if (this._citations) return Promise.resolve(this._citations)
+    this._citing ??= buildCitationsChunked(this.items.map(i => this.entries.get(i.remedyId)!), this.resolver).then(c => {
+      this._citations ??= c
+      for (const fn of this.citationListeners) fn()
+      return this._citations
+    }, e => { this._citing = null; throw e })
+    return this._citing
+  }
+
+  /** Subscribe to "citations are ready". */
+  onCitations = (fn: () => void): (() => void) => {
+    this.citationListeners.add(fn)
+    return () => { this.citationListeners.delete(fn) }
+  }
+
   has(remedyId: number | null | undefined): boolean { return remedyId != null && this.entries.has(remedyId) }
 
   relationships(remedyId: number) {
@@ -123,6 +146,10 @@ export function loadBook(catalog: Catalog): Promise<MMBook> {
     p = catalog.loadMateriaMedica().then(entries => {
       const b = new MMBook(catalog, entries)
       books.set(catalog, b)
+      // the remedy window's "Cited by" needs a scan of the whole book: do it in idle time, in slices
+      const idle = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback
+      const warm = () => { void b.warmCitations().catch(() => {}) }
+      if (idle) idle(warm, { timeout: 5000 }); else setTimeout(warm, 0)
       return b
     })
     p.catch(() => pending.delete(catalog))
@@ -150,4 +177,13 @@ export function useBook(catalog: Catalog): { book: MMBook | null; error: Error |
 /** Boericke subtitles carry markdown emphasis ("**(EOSIN)**"): the words without the markers. */
 export function commonName(s: string): string {
   return plainText(s).replace(/\s+/g, ' ').trim()
+}
+
+const noop = () => () => {}
+
+/** A book's citations for a component: null until built (the build is started in slices); re-renders when ready. */
+export function useCitations(book: MMBook | null): Map<number, Citation[]> | null {
+  const ready = useSyncExternalStore(book ? book.onCitations : noop, () => book?.citationsIfReady() ?? null, () => book?.citationsIfReady() ?? null)
+  useEffect(() => { if (book && !ready) void book.warmCitations().catch(() => {}) }, [book, ready])
+  return ready
 }

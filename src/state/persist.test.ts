@@ -240,6 +240,25 @@ describe('autosave writes only what changed', () => {
     expect(saveStatus.get()).toBe('saved')
   })
 
+  it('an edit during an in-flight write stays pending until the follow-up write lands', async () => {
+    const m = await boot()
+    let release!: () => void
+    const orig = m.b.write
+    m.b.write = (puts, dels) => new Promise<void>(r => { release = r }).then(() => orig(puts, dels))
+    actions.addRubrics(['r:2'])
+    const first = flushNow()
+    expect(saveStatus.get()).toBe('saving')
+    actions.addRubrics(['r:3'])
+    expect(saveStatus.get()).toBe('pending')
+    release()
+    await first
+    expect(saveStatus.get()).toBe('pending')
+    m.b.write = orig
+    await flushNow()
+    expect(saveStatus.get()).toBe('saved')
+    expect(m.writes.length).toBe(2)
+  })
+
   it('a case edit writes that consultation only; a deletion deletes its records', async () => {
     const m = await boot()
     actions.addRubrics(['r:2'])
@@ -251,6 +270,43 @@ describe('autosave writes only what changed', () => {
     expect(m.writes[0].dels.sort()).toEqual(['c:c1', 'p:p1'])
     expect(m.writes[0].puts).toEqual([WS_KEY]) // tabs and active ids changed too
     expect(m.data.has('p:p2')).toBe(true)
+  })
+
+  it('at 2,045 patients and 6,135 consultations one field edit writes only that patient, quickly, and resolves to saved', async () => {
+    const init: Record<string, unknown> = { [WS_KEY]: { version: SCHEMA_VERSION, ...legacy(), patients: undefined, consultations: undefined } }
+    for (let i = 0; i < 2045; i++) {
+      init[`p:b${i}`] = patient(`b${i}`)
+      for (let k = 0; k < 3; k++) init[`c:b${i}-${k}`] = consultation(`b${i}-${k}`, `b${i}`)
+    }
+    init['p:p1'] = patient('p1'); init['c:c1'] = consultation('c1', 'p1')
+    const m = memoryBackend(init)
+    setPersistBackend(m.b)
+    await hydrate()
+    dispose = startAutosave()
+    await flushNow()
+    expect(m.writes).toEqual([])
+    const statuses: string[] = []
+    const unsub = saveStatus.subscribe(s => statuses.push(s))
+    actions.updatePatient('b1000', { notes: 'edited' })
+    const t = performance.now()
+    await flushNow()
+    const ms = performance.now() - t
+    unsub()
+    expect(m.writes).toEqual([{ puts: ['p:b1000'], dels: [] }])
+    expect((m.data.get('p:b1000') as { notes: string }).notes).toBe('edited')
+    expect(statuses.at(-1)).toBe('saved')
+    expect(saveStatus.get()).toBe('saved')
+    expect(ms).toBeLessThan(50)
+    // a second edit elsewhere writes only that record, not the first one again
+    m.writes.length = 0
+    actions.updatePatient('b7', { occupation: 'baker' })
+    await flushNow()
+    expect(m.writes).toEqual([{ puts: ['p:b7'], dels: [] }])
+    // a deletion among thousands is still found
+    m.writes.length = 0
+    actions.deletePatient('b3')
+    await flushNow()
+    expect(m.writes[0].dels.sort()).toEqual(['c:b3-0', 'c:b3-1', 'c:b3-2', 'p:b3'])
   })
 
   it('debounces, then flushes in an idle callback; the disposer removes listeners and the subscription', async () => {

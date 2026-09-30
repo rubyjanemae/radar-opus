@@ -18,6 +18,7 @@ export function NewPatientDialog({ onClose }: { onClose: () => void }) {
   const [touched, setTouched] = useState(false)
   const patients = useApp(s => s.patients)
   const suggestions = useMemo(() => tagCounts(Object.values(patients)).map(t => t.tag), [patients])
+  const [today] = useState(todayIso)
   const errors = validatePatient(d)
   const show = (k: keyof PatientDraft) => (touched ? errors[k] : undefined)
   const set = <K extends keyof PatientDraft>(k: K, v: PatientDraft[K]) => setD(x => ({ ...x, [k]: v }))
@@ -45,9 +46,9 @@ export function NewPatientDialog({ onClose }: { onClose: () => void }) {
       </>}
     >
       <form className="pt-new pt-form-grid" onSubmit={e => { e.preventDefault(); submit() }} noValidate>
+        <Field label="Last name" error={show('lastName')}><input name="lastName" className="input" value={d.lastName} onChange={e => set('lastName', e.target.value)} autoComplete="off" autoFocus /></Field>
         <Field label="First name" error={show('firstName')}><input name="firstName" className="input" value={d.firstName} onChange={e => set('firstName', e.target.value)} autoComplete="off" /></Field>
-        <Field label="Last name" error={show('lastName')}><input name="lastName" className="input" value={d.lastName} onChange={e => set('lastName', e.target.value)} autoComplete="off" /></Field>
-        <Field label="Birth date" error={show('birthDate')}><input name="birthDate" type="date" className="input" value={d.birthDate ?? ''} max={new Date().toISOString().slice(0, 10)} onChange={e => set('birthDate', e.target.value || null)} /></Field>
+        <Field label="Birth date" error={show('birthDate')}><input name="birthDate" type="date" className="input" value={d.birthDate ?? ''} max={today} onChange={e => set('birthDate', e.target.value || null)} /></Field>
         <Field label="Sex">
           <select name="sex" className="select" value={d.sex ?? ''} onChange={e => set('sex', (e.target.value || null) as Patient['sex'])}>
             <option value="">Not recorded</option><option value="female">Female</option><option value="male">Male</option><option value="other">Other</option>
@@ -63,6 +64,9 @@ export function NewPatientDialog({ onClose }: { onClose: () => void }) {
     </Dialog>
   )
 }
+
+/** Local date as YYYY-MM-DD, read once per mount (never during render). */
+export function todayIso() { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}` }
 
 export function Field({ label, error, children, hint }: { label: string; error?: string; hint?: string; children: React.ReactNode }) {
   return (

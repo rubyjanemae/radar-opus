@@ -1,4 +1,4 @@
-import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import { Bookmark, CaseSensitive, ChevronDown, ClipboardPlus, Ellipsis, Hash, History, Pointer, Search, StickyNote, TriangleAlert, WholeWord, X } from 'lucide-react'
 import { useCatalog, useRepertory } from '../../data/CatalogContext'
@@ -12,10 +12,10 @@ import { formatKeys, runCommand } from '../../commands/registry'
 import { RUBRIC_MIME } from '../clipboard/logic'
 import { indexAt, useVariableVirtual, useVirtualWindow } from './virtual'
 import type { VariableVirtual } from './virtual'
-import { crumbCollapseOrder, crumbFoldCount, hiddenRuns, rubricLabel } from './logic'
+import { crumbCollapseOrder, crumbFoldCount, crumbSegments, rubricLabel } from './logic'
 import { matchChapters } from './take'
 import { TakeBar, replayKey } from './TakeBar'
-import { clipboardMembership, openFind, recordRecent, remedyMenuItems, rubricMenu, takeRefs } from './ops'
+import { clipboardMembership, openFind, recentOf, recordRecent, remedyMenuItems, rubricMenu, takeRefs } from './ops'
 import { cycleDisplay } from './commands'
 import { selectRubric, useBookKeys } from './useBookKeys'
 import { NEAR_ROWS, estimateRow, layoutSizes, remedyChars } from './estimate'
@@ -28,11 +28,13 @@ import './repertory.css'
 let lastPointerDown = 0
 if (typeof window !== 'undefined') window.addEventListener('pointerdown', () => { lastPointerDown = performance.now() }, true)
 
-export function RepertoryView({ tab }: { tab: RepertoryTab }) {
+/** Memoised on the tab object: the tab host re-rendering (switching documents) leaves an unchanged book alone. */
+export const RepertoryView = memo(function RepertoryView({ tab }: { tab: RepertoryTab }) {
   // a retry remounts the loader, which starts a fresh load (a failed load is not cached)
   const [attempt, setAttempt] = useState(0)
-  return <BookLoader key={attempt} tab={tab} onRetry={() => setAttempt(x => x + 1)} />
-}
+  const retry = useCallback(() => setAttempt(x => x + 1), [])
+  return <BookLoader key={attempt} tab={tab} onRetry={retry} />
+})
 
 function BookLoader({ tab, onRetry }: { tab: RepertoryTab; onRetry: () => void }) {
   const { rep, error } = useRepertory(tab.repertory)
@@ -81,18 +83,26 @@ interface RowProps {
   bookmarked: boolean
   note: string | undefined
   measure: (el: HTMLElement | null) => (() => void) | undefined
+  /** Known height of row k (measured, else estimated): the placeholder size of a long row skipped off screen. */
+  sizeOf: (k: number) => number
 }
+
+/** Rows showing at least this many remedies skip rendering while off screen (content-visibility). */
+const LONG_REMEDIES = 60
 
 /**
  * One rubric of the book. Rows sit in normal flow inside the virtualiser's window, so they carry no
  * position and do not re-render when the layout settles; the remedy list is cached static markup.
  */
-const RubricRow = memo(function RubricRow({ rep, catalog, i, k, setSize, current, showRemedies, names, minGrade, clips, bookmarked, note, measure }: RowProps) {
+const RubricRow = memo(function RubricRow({ rep, catalog, i, k, setSize, current, showRemedies, names, minGrade, clips, bookmarked, note, measure, sizeOf }: RowProps) {
   const depth = rep.depth(i)
   const total = rep.remedyCount(i)
   const list = total && (showRemedies || minGrade > 1) ? remedyMarkup(rep, catalog, i, names, minGrade) : null
   const hidden = list ? total - list.shown : 0
-  const cls = `rv-row${depth === 0 ? ' rv-chapter' : depth === 1 ? ' rv-main' : ''}${current ? ' rv-current' : ''}`
+  // a long remedy block is laid out and painted only near the viewport; off screen it keeps its last
+  // rendered (else estimated) height, so the scroll range does not change
+  const long = showRemedies && !!list && list.shown >= LONG_REMEDIES
+  const cls = `rv-row${depth === 0 ? ' rv-chapter' : depth === 1 ? ' rv-main' : ''}${current ? ' rv-current' : ''}${long ? ' rv-long' : ''}`
   // the accessible name is short: arrowing through the book reads the rubric, not its remedy list
   const label = rubricLabel(rep.lineage(i).map(r => rep.text(r)), total, {
     clipboards: clips?.map(c => c.n), bookmarked, note: !!note,
@@ -109,6 +119,7 @@ const RubricRow = memo(function RubricRow({ rep, catalog, i, k, setSize, current
       aria-posinset={k + 1}
       aria-setsize={setSize}
       id={`rv-r${i}`}
+      style={long ? { containIntrinsicSize: `auto ${Math.round(sizeOf(k)) || 24}px` } : undefined}
       draggable
     >
       <span className="rv-gutter" aria-hidden="true">
@@ -132,6 +143,26 @@ const RubricRow = memo(function RubricRow({ rep, catalog, i, k, setSize, current
     </div>
   )
 })
+
+interface TipState { x: number; y: number; id: number; grade: number }
+interface TipApi { set: (t: TipState | null) => void }
+
+/** Remedy tooltip over the book: owns its state so hover never re-renders the view or its rows. */
+function RemedyTip({ ref, catalog }: { ref: React.Ref<TipApi>; catalog: Catalog }) {
+  const [tip, setTip] = useState<TipState | null>(null)
+  useImperativeHandle(ref, () => ({
+    set: t => setTip(prev => (prev === t || (prev && t && prev.id === t.id && Math.abs(prev.y - t.y) < 1 && Math.abs(prev.x - t.x) < 1) ? prev : t)),
+  }), [])
+  if (!tip) return null
+  const rem = catalog.remedy(tip.id)
+  return (
+    <div className="rv-tip" role="tooltip" style={{ left: tip.x, top: tip.y + 4 }}>
+      <b>{rem.name}</b>
+      <span>{rem.abbrev} · <span className={`g${tip.grade}`}>{GRADE_LABEL[tip.grade]}</span></span>
+      <span className="rv-tip-hint">Click to highlight · double-click to open</span>
+    </div>
+  )
+}
 
 interface BookRowsProps {
   v: VariableVirtual
@@ -159,7 +190,7 @@ const BookRows = memo(function BookRows({ v, rep, catalog, start, count, rubric,
       <RubricRow
         key={i} rep={rep} catalog={catalog} i={i} k={k} setSize={count} current={i === rubric}
         showRemedies={showRemedies} names={names} minGrade={minGrade}
-        clips={membership.get(ref)} bookmarked={bookmarked.has(ref)} note={notes[ref]} measure={v.measure}
+        clips={membership.get(ref)} bookmarked={bookmarked.has(ref)} note={notes[ref]} measure={v.measure} sizeOf={v.sizeOf}
       />,
     )
   }
@@ -196,7 +227,9 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
   const highlight = useHighlight(tab.id)
   const [takeBar, setTakeBar] = useState<string | null>(null)
   const [chooser, setChooser] = useState<string | null>(null)
-  const [tip, setTip] = useState<{ x: number; y: number; id: number; grade: number } | null>(null)
+  // the remedy tooltip keeps its own state: hovering remedies re-renders the tooltip, not the book
+  const tipRef = useRef<TipApi>(null)
+  const setTip = (t: TipState | null) => tipRef.current?.set(t)
   const scrollRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const cm = useContextMenu()
@@ -205,6 +238,7 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
   const crumbRubric = useDeferredValue(rubric)
   const cmRef = useRef(cm)
   useLayoutEffect(() => { cmRef.current = cm })
+  /** Opens a menu at an element (the crumbs and the Take button): stable, so those stay memoised. */
   const onCrumbMenu = useCallback((el: HTMLElement, items: MenuItem[]) => cmRef.current.openAt(el, items), [])
 
   // row height estimates: O(1) per row from per-rubric character counts built once per repertory;
@@ -255,8 +289,8 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
     const jumped = lastBack.current !== tab.back
     lastBack.current = tab.back
     const ref = rep.ref(rubric)
-    if (jumped) { recordRecent(ref, tab.id); return }
-    const t = setTimeout(() => recordRecent(ref, tab.id), 1000)
+    if (jumped) { recordRecent(ref); return }
+    const t = setTimeout(() => recordRecent(ref), 1000)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rubric, rep])
@@ -324,11 +358,9 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
   }
   const onMouseOver = (e: ReactMouseEvent) => {
     const remEl = (e.target as HTMLElement).closest<HTMLElement>('.rv-rem')
-    if (!remEl) { if (tip) setTip(null); return }
+    if (!remEl) { setTip(null); return }
     const r = remEl.getBoundingClientRect()
-    const id = Number(remEl.dataset.rid)
-    if (tip?.id === id && Math.abs(tip.y - r.bottom) < 1) return
-    setTip({ x: r.left, y: r.bottom, id, grade: Number(remEl.dataset.grade) })
+    setTip({ x: r.left, y: r.bottom, id: Number(remEl.dataset.rid), grade: Number(remEl.dataset.grade) })
   }
   const onDragStart = (e: React.DragEvent) => {
     const i = rowOf(e.target)
@@ -347,10 +379,11 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
   }, [highlight, start, count, rep])
 
   const displayMode = !showRemedies ? 'count' : names ? 'names' : 'remedies'
-  const setDisplay = (m: 'count' | 'remedies' | 'names') => {
-    if (m === 'count') actions.updateTab<RepertoryTab>(tab.id, { display: 'count' })
-    else { actions.updateTab<RepertoryTab>(tab.id, { display: 'remedies' }); actions.setSettings({ remedyStyle: m === 'names' ? 'name' : 'abbrev' }) }
-  }
+  const tabId = tab.id
+  const setDisplay = useCallback((m: 'count' | 'remedies' | 'names') => {
+    if (m === 'count') actions.updateTab<RepertoryTab>(tabId, { display: 'count' })
+    else { actions.updateTab<RepertoryTab>(tabId, { display: 'remedies' }); actions.setSettings({ remedyStyle: m === 'names' ? 'name' : 'abbrev' }) }
+  }, [tabId])
 
   return (
     <div className="rv" ref={rootRef} onKeyDown={onKeyDown}>
@@ -365,7 +398,7 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
             <option value={2}>Grade 2+</option>
             <option value={3}>Grade 3+</option>
           </select>
-          <TakeButton onMenu={(el, items) => cm.openAt(el, items)} />
+          <TakeButton onMenu={onCrumbMenu} />
         </div>
         </div>
       </div>
@@ -415,17 +448,11 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
           onPass={e => { const el = scrollRef.current; if (el) replayKey(e, el) }}
         />
       )}
-      {tip && (
-        <div className="rv-tip" role="tooltip" style={{ left: tip.x, top: tip.y + 4 }}>
-          <b>{catalog.remedy(tip.id).name}</b>
-          <span>{catalog.remedy(tip.id).abbrev} · <span className={`g${tip.grade}`}>{GRADE_LABEL[tip.grade]}</span></span>
-          <span className="rv-tip-hint">Click to highlight · double-click to open</span>
-        </div>
-      )}
+      <RemedyTip ref={tipRef} catalog={catalog} />
       {chooser != null && (
         <ChapterChooser
           rep={rep}
-          recent={tab.recent ?? []}
+          legacyRecent={tab.recent}
           initial={chooser}
           onClose={() => { setChooser(null); scrollRef.current?.focus({ preventScroll: true }) }}
           onPick={c => { setChooser(null); select(c, true); scrollRef.current?.focus({ preventScroll: true }) }}
@@ -443,7 +470,8 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
 }
 
 /** Count / Abbrev / Names: a radiogroup with one tab stop; Left/Right (and Up/Down) move and select. */
-function DisplaySeg({ value, onChange }: { value: 'count' | 'remedies' | 'names'; onChange: (m: 'count' | 'remedies' | 'names') => void }) {
+/** Memoised with a stable onChange: a document switch does not rebuild its icons. */
+const DisplaySeg = memo(function DisplaySeg({ value, onChange }: { value: 'count' | 'remedies' | 'names'; onChange: (m: 'count' | 'remedies' | 'names') => void }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([])
   return (
     <div className="rv-seg rseg" role="radiogroup" aria-label="Rubric display (Space cycles)">
@@ -466,9 +494,9 @@ function DisplaySeg({ value, onChange }: { value: 'count' | 'remedies' | 'names'
       ))}
     </div>
   )
-}
+})
 
-function TakeButton({ onMenu }: { onMenu: (el: HTMLElement, items: MenuItem[]) => void }) {
+const TakeButton = memo(function TakeButton({ onMenu }: { onMenu: (el: HTMLElement, items: MenuItem[]) => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const items: MenuItem[] = [
     { command: 'rubric.add', label: 'Take (intensity 1)' },
@@ -486,18 +514,20 @@ function TakeButton({ onMenu }: { onMenu: (el: HTMLElement, items: MenuItem[]) =
       <button className="btn btn-sm rv-take-more" aria-label="Take options" aria-haspopup="menu" onClick={() => ref.current && onMenu(ref.current, items)}><ChevronDown size={13} /></button>
     </div>
   )
-}
+})
 
-function ChapterChooser({ rep, recent, initial, onClose, onPick }: { rep: Repertory; recent: readonly number[]; initial: string; onClose: () => void; onPick: (i: number) => void }) {
+function ChapterChooser({ rep, legacyRecent, initial, onClose, onPick }: { rep: Repertory; legacyRecent?: readonly number[]; initial: string; onClose: () => void; onPick: (i: number) => void }) {
   const [q, setQ] = useState(initial)
   const [active, setActive] = useState(0)
   const all = useMemo(() => rep.chapters.map(c => ({ id: c, name: rep.text(c) })), [rep])
   // chapters of recently read rubrics, most recent first: preferred among equal matches
+  const recentRubrics = useApp(s => s.recentRubrics)
   const recentChapters = useMemo(() => {
+    const recent = recentOf(recentRubrics, rep.abbrev, legacyRecent)
     const m = new Map<number, number>()
     for (const r of recent) { const c = rep.chapterRoot(Math.min(r, rep.size - 1)); if (!m.has(c)) m.set(c, m.size) }
     return m
-  }, [recent, rep])
+  }, [recentRubrics, legacyRecent, rep])
   const list = matchChapters(all, q, c => recentChapters.get(c.id) ?? -1)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -592,38 +622,33 @@ const Crumbs = memo(function Crumbs({ rep, rubric, onMenu }: { rep: Repertory; r
   }, [])
 
   const openItem = (x: number) => (x === 0 ? runCommand('repertory.toc') : actions.openDialog('repertory.find', { repertory: rep.abbrev, from: lineage[x - 1] }))
-  const runs = hiddenRuns(lineage.length + 1, hidden)
-  const parts: React.ReactNode[] = []
-  for (let x = 0; x <= lineage.length; x++) {
-    const run = runs.find(r => r[0] === x)
-    const sep = x > 0 && <span className="rv-sep" aria-hidden="true">›</span>
-    if (run) {
-      parts.push(
-        <span key={`f${x}`} className="rv-crumb-wrap rv-crumb-fold">
+  const crumbs = [{ label: rep.info.title, ref: null }, ...lineage.map(r => ({ label: rep.text(r), ref: rep.ref(r) }))]
+  const parts = crumbSegments(crumbs, hidden).map(seg => {
+    const sep = seg.x > 0 && <span className="rv-sep" aria-hidden="true">›</span>
+    if (seg.kind === 'fold') {
+      const path = seg.items.map(c => c.label).join(' › ')
+      return (
+        <span key={`f${seg.x}`} className="rv-crumb-wrap rv-crumb-fold">
           {sep}
           <button
-            className="rv-crumb rv-crumb-more" aria-haspopup="menu" aria-label={`${run.length} more level${run.length === 1 ? '' : 's'}: ${run.map(itemLabel).join(' › ')}`}
-            title={run.map(itemLabel).join(' › ')}
-            onClick={e => onMenu(e.currentTarget, [{ type: 'label', label: 'Go to level' }, ...run.map(y => ({ label: y === 0 ? `${itemLabel(y)} (repertories)` : itemLabel(y), run: () => openItem(y) }))])}
+            className="rv-crumb rv-crumb-more" aria-haspopup="menu" aria-label={`${seg.items.length} more level${seg.items.length === 1 ? '' : 's'}: ${path}`}
+            title={path}
+            onClick={e => onMenu(e.currentTarget, [{ type: 'label', label: 'Go to level' }, ...seg.items.map(c => ({ label: c.x === 0 ? `${c.label} (repertories)` : c.label, run: () => openItem(c.x) }))])}
           ><Ellipsis size={13} /></button>
-        </span>,
+        </span>
       )
-      x = run[run.length - 1]
-      continue
     }
-    if (hidden.has(x)) continue
-    const last = x === lineage.length
-    parts.push(
-      <span key={x} className={`rv-crumb-wrap${last ? ' rv-crumb-wrap-last' : ''}`}>
+    return (
+      <span key={seg.x} className={`rv-crumb-wrap${seg.last ? ' rv-crumb-wrap-last' : ''}`}>
         {sep}
         <button
-          className={`rv-crumb${x === 0 ? ' rv-crumb-rep' : ''}${last ? ' rv-crumb-last' : ''}`}
-          title={x === 0 ? 'Repertories table of contents (Ctrl+1)' : `${itemLabel(x)}: find from here (F3)`}
-          onClick={() => openItem(x)}
-        >{itemLabel(x)}</button>
-      </span>,
+          className={`rv-crumb${seg.x === 0 ? ' rv-crumb-rep' : ''}${seg.last ? ' rv-crumb-last' : ''}`}
+          title={seg.x === 0 ? 'Repertories table of contents (Ctrl+1)' : `${seg.label}: find from here (F3)`}
+          onClick={() => openItem(seg.x)}
+        >{seg.label}</button>
+      </span>
     )
-  }
+  })
   return <nav className={`rv-crumbs${settled ? ' rv-crumbs-fit' : ''}`} ref={navRef} aria-label="Symptom path">{parts}</nav>
 })
 

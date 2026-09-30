@@ -60,7 +60,7 @@ test('empty states guide to a new case, then to taking rubrics', async ({ page }
   await expect(panel(page)).toContainText('takes the current rubric at intensity 1')
 })
 
-test('wrapped rows keep index, intensity, markers and count on the first text line', async ({ page }) => {
+test('narrow rows stay on one 24px line with markers and count aligned; the date goes before the name', async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 800 })
   await newCase(page)
   await dropRubrics(page, ['publicum:30000'])
@@ -71,8 +71,11 @@ test('wrapped rows keep index, intensity, markers and count on the first text li
   await page.keyboard.press('a')
   const row = rows(page).nth(0)
   await expect(row.locator('.cbp-flag.f-e')).toBeVisible()
-  // force the text to wrap over several lines
+  // a narrow dock: the rubric is cut with an ellipsis, not wrapped
   await panel(page).evaluate(el => { (el as HTMLElement).style.width = '260px' })
+  await expect(panel(page).locator('.cbp-case-date')).toBeHidden()
+  const patient = panel(page).locator('.cbp-case-patient')
+  expect(await patient.evaluate(e => e.scrollWidth <= e.clientWidth)).toBe(true)
   const m = await row.evaluate(r => {
     const top = (sel: string) => { const e = r.querySelector(sel)!.getBoundingClientRect(); return { top: e.top, mid: e.top + e.height / 2, h: e.height } }
     const text = r.querySelector('.cbp-path')!
@@ -80,7 +83,9 @@ test('wrapped rows keep index, intensity, markers and count on the first text li
     const first = range.getClientRects()[0]
     return { lineMid: first.top + first.height / 2, textH: text.getBoundingClientRect().height, idx: top('.cbp-idx'), size: top('.cbp-size'), flag: top('.cbp-flag.f-e') }
   })
-  expect(m.textH).toBeGreaterThan(30)
+  expect(m.textH).toBeLessThanOrEqual(19)
+  expect((await row.boundingBox())!.height).toBeLessThanOrEqual(25)
+  await expect(row.locator('.cbp-text')).toHaveAttribute('title', /inguinal region, evening/)
   for (const k of ['idx', 'size', 'flag'] as const) expect(Math.abs(m[k].mid - m.lineMid)).toBeLessThanOrEqual(2)
   await page.screenshot({ path: '/tmp/claude-0/gauntlet/cbp-wrap.png', clip: await row.boundingBox() ?? undefined })
 })
@@ -413,13 +418,17 @@ test('group marker, live prompt region, excluded chip tooltip, wrapping rows', a
   const chip = panel(page).getByRole('tab').first()
   await chip.click({ modifiers: ['Control'] })
   await expect(chip).toHaveAttribute('title', /Not included in the analysis \(click it in the analysis toolbar to include\)/)
-  // long rubric paths wrap instead of being cut off
+  // long rubric paths stay on one line with an ellipsis; the tooltip has the full path
+  await page.setViewportSize({ width: 1152, height: 720 })
   await dropRubrics(page, ['publicum:30000'])
   const path = rows(page).nth(2).locator('.cbp-path')
   await expect(path).toContainText('inguinal region, evening')
-  const m = await path.evaluate(e => ({ lines: Math.round(e.getBoundingClientRect().height / parseFloat(getComputedStyle(e).lineHeight)), clipped: e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1 }))
-  expect(m.lines).toBeGreaterThan(1)
-  expect(m.clipped).toBe(false)
+  const m = await path.evaluate(e => ({ lines: Math.round(e.getBoundingClientRect().height / parseFloat(getComputedStyle(e).lineHeight)), overflow: getComputedStyle(e).textOverflow }))
+  expect(m.lines).toBe(1)
+  expect(m.overflow).toBe('ellipsis')
+  await expect(rows(page).nth(2).locator('.cbp-text')).toHaveAttribute('title', /inguinal region, evening/)
+  const heights = await rows(page).evaluateAll(rs => rs.map(r => Math.round(r.getBoundingClientRect().height)))
+  expect(new Set(heights).size).toBe(1)
 })
 
 test('a repertory that fails to load can be retried from the clipboard', async ({ page }) => {
@@ -446,4 +455,21 @@ test('the empty-state New case button draws its icon in the button colour', asyn
   const btn = panel(page).locator('.cbp-empty .btn-primary')
   const [stroke, color] = await btn.locator('svg').evaluate(e => [getComputedStyle(e).stroke, getComputedStyle(e.closest('button')!).color])
   expect(stroke).toBe(color)
+})
+
+test('taking a whole chapter warns with Undo; toasts clear on a tab switch', async ({ page }) => {
+  await newCase(page)
+  await dropRubrics(page, ['publicum:0'])
+  const toast = page.locator('.toast').last()
+  await expect(toast).toContainText(/Warning: whole chapter, \d+ remedies/)
+  await expect(rows(page)).toHaveCount(1)
+  await toast.getByRole('button', { name: 'Undo' }).click()
+  await expect(rows(page)).toHaveCount(0)
+  await dropRubrics(page, ['publicum:120'])
+  await expect(page.locator('.toast').last()).toContainText('Taken')
+  // the pointer left on a toast keeps it (hover pauses toasts); move it away as a user would
+  await page.mouse.move(10, 300)
+  await page.keyboard.press('F8')
+  // once the pointer has left, the toasts time out on their own
+  await expect(page.locator('.toast')).toHaveCount(0, { timeout: 15_000 })
 })

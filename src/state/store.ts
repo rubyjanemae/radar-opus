@@ -85,6 +85,8 @@ export interface AppState extends CaseData {
   /** User notes per remedy id (remedy information window › Sources & notes). */
   remedyNotes: Record<number, string>
   recentSearches: string[]
+  /** Rubrics read or acted on, most recent first, across repertories (navigator Recent list). */
+  recentRubrics: RubricRef[]
   // case focus
   activeConsultationId: string | null
   activeClipboardId: string | null
@@ -291,6 +293,7 @@ export const useApp = create<AppState>(() => ({
   rubricNotes: {},
   remedyNotes: {},
   recentSearches: [],
+  recentRubrics: [],
   activeConsultationId: null,
   activeClipboardId: null,
   selectedSymptomIds: [],

@@ -6,7 +6,8 @@ import type { AnalysisResult, AnalysisRow, ResolvedSymptom } from '../../engine/
 import type { MenuItem } from '../../ui/Menu'
 import { useContextMenu } from '../../ui/Menu'
 import { exclusionText } from './labels'
-import { gridLabelWidth } from './gridLayout'
+import { COL_BLOCK, computeViewport, gridLabelWidth } from './gridLayout'
+import type { Geom, Viewport } from './gridLayout'
 import { GradeMark, GroupMark } from '../../ui/marks'
 
 // re-exported for existing importers; new code imports the marks from ui/marks
@@ -32,6 +33,8 @@ export interface GridProps {
   pinned?: Set<number>
   compact?: boolean
   label?: string
+  /** Expected size of the grid's scroll box (the pane it mounts into), read once on mount so the first render draws every visible column. */
+  sizeHint?: () => { width: number; height: number } | null
 }
 
 /* Compact (dock) columns are as wide as the main grid's, so a score like "16/29" is never clipped. */
@@ -71,49 +74,34 @@ export function SymptomLabel({ s, color }: { s: ResolvedSymptom; color: string }
   )
 }
 
-/** Columns / rows are rendered in blocks, so scrolling re-renders only when a block boundary is crossed. */
-const COL_BLOCK = 4
-const ROW_BLOCK = 6
-
-interface Viewport {
-  width: number
-  height: number
-  /** Rendered column range [c0, c1) and row range [r0, r1): the visible range widened to whole blocks. */
-  c0: number; c1: number; r0: number; r1: number
-  /** More columns to the right (draws the edge fade) and the scrollbar sizes the fade stays clear of. */
-  canRight: boolean
-  sbw: number; sbh: number
-}
-
-const snapDown = (x: number, b: number) => Math.max(0, Math.floor(x / b) * b)
-const snapUp = (x: number, n: number, b: number) => Math.min(n, Math.ceil(x / b) * b)
+const sameViewport = (v: Viewport, n: Viewport) => v.width === n.width && v.height === n.height && v.c0 === n.c0 && v.c1 === n.c1 && v.r0 === n.r0
+  && v.r1 === n.r1 && v.canRight === n.canRight && v.hiddenRight === n.hiddenRight && v.sbw === n.sbw && v.sbh === n.sbh
 
 /**
  * Visible index ranges of a scroll box. Only indexes (not raw offsets) are state, so scrolling within a
- * block does not re-render. Geometry comes from `geom`, read at event time.
+ * block does not re-render. Geometry comes from `geom`, read at event time. `initial` is the expected box
+ * size (the pane's), so the first render is already right. Also returns the scroll offsets as of the last
+ * scroll event (hover tracking reads them instead of forcing layout).
  */
-function useViewport(ref: React.RefObject<HTMLDivElement | null>, geom: { label: number; col: number; head: number; row: number; nr: number; nc: number }, pos: React.RefObject<{ x: number; y: number }>): Viewport {
-  const [vp, setVp] = useState<Viewport>({ width: 0, height: 0, c0: 0, c1: Math.min(geom.nc, 24), r0: 0, r1: Math.min(geom.nr, 40), canRight: false, sbw: 0, sbh: 0 })
+type ViewportGeom = Omit<Geom, 'label'> & { labelFor: (width: number) => number }
+const withLabel = (g: ViewportGeom, width: number): Geom => ({ label: g.labelFor(width), col: g.col, head: g.head, row: g.row, nr: g.nr, nc: g.nc })
+
+function useViewport(ref: React.RefObject<HTMLDivElement | null>, geom: ViewportGeom, initial: { width: number; height: number } | null) {
+  const [vp, setVp] = useState<Viewport>(() => (initial && initial.width > 0
+    ? computeViewport(withLabel(geom, initial.width), initial.width, initial.height)
+    : { width: 0, height: 0, c0: 0, c1: Math.min(geom.nc, 24), r0: 0, r1: Math.min(geom.nr, 40), canRight: false, hiddenRight: 0, sbw: 0, sbh: 0 }))
+  const pos = useRef({ x: 0, y: 0 })
   const g = useRef(geom)
-  g.current = geom
+  useLayoutEffect(() => { g.current = geom })
   const update = useCallback(() => {
     const el = ref.current
     if (!el) return
-    const { label, col, head, row, nr, nc } = g.current
-    const w = el.clientWidth, h = el.clientHeight, x = el.scrollLeft, y = el.scrollTop
+    const x = el.scrollLeft, y = el.scrollTop
     pos.current = { x, y }
-    const next: Viewport = {
-      width: w, height: h,
-      c0: Math.min(nc, snapDown(Math.floor(x / col), COL_BLOCK)),
-      c1: snapUp(Math.ceil((x + Math.max(0, w - label)) / col), nc, COL_BLOCK),
-      r0: Math.min(nr, snapDown(Math.floor(y / row), ROW_BLOCK)),
-      r1: snapUp(Math.ceil((y + Math.max(0, h - head)) / row), nr, ROW_BLOCK),
-      canRight: x + w < el.scrollWidth - 1,
-      sbw: el.offsetWidth - w, sbh: el.offsetHeight - h,
-    }
-    setVp(v => (v.width === next.width && v.height === next.height && v.c0 === next.c0 && v.c1 === next.c1 && v.r0 === next.r0 && v.r1 === next.r1
-      && v.canRight === next.canRight && v.sbw === next.sbw && v.sbh === next.sbh) ? v : next)
-  }, [ref, pos])
+    const w = el.clientWidth
+    const next = computeViewport(withLabel(g.current, w), w, el.clientHeight, x, y, el.scrollWidth, el.offsetWidth - el.clientWidth, el.offsetHeight - el.clientHeight)
+    setVp(v => (sameViewport(v, next) ? v : next))
+  }, [ref])
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
@@ -124,8 +112,8 @@ function useViewport(ref: React.RefObject<HTMLDivElement | null>, geom: { label:
     return () => { el.removeEventListener('scroll', update); ro.disconnect() }
   }, [ref, update])
   // geometry changes (label width, more rows or columns) move the ranges too
-  useLayoutEffect(update, [update, geom.label, geom.col, geom.head, geom.row, geom.nr, geom.nc])
-  return vp
+  useLayoutEffect(update, [update, geom.labelFor, geom.col, geom.head, geom.row, geom.nr, geom.nc])
+  return { vp, pos }
 }
 
 /**
@@ -149,6 +137,36 @@ interface CellsProps extends Span {
   pinned?: Set<number>
 }
 
+interface CellProps {
+  className: string
+  label: string
+  colIndex: number
+  cell: string
+  left: number | undefined
+  focusable: boolean
+  gen: boolean
+}
+
+/**
+ * One grid cell. Memoised on primitive props: moving the cursor (roving tabindex) re-renders only the
+ * old and the new cursor cell, not the whole block they sit in.
+ */
+const Cell = memo(function Cell(c: CellProps) {
+  return (
+    <div
+      className={c.className}
+      role="gridcell"
+      aria-colindex={c.colIndex}
+      aria-label={c.label}
+      style={c.left === undefined ? undefined : { left: c.left }}
+      data-cell={c.cell}
+      tabIndex={c.focusable ? 0 : -1}
+    >
+      {c.gen && <span className="an-cell-gen" aria-hidden="true">G</span>}
+    </div>
+  )
+})
+
 const RowCells = memo(function RowCells(p: CellsProps) {
   const { s, i, rows } = p
   const out = []
@@ -166,18 +184,16 @@ const RowCells = memo(function RowCells(p: CellsProps) {
     if (p.selectedSymptom != null && !row.grades[p.selectedSymptom]) c += ' dim'
     if (p.pinned?.has(row.remedyId) && !p.pinned.has(rows[j - 1]?.remedyId)) c += ' pin-first'
     out.push(
-      <div
+      <Cell
         key={row.remedyId}
         className={c}
-        role="gridcell"
-        aria-colindex={j + 2}
-        aria-label={`${p.catalog.remedy(row.remedyId).abbrev}, ${s.label}: ${g ? `grade ${g}${gen ? ' (generalised)' : ''}` : 'absent'}`}
-        style={p.abs ? { left: p.label + j * p.col } : undefined}
-        data-cell={`${i}:${j}`}
-        tabIndex={p.activeC === j ? 0 : -1}
-      >
-        {gen && <span className="an-cell-gen" aria-hidden="true">G</span>}
-      </div>,
+        colIndex={j + 2}
+        label={`${p.catalog.remedy(row.remedyId).abbrev}, ${s.label}: ${g ? `grade ${g}${gen ? ' (generalised)' : ''}` : 'absent'}`}
+        left={p.abs ? p.label + j * p.col : undefined}
+        cell={`${i}:${j}`}
+        focusable={p.activeC === j}
+        gen={gen}
+      />,
     )
   }
   return <>{out}</>
@@ -355,13 +371,20 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const colBand = useRef<HTMLDivElement>(null)
   const rowBand = useRef<HTMLDivElement>(null)
-  // the label column shrinks in narrow panes so more remedy columns stay visible (the viewport re-measures when it changes)
-  const [labelW, setLabelW] = useState(base.label)
-  const S = useMemo(() => ({ ...base, label: labelW }), [base, labelW])
-  // scroll offsets as of the last scroll event and the scroller's box: hover tracking reads these instead of forcing layout
-  const scrollPos = useRef({ x: 0, y: 0 })
+  // scroller's box as of the last hover entry: hover tracking reads it (and the scroll offsets) instead of forcing layout
   const boxRect = useRef<DOMRect | null>(null)
-  const vp = useViewport(scrollRef, { label: S.label, col: S.col, head: S.head, row: S.row, nr, nc }, scrollPos)
+  /*
+   * The symptom (label) column's width follows the box width: narrow panes shrink it so more remedy columns
+   * show, few remedies let it grow into unused width, overflowing columns make it absorb the remainder so
+   * the last visible column is whole. Derived, not state: the width and the ranges change in one render.
+   */
+  const labelFor = useCallback((w: number) => (p.compact
+    ? gridLabelWidth(w, nc, { base: base.label, col: base.col, min: base.label, max: base.label })
+    : gridLabelWidth(w, nc, { base: base.label, col: base.col, min: LABEL_MIN, max: LABEL_MAX })), [p.compact, nc, base])
+  const [initialSize] = useState(() => p.sizeHint?.() ?? null)
+  const { vp, pos: scrollPos } = useViewport(scrollRef, { labelFor, col: base.col, head: base.head, row: base.row, nr, nc }, initialSize)
+  const labelW = labelFor(vp.width)
+  const S = useMemo(() => ({ ...base, label: labelW }), [base, labelW])
   // the hover cross-hair steps aside while scrolling (repainting it every frame costs more than the scroll itself)
   const scrolledAt = useRef(0)
   useEffect(() => {
@@ -393,12 +416,6 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
     el.addEventListener('scrollend', onEnd)
     return () => el.removeEventListener('scrollend', onEnd)
   }, [colW])
-  // narrow panes: the label shrinks so more remedy columns stay visible; few remedies: it grows into the unused width
-  // overflowing columns: the label takes up the remainder so the last visible column is whole
-  const wantLabel = p.compact
-    ? gridLabelWidth(vp.width, nc, { base: base.label, col: base.col, min: base.label, max: base.label })
-    : gridLabelWidth(vp.width, nc, { base: base.label, col: base.col, min: LABEL_MIN, max: LABEL_MAX })
-  useLayoutEffect(() => { if (wantLabel !== labelW) setLabelW(wantLabel) }, [wantLabel, labelW])
   const [active, setActive] = useState<{ r: number; c: number }>({ r: 0, c: 0 })
   const focusWithin = useRef(false)
   const cm = useContextMenu()
@@ -601,7 +618,23 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
         </div>
         {cm.element}
       </div>
-      {vp.canRight && <div className="an-grid-fade" style={{ right: vp.sbw, bottom: vp.sbh }} aria-hidden="true" />}
+      {vp.canRight && <div className="an-grid-fade" style={{ right: vp.sbw, height: vp.height }} aria-hidden="true" />}
+      {vp.hiddenRight > 0 && (
+        <div className="an-grid-foot">
+          <button
+            type="button" className="an-more-cols" tabIndex={-1}
+            title="Scroll to the next remedies (in the grid: → or End)"
+            onClick={() => {
+              const el = scrollRef.current
+              if (!el) return
+              const page = Math.max(1, Math.floor((el.clientWidth - S.label) / S.col) - 1) * S.col
+              el.scrollBy({ left: page, behavior: 'smooth' })
+            }}
+          >
+            {vp.hiddenRight} more {vp.hiddenRight === 1 ? 'remedy' : 'remedies'} ›
+          </button>
+        </div>
+      )}
     </div>
   )
 })

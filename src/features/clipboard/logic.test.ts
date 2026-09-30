@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Symptom } from '../../engine/model'
-import { clickSelect, clipboardStats, combinedSize, cycleWeight, moveIdsBefore, moveIdsBy, parseRubricDrop, sortSymptomIds } from './logic'
+import { clickSelect, clipboardStats, combinedSize, cycleWeight, moveIdsBefore, moveIdsBy, parseRubricDrop, sortSymptomIds, broadTakeWarning } from './logic'
 import type { RubricFacts } from './logic'
 
 const sym = (id: string, ref: string, weight: Symptom['weight'] = 1, extra: Partial<Symptom> = {}): Symptom => ({
@@ -73,5 +73,16 @@ describe('misc', () => {
   it('cycleWeight wraps', () => {
     expect(cycleWeight(4)).toBe(0)
     expect(cycleWeight(0, -1)).toBe(4)
+  })
+})
+
+describe('broadTakeWarning', () => {
+  it('is empty for ordinary rubrics', () => {
+    expect(broadTakeWarning([{ chapter: false, remedies: 40 }, { chapter: false, remedies: 300 }])).toBe('')
+  })
+  it('warns on a whole chapter and on rubrics above the threshold', () => {
+    expect(broadTakeWarning([{ chapter: true, remedies: 453 }])).toBe('Warning: whole chapter, 453 remedies; it adds little to the analysis')
+    expect(broadTakeWarning([{ chapter: false, remedies: 301 }])).toMatch(/^Warning: very broad rubric, 301 remedies/)
+    expect(broadTakeWarning([{ chapter: false, remedies: 320 }, { chapter: false, remedies: 410 }, { chapter: false, remedies: 3 }])).toMatch(/^Warning: 2 very broad rubrics, 410 remedies/)
   })
 })

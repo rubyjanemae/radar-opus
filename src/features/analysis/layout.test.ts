@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { gridLabelWidth } from './gridLayout'
+import { computeViewport, gridLabelWidth, hiddenColumnsRight } from './gridLayout'
+import { cardLayout } from './cardLayout'
 import { analysisStatusText } from './labels'
 import { splitTabTitle } from '../../shell/tabTitle'
 
@@ -44,5 +45,51 @@ describe('splitTabTitle', () => {
     expect(splitTabTitle('analysis', 'Keller · A · B')).toEqual(['Keller', ' · A · B'])
     expect(splitTabTitle('analysis', 'Missing case')).toBeNull()
     expect(splitTabTitle('repertory', 'Mind · x')).toBeNull()
+  })
+})
+
+describe('hiddenColumnsRight', () => {
+  it('counts the remedy columns beyond the right edge of a whole-column layout', () => {
+    // 820 px box: the label absorbs the remainder, 13 whole 36 px columns show out of 30
+    const label = gridLabelWidth(820, 30, N)
+    expect(hiddenColumnsRight(0, 820, label, 36, 30)).toBe(30 - Math.floor((820 - label) / 36))
+    expect(hiddenColumnsRight(0, 820, label, 36, 30)).toBe(17)
+  })
+  it('is 0 when every column fits or the grid is scrolled to the end', () => {
+    expect(hiddenColumnsRight(0, 1000, 340, 36, 5)).toBe(0)
+    const label = gridLabelWidth(820, 30, N)
+    expect(hiddenColumnsRight(label + 30 * 36 - 820, 820, label, 36, 30)).toBe(0)
+  })
+  it('is 0 before the box is measured', () => {
+    expect(hiddenColumnsRight(0, 0, 340, 36, 30)).toBe(0)
+  })
+})
+
+describe('computeViewport', () => {
+  const g = { label: 340, col: 36, head: 104, row: 24, nr: 11, nc: 125 }
+  it('covers every visible column of a wide box on the first render (no second pass)', () => {
+    // a 1300px pane: (1300 - 340) / 36 ≈ 27 columns visible, rendered in whole blocks of 4
+    const v = computeViewport(g, 1300, 900)
+    expect(v.c0).toBe(0)
+    expect(v.c1).toBeGreaterThanOrEqual(Math.ceil((1300 - 340) / 36))
+    expect(v.c1 % 4).toBe(0)
+    expect(v.r1).toBe(11)
+    expect(v.canRight).toBe(true)
+    expect(v.hiddenRight).toBe(125 - Math.floor((1300 - 340 + 0.5) / 36))
+  })
+  it('widens to whole blocks when scrolled and stops at the last column', () => {
+    const v = computeViewport(g, 800, 400, 36 * 118, 0)
+    expect(v.c0).toBe(116)
+    expect(v.c1).toBe(125)
+    expect(v.canRight).toBe(false)
+  })
+})
+
+describe('cardLayout', () => {
+  it('fits as many 230px cards as the box allows and shares the rest', () => {
+    expect(cardLayout(1300)).toEqual({ cols: 5, cardW: Math.floor((1280 - 4 * 8) / 5) })
+    expect(cardLayout(480)).toEqual({ cols: 1, cardW: 460 })
+    expect(cardLayout(488)).toEqual({ cols: 2, cardW: 230 })
+    expect(cardLayout(0).cols).toBe(1)
   })
 })

@@ -6,7 +6,9 @@ import { openApp } from './helpers'
 
 const scripts = (page: Page) => page.evaluate(() =>
   performance.getEntriesByType('resource').map(e => e.name.replace(location.origin, '')).filter(n => /\.(js|tsx?)(\?|$)/.test(n)))
-const HEAVY = /AnalysisGrid|AnalysisDock|CaseReport|WelcomeTour|remedyIndex(\.ts|-)|FindDialog|SettingsDialog|RemedyPicker|FamilyFilterDialog|TakeOptionsDialog/
+// AnalysisView and its AnalysisGrid are prefetched at idle time after boot (so the first F8 is fast), so they
+// are not listed here; the dock, the report, the tour and the dialogs must not come with the app.
+const HEAVY = /AnalysisDock|CaseReport|WelcomeTour|remedyIndex(\.ts|-)|FindDialog|SettingsDialog|RemedyPicker|FamilyFilterDialog|TakeOptionsDialog/
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => { performance.setResourceTimingBufferSize(5000) })
@@ -18,10 +20,11 @@ test('boot does not load the analysis grid, case report, welcome tour, remedy in
   const loaded = await scripts(page)
   expect(loaded.length).toBeGreaterThan(0)
   expect(loaded.filter(n => HEAVY.test(n))).toEqual([])
-  // later, idle time preloads the small dialogs and builds the remedy index, but the grid, the dock,
-  // the case report and the tour still wait for first use
-  await page.waitForTimeout(3000)
-  expect((await scripts(page)).filter(n => /AnalysisGrid|AnalysisDock|CaseReport|WelcomeTour/.test(n))).toEqual([])
+  // later, idle time preloads the small dialogs, the analysis tab and builds the remedy index, but the
+  // dock, the case report and the tour still wait for first use
+  await expect.poll(async () => (await scripts(page)).some(n => /AnalysisView/.test(n)), { timeout: 15_000 }).toBe(true)
+  const later = await scripts(page)
+  expect(later.filter(n => /AnalysisDock|CaseReport|WelcomeTour/.test(n))).toEqual([])
 })
 
 test('lazy dialogs open on first use: find, settings, remedies, case report', async ({ page }) => {

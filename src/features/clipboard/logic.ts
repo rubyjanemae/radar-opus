@@ -135,3 +135,21 @@ export function clipboardStats(symptoms: Symptom[]) {
 export function cycleWeight(w: number, dir: 1 | -1 = 1): 0 | 1 | 2 | 3 | 4 {
   return (((w + dir) % 5) + 5) % 5 as 0 | 1 | 2 | 3 | 4
 }
+
+/** A rubric above this many remedies is too generic to take without a warning (RadarOpus warns on generic rubrics). */
+export const BROAD_RUBRIC_REMEDIES = 300
+
+/** What the broad-take warning needs to know about each rubric being taken. */
+export interface TakeBreadth { chapter: boolean; remedies: number }
+
+/**
+ * Warning suffix for the take toast when a take includes a whole chapter or a rubric above
+ * BROAD_RUBRIC_REMEDIES remedies; empty otherwise. The toast carries Undo, so the take stays one keypress away from reverting.
+ */
+export function broadTakeWarning(items: readonly TakeBreadth[], threshold = BROAD_RUBRIC_REMEDIES): string {
+  const broad = items.filter(i => i.chapter || i.remedies > threshold)
+  if (!broad.length) return ''
+  const max = Math.max(...broad.map(i => i.remedies))
+  const what = broad.some(i => i.chapter) ? (broad.length === 1 ? 'whole chapter' : `${broad.length} broad rubrics incl. a chapter`) : (broad.length === 1 ? 'very broad rubric' : `${broad.length} very broad rubrics`)
+  return `Warning: ${what}, ${max} remedies; it adds little to the analysis`
+}

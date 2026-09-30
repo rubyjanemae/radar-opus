@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Command } from '../../commands/registry'
 import type { Patient } from '../../state/patients'
 import { fuzzy, markPositions } from './fuzzy'
-import { keywordReason, paletteItems, parseMode } from './model'
+import { keywordReason, PATIENT_MATCH_CAP, paletteItems, parseMode, patientEntries } from './model'
 import type { PaletteInput } from './model'
 
 const cmd = (id: string, title: string, extra: Partial<Command> = {}): Command => ({ id, title, category: 'Test', run: () => {}, ...extra })
@@ -144,5 +144,47 @@ describe('per-open palette caches', () => {
     const c = { id: 'a', title: 'A', category: 'X', run: () => {} }
     en(c); en(c); en(c)
     expect(calls).toBe(1)
+  })
+})
+
+describe('patients in the palette', () => {
+  const many = Array.from({ length: 2000 }, (_, i) => ({ ...patient(`p${i}`, `Anna${i}`, `Bulkowska${i}`), updatedAt: 10_000 - i }))
+
+  it('builds the folded entries once, newest first', () => {
+    const e = patientEntries({ a: { ...patient('a', 'Zoë', 'Émile'), updatedAt: 1 }, b: { ...patient('b', 'Bo', 'Li'), updatedAt: 2 } })
+    expect(e.map(x => x.patient.id)).toEqual(['b', 'a'])
+    expect(e[1].hay).toBe(e[1].hay.toLowerCase())
+    expect(e[1].hay).not.toMatch(/[ëÉ]/)
+  })
+
+  it('matches by first name when the display name puts the last name first', () => {
+    const entries = patientEntries([patient('x', 'Maria', 'Lopez')])
+    const secs = paletteItems(input({ mode: 'patients', text: 'maria lopez', patientEntries: entries }))
+    expect(secs.find(s => s.key === 'patients')?.items).toHaveLength(1)
+  })
+
+  it('caps patient matches and lists at most 5 in mixed mode, 100 in patient mode', () => {
+    const entries = patientEntries(many)
+    const mixed = paletteItems(input({ text: 'bulk', patientEntries: entries }))
+    expect(mixed.find(s => s.key === 'patients')!.items).toHaveLength(5)
+    const only = paletteItems(input({ mode: 'patients', text: 'bulk', patientEntries: entries }))
+    expect(only.find(s => s.key === 'patients')!.items).toHaveLength(100)
+    expect(PATIENT_MATCH_CAP).toBeGreaterThanOrEqual(100)
+  })
+
+  it('no keystroke takes 50 ms with 2,000 patients', () => {
+    const commands = Array.from({ length: 300 }, (_, i) => cmd(`c${i}`, `Command number ${i} of the menu`))
+    const entries = patientEntries(many)
+    const worst: number[] = []
+    for (const mode of ['', '@']) {
+      const q = `${mode}bulkowska anna`
+      for (let n = 1; n <= q.length; n++) {
+        const { mode: m, text } = parseMode(q.slice(0, n))
+        const t = performance.now()
+        paletteItems(input({ mode: m, text, commands, patients: many, patientEntries: entries }))
+        worst.push(performance.now() - t)
+      }
+    }
+    expect(Math.max(...worst)).toBeLessThan(50)
   })
 })

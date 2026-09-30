@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, startTransition, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import {
   AlertCircle, BarChart3, ChevronDown, CircleHelp, ClipboardPlus, Download, ExternalLink, FolderSearch, History, ListTree, Loader2, Pill,
@@ -16,9 +16,12 @@ import { useContextMenu } from '../../ui/Menu'
 import type { MenuItem } from '../../ui/Menu'
 import { copyRubric, ensureClipboard, goToRef, openTakeOptions, takeRefs, takeToast, toggleBookmark } from '../repertory/ops'
 import { DEFAULT_TAKE, bookAbbrev } from '../repertory/take'
+import type { TakeOptions } from '../repertory/take'
 import { useFixedVirtual } from '../repertory/virtual'
-import { highlighter, remedyFrequency, search } from './engine'
-import type { RemedyFrequency } from './engine'
+import { SearchAborted, cachedHighlighter, remedyFrequencySliced, searchSliced } from './engine'
+import type { RemedyFrequency, SearchResult } from './engine'
+import { TakeBar, replayKey } from '../repertory/TakeBar'
+import '../repertory/repertory.css'
 import { describeQuery } from './query'
 import { GradeBar, RemedyPicker, gradeBreakdown, RubricPath, titleIfTruncated } from './components'
 import { prepare, readyTargets, remedyResolver, selection, tabRepertories, tabRubrics, useSearchSel } from './ops'
@@ -33,10 +36,13 @@ export function SearchView({ tab }: { tab: SearchTab }) {
   const mode = tab.mode ?? 'text'
   const scope = tab.scope ?? 'repertory'
   const [version, setVersion] = useState(0)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  // a load error belongs to the load it came from; a new scope/mode/attempt hides it (derived, no effect reset)
+  const [loadErr, setLoadErr] = useState<{ key: string, msg: string } | null>(null)
   // bumped by Retry so the prepare() effect runs again and re-requests the failed repertory
   const [attempt, setAttempt] = useState(0)
   const repKey = tabRepertories(tab).join(',')
+  const loadKey = `${repKey}|${scope}|${mode}|${attempt}`
+  const loadError = loadErr?.key === loadKey ? loadErr.msg : null
   const renderedPending = useRef(false)
 
   // make sure every repertory in scope is loaded and indexed
@@ -45,9 +51,8 @@ export function SearchView({ tab }: { tab: SearchTab }) {
     const { pending } = readyTargets(tab)
     // The background warm-up may have finished the index between render and this effect: re-read the targets.
     if (!pending.length) { if (renderedPending.current) setVersion(v => v + 1); return }
-    setLoadError(null)
     // results for the newly indexed repertories render in a transition (typing keeps priority)
-    prepare(pending, mode).then(() => { if (alive) startTransition(() => setVersion(v => v + 1)) }, e => alive && setLoadError(e instanceof Error ? e.message : String(e)))
+    prepare(pending, mode).then(() => { if (alive) startTransition(() => setVersion(v => v + 1)) }, e => alive && setLoadErr({ key: loadKey, msg: e instanceof Error ? e.message : String(e) }))
     return () => { alive = false }
   }, [repKey, scope, mode, attempt]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -70,7 +75,7 @@ export function SearchView({ tab }: { tab: SearchTab }) {
       </div>
       <ScopeBar tab={tab} />
       {loadError ? (
-        <div className="error-state"><h3>Could not load a repertory</h3><pre>{loadError}</pre><button className="btn" onClick={() => { setLoadError(null); setAttempt(a => a + 1); setVersion(v => v + 1) }}>Retry</button></div>
+        <div className="error-state"><h3>Could not load a repertory</h3><pre>{loadError}</pre><button className="btn" onClick={() => { setLoadErr(null); setAttempt(a => a + 1); setVersion(v => v + 1) }}>Retry</button></div>
       ) : pending.length && !targets.length ? (
         <div className="empty-state"><Loader2 className="spin" size={18} /><strong>Preparing search</strong>Loading and indexing {pending.map(a => catalog.repertoryInfos.find(r => r.abbrev === a)?.title ?? a).join(', ')}…</div>
       ) : mode === 'text' ? <TextResults tab={tab} targets={targets} pendingCount={pending.length} version={version} /> : <RemedyResults tab={tab} targets={targets} version={version} />}
@@ -102,10 +107,13 @@ function TextQueryBar({ tab }: { tab: SearchTab }) {
           onChange={e => actions.updateTab<SearchTab>(tab.id, { query: e.target.value })}
           onBlur={() => actions.addRecentSearch(tab.query)}
           onKeyDown={e => {
-            if (e.key === 'Enter' || e.key === 'ArrowDown') {
-              if (e.key === 'Enter') actions.addRecentSearch(tab.query)
-              const list = (e.currentTarget.closest('.srch') as HTMLElement | null)?.querySelector<HTMLElement>('.srch-results')
-              if (list && tab.query.trim()) { e.preventDefault(); list.focus() }
+            if (e.key === 'Enter' && !e.altKey) {
+              // run the search (it runs as you type; Enter waits for the current query) and move to the first result
+              e.preventDefault()
+              actions.addRecentSearch(tab.query)
+              if (tab.query.trim()) requestResultsFocus(tab.id, true)
+            } else if (e.key === 'ArrowDown') {
+              if (tab.query.trim()) { e.preventDefault(); requestResultsFocus(tab.id, false) }
             } else if (e.key === 'Escape' && tab.query) { e.preventDefault(); e.stopPropagation(); actions.updateTab<SearchTab>(tab.id, { query: '' }) }
           }}
         />
@@ -234,14 +242,30 @@ type Targets = ReturnType<typeof readyTargets>['targets']
 
 function TextResults({ tab, targets, pendingCount, version }: { tab: SearchTab; targets: Targets; pendingCount: number; version: number }) {
   const recent = useApp(s => s.recentSearches)
-  // typing stays responsive: the search runs in a deferred (interruptible) render
-  const query = useDeferredValue(tab.query)
-  const result = useMemo(
-    () => search(query, targets, { collapse: tab.collapse, resolveRemedy: remedyResolver }),
-    [query, targets, tab.collapse, version], // eslint-disable-line react-hooks/exhaustive-deps
-  )
-  const hl = useMemo(() => (result.parsed.positive.length ? highlighter(result.parsed) : null), [result])
-  const rows = useMemo(() => textRows(result.hits), [result])
+  // The search runs in ~8 ms slices (searchSliced) so typing never waits for it; a newer query
+  // aborts the one in flight. The rows shown meanwhile are the previous query's, marked busy.
+  const input: TextJob = { query: tab.query, targets, collapse: !!tab.collapse, version }
+  const [done, setDone] = useState<{ job: TextJob; result: SearchResult } | null>(null)
+  useEffect(() => {
+    const job: TextJob = { query: tab.query, targets, collapse: !!tab.collapse, version }
+    if (!job.query.trim()) return
+    const ac = new AbortController()
+    searchSliced(job.query, job.targets, { collapse: job.collapse, resolveRemedy: remedyResolver }, ac.signal).then(
+      result => { if (!ac.signal.aborted) startTransition(() => setDone({ job, result })) },
+      e => { if (!(e instanceof SearchAborted)) throw e },
+    )
+    return () => ac.abort()
+  }, [tab.query, targets, tab.collapse, version])
+  const current = !!done && sameJob(done.job, input)
+  const result = done?.result ?? null
+  const hl = useMemo(() => (result?.parsed.positive.length ? cachedHighlighter(result.parsed) : null), [result])
+  const rows = useMemo(() => (result ? textRows(result.hits) : NO_ROWS), [result])
+
+  // Enter / ↓ in the query box: focus the first result once the results are those of the typed query
+  const [focusReq, setFocusReq] = useState<{ n: number; first: boolean } | null>(null)
+  useEffect(() => onResultsFocusRequest(tab.id, first => setFocusReq(r => ({ n: (r?.n ?? 0) + 1, first }))), [tab.id])
+  const [focusToken, setFocusToken] = useState<{ n: number; first: boolean } | null>(null)
+  if (focusReq && current && focusToken?.n !== focusReq.n) setFocusToken(focusReq)
 
   if (!tab.query.trim()) {
     return (
@@ -260,13 +284,15 @@ function TextResults({ tab, targets, pendingCount, version }: { tab: SearchTab; 
       </div>
     )
   }
+  if (!result) return <div className="srch-empty" role="status"><Loader2 className="spin" size={18} /><span>Searching…</span></div>
   return (
     <ResultsBody
       tab={tab}
       rows={rows}
       hitCount={result.total}
       hl={hl}
-      busy={query !== tab.query}
+      busy={!current}
+      focusToken={focusToken}
       status={
         <>
           {result.error ? <span className="srch-err"><AlertCircle size={13} /> {result.error}</span> : <span className="srch-desc">{describeQuery(result.parsed)}</span>}
@@ -275,13 +301,24 @@ function TextResults({ tab, targets, pendingCount, version }: { tab: SearchTab; 
       }
       ms={result.ms}
       multiRep={targets.length > 1}
-      emptyText={result.error ? 'Fix the query to see results.' : `No rubric matches “${tab.query.trim()}”.`}
+      emptyText={result.error ? 'Fix the query to see results.' : `No rubric matches “${(done?.job.query ?? tab.query).trim()}”.`}
     />
   )
 }
 
 interface RemedyJob { remedyId: number; minGrade?: number; maxSize?: number; maxCo?: number; targets: Targets; version: number }
-const NO_JOB: RemedyJob | null = null
+
+interface TextJob { query: string; targets: Targets; collapse: boolean; version: number }
+const sameJob = (a: TextJob, b: TextJob) => a.query === b.query && a.targets === b.targets && a.collapse === b.collapse && a.version === b.version
+const NO_ROWS: Row[] = []
+
+/** Query box → results list: "focus the results (first row) when they are up to date". */
+const focusListeners = new Map<string, (first: boolean) => void>()
+function requestResultsFocus(tabId: string, first: boolean) { focusListeners.get(tabId)?.(first) }
+function onResultsFocusRequest(tabId: string, fn: (first: boolean) => void) {
+  focusListeners.set(tabId, fn)
+  return () => { if (focusListeners.get(tabId) === fn) focusListeners.delete(tabId) }
+}
 
 function RemedyResults({ tab, targets, version }: { tab: SearchTab; targets: Targets; version: number }) {
   const catalog = useCatalog()
@@ -290,15 +327,21 @@ function RemedyResults({ tab, targets, version }: { tab: SearchTab; targets: Tar
     [tab.remedyId, tab.minGrade, tab.maxSize, tab.maxCo, targets, version],
   )
   // The tab paints first (picker, filters, "finding rubrics"); the rubrics are then gathered in a
-  // deferred render from the remedy's slice of the cached remedy index, so opening (F5, "Find
-  // rubrics") and changing a filter never block input.
-  const deferred = useDeferredValue(job, NO_JOB)
-  const result = useMemo(() => {
-    if (!deferred) return null
-    const t0 = performance.now()
-    const { rows, count } = remedyRows(deferred.targets, deferred.remedyId, deferred)
-    return { rows, count, ms: performance.now() - t0 }
-  }, [deferred])
+  // task after the paint from the remedy's slice of the cached remedy index, so opening (F5, "Find
+  // rubrics") and changing a filter never block input. Timing happens there, not during render.
+  const [done, setDone] = useState<{ job: RemedyJob; rows: Row[]; count: number; ms: number } | null>(null)
+  useEffect(() => {
+    if (!job) return
+    let alive = true
+    const id = setTimeout(() => {
+      const t0 = performance.now()
+      const { rows, count } = remedyRows(job.targets, job.remedyId, job)
+      const ms = performance.now() - t0
+      if (alive) startTransition(() => setDone({ job, rows, count, ms }))
+    }, 0)
+    return () => { alive = false; clearTimeout(id) }
+  }, [job])
+  const result = done
 
   if (tab.remedyId == null) {
     return (
@@ -310,7 +353,7 @@ function RemedyResults({ tab, targets, version }: { tab: SearchTab; targets: Tar
     )
   }
   const r = catalog.remedy(tab.remedyId)
-  if (!result || deferred?.remedyId !== tab.remedyId) {
+  if (!result || result.job.remedyId !== tab.remedyId) {
     return <div className="srch-empty" role="status"><Loader2 className="spin" size={18} /><span>Finding the rubrics of {r.abbrev}…</span></div>
   }
   return (
@@ -320,7 +363,7 @@ function RemedyResults({ tab, targets, version }: { tab: SearchTab; targets: Tar
       hitCount={result.count}
       hl={null}
       ms={result.ms}
-      busy={deferred !== job}
+      busy={result.job !== job}
       multiRep={targets.length > 1}
       status={<span className="srch-desc"><b>{r.abbrev}</b> {r.name}{(tab.minGrade ?? 1) > 1 ? ` · grade ≥ ${tab.minGrade}` : ''}{tab.maxSize ? ` · ≤ ${tab.maxSize} remedies` : ''}{(tab.maxCo ?? -1) >= 0 ? ` · ≤ ${tab.maxCo} co-remedies` : ''}</span>}
       emptyText={`No rubric of ${r.abbrev} passes these filters.`}
@@ -337,20 +380,25 @@ interface BodyProps {
   ms: number
   /** A newer query or filter is being computed (the rows shown are the previous ones). */
   busy?: boolean
+  /** Changes when the query box asks for the list: focus it (on the first result when `first`). */
+  focusToken?: { n: number; first: boolean } | null
   multiRep: boolean
   emptyText: string
 }
 
 /** Results of one search: selection, cursor, keyboard, take/open actions and the summary. */
-function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, busy, multiRep, emptyText }: BodyProps) {
+function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, busy, focusToken, multiRep, emptyText }: BodyProps) {
   const [showRemedies, setShowRemedies] = useState(false)
   // the summary shows by default only when the results keep a readable width; a click overrides
   const [summaryPref, setSummaryPref] = useState<boolean | null>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
-  const bodyWidth = useWidth(bodyRef)
+  const [bodyWidth, bodyWidthRef] = useWidth(bodyRef)
   const roomy = bodyWidth === 0 || bodyWidth >= SUMMARY_AUTO_MIN
   const showSummary = summaryPref ?? roomy
   const [remFilter, setRemFilter] = useState<number | null>(null)
+  // new results clear the remedy filter (adjusted during render, not in an effect)
+  const [remFor, setRemFor] = useState(allRows)
+  if (remFor !== allRows) { setRemFor(allRows); setRemFilter(null) }
   const catalog = useCatalog()
   const selected = useSearchSel(s => s.selected[tab.id]) ?? EMPTY
   const selSet = useMemo(() => new Set(selected), [selected])
@@ -359,7 +407,6 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, busy, multi
   // filter by a remedy picked in the summary
   const rows = useMemo(() => filterByRemedy(allRows, remFilter) as Row[], [allRows, remFilter])
   const hits = useMemo(() => hitRows(rows), [rows])
-  useEffect(() => { setRemFilter(null) }, [allRows])
 
   // prune selection to what is still listed
   useEffect(() => {
@@ -372,16 +419,26 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, busy, multi
 
   const ROW = showRemedies ? 44 : 26
   const listRef = useRef<HTMLDivElement>(null)
-  const v = useFixedVirtual(listRef, rows.length, ROW)
-  const [cursor, setCursor] = useState(0)
+  const v = useFixedVirtual(listRef, rows.length, ROW, 8, { deferScroll: true })
+  const [cursor, setCursor] = useState(() => firstHit(rows))
+  // new rows put the cursor on the first hit (adjusted during render, not in an effect)
+  const [cursorFor, setCursorFor] = useState(rows)
+  if (cursorFor !== rows) { setCursorFor(rows); setCursor(firstHit(rows)) }
   const cur = Math.min(cursor, Math.max(0, rows.length - 1))
-  useEffect(() => { setCursor(firstHit(rows)) }, [rows])
   useEffect(() => {
     const r = rows[cur]
     selection.focus(tab.id, r?.t === 'hit' ? rowRef(r) : null)
   }, [rows, cur, tab.id])
   useEffect(() => () => selection.focus(tab.id, null), [tab.id])
   useEffect(() => { v.scrollToIndex(cur) }, [cur]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Enter in the query box: the cursor goes to the first result and the list takes the focus
+  useEffect(() => {
+    if (!focusToken) return
+    if (focusToken.first) setCursor(firstHit(rows))
+    listRef.current?.focus()
+  }, [focusToken]) // eslint-disable-line react-hooks/exhaustive-deps
+  // the `+` take bar (as in the book): open with the key that started the command
+  const [takeBar, setTakeBar] = useState<string | null>(null)
 
   const curHit = rows[cur]?.t === 'hit' ? rows[cur] as HitRow : null
   const targetRefs = (): RubricRef[] => selected.length ? selected : (curHit ? [rowRef(curHit)] : [])
@@ -445,7 +502,17 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, busy, multi
     else if (e.key === 'Home') move(0)
     else if (e.key === 'End') move(rows.length - 1)
     else if (e.key === ' ') { if (r?.t === 'hit') selection.toggle(tab.id, rowRef(r)) }
+    else if ((e.key === '+' || e.key === '=') && !mod && !e.altKey) { if (targetRefs().length) setTakeBar(e.key) }
     else if (e.key === 'Enter') open(r, mod)
+    else if (e.key === 'Backspace' && !mod && !e.altKey) {
+      // back to the query, to refine it (the caret goes to the end)
+      const q = (e.currentTarget.closest('.srch') as HTMLElement | null)?.querySelector<HTMLInputElement>('input[data-search-input]')
+      if (q) { q.focus(); const n = q.value.length; q.setSelectionRange?.(n, n) }
+    }
+    else if (e.key === 'F3' && !mod && !e.altKey && !e.shiftKey) {
+      // find from the rubric under the cursor, in its repertory (as F3 in the book)
+      if (r?.t === 'hit') actions.openDialog('repertory.find', { repertory: r.rep.abbrev, from: r.index, current: r.index })
+    }
     else if (mod && e.key.toLowerCase() === 'a') selection.set(tab.id, hits.map(rowRef))
     else if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') {
       const el = listRef.current?.querySelector<HTMLElement>('.srch-row.cursor')
@@ -470,7 +537,7 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, busy, multi
   const countText = `${hits.length.toLocaleString()}${remFilter != null && hits.length !== hitCount ? ` of ${hitCount.toLocaleString()}` : ''} rubric${hitCount === 1 ? '' : 's'}`
 
   return (
-    <div className={`srch-body${bodyWidth && bodyWidth < 640 ? ' narrow' : ''}`} ref={bodyRef}>
+    <div className={`srch-body${bodyWidth && bodyWidth < 640 ? ' narrow' : ''}`} ref={bodyWidthRef}>
       <div className="srch-main">
         <div className="srch-bar-row">
           <input
@@ -512,6 +579,19 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, busy, multi
               onMenu={(e, k, r) => { setCursor(k); menu.open(e, rowMenu(r)) }}
             />
           )}
+        {takeBar != null && (() => {
+          const refs = targetRefs()
+          const path = refs.length === 1 && curHit && !selected.length ? curHit.rep.lineage(curHit.index).map(i => curHit.rep.text(i)) : [`${refs.length} selected rubric${refs.length === 1 ? '' : 's'}`]
+          return (
+            <TakeBar
+              initial={takeBar}
+              path={path}
+              onClose={() => { setTakeBar(null); listRef.current?.focus({ preventScroll: true }) }}
+              onTake={(o: TakeOptions) => { if (refs.length) takeRefs(refs, o) }}
+              onPass={e => { const el = listRef.current; if (el) replayKey(e, el) }}
+            />
+          )
+        })()}
       </div>
       {showSummary && allRows.length > 0 && (
         <Summary tab={tab} hits={hits} remFilter={remFilter} onFilter={setRemFilter} rowsForChapters={tab.mode === 'remedy' ? rows : null} onJump={k => { setCursor(k + 1); listRef.current?.focus() }} />
@@ -544,7 +624,6 @@ function ResultList({ listRef, tab, rows, cursor, selSet, selected, rowHeight, v
   onOpen: (r: HitRow) => void
   onMenu: (e: ReactMouseEvent, k: number, r: HitRow) => void
 }) {
-  const catalog = useCatalog()
   const ROW = rowHeight
   // position of each rubric row among all rubric rows (chapter headings are not options), for aria-posinset/-setsize
   const pos = useMemo(() => {
@@ -553,6 +632,17 @@ function ResultList({ listRef, tab, rows, cursor, selSet, selected, rowHeight, v
     for (let k = 0; k < rows.length; k++) if (rows[k].t === 'hit') out[k] = ++n
     return { at: out, size: n }
   }, [rows])
+  // one handler object for every row (its fields always call the latest callbacks), so a row
+  // re-renders only when what it shows changes: scrolling or moving the cursor re-renders two rows
+  const latest = useRef({ selected, onRowClick, onCursor, onOpen, onMenu })
+  latest.current = { selected, onRowClick, onCursor, onOpen, onMenu }
+  const on = useMemo<RowHandlers>(() => ({
+    selected: () => latest.current.selected,
+    click: (e, k) => latest.current.onRowClick(e, k),
+    cursor: k => latest.current.onCursor(k),
+    open: r => latest.current.onOpen(r),
+    menu: (e, k, r) => latest.current.onMenu(e, k, r),
+  }), [])
   const items = []
   for (let k = v.start; k < v.end; k++) {
     const r = rows[k]
@@ -565,42 +655,26 @@ function ResultList({ listRef, tab, rows, cursor, selSet, selected, rowHeight, v
       continue
     }
     const ref = rowRef(r)
-    const checked = selSet.has(ref)
-    const parts = r.rep.lineage(r.index).map(i => r.rep.text(i))
     items.push(
-      <div
+      <ResultRow
         key={ref}
+        r={r}
+        k={k}
         id={`srch-${tab.id}-${k}`}
-        role="option"
-        aria-selected={checked}
-        aria-posinset={pos.at[k]}
-        aria-setsize={pos.size}
-        className={`srch-row${k === cursor ? ' cursor' : ''}${checked ? ' checked' : ''}`}
-        style={{ top: k * ROW, height: ROW }}
-        draggable
-        onDragStart={e => {
-          const refs = checked ? selected : [ref]
-          e.dataTransfer.setData(RUBRIC_MIME, refs.join(' '))
-          e.dataTransfer.setData('text/plain', refs.map(x => { const [a, i] = [x.slice(0, x.lastIndexOf(':')), Number(x.slice(x.lastIndexOf(':') + 1))]; const rp = catalog.repertory(a); return rp ? rp.path(i) : x }).join('\n'))
-          e.dataTransfer.effectAllowed = 'copy'
-        }}
-        onMouseDown={e => { if (e.button === 0) onCursor(k) }}
-        onClick={e => onRowClick(e, k)}
-        onDoubleClick={e => { if (!(e.target as HTMLElement).closest('.srch-cb')) onOpen(r) }}
-        onContextMenu={e => onMenu(e, k, r)}
-      >
-        <div className="srch-line">
-          <span className={`srch-cb${checked ? ' on' : ''}`} aria-hidden="true" title={checked ? 'Deselect (Space)' : 'Select (Space)'} />
-          <span className="srch-path" onMouseEnter={titleIfTruncated(() => r.rep.path(r.index, ', ') + (multiRep ? ` (${r.rep.info.title})` : ''))}>
-            {r.grade && parts.length > 1 ? <RubricPath parts={parts} hit={hl} skip={1} /> : r.grade ? <i className="srch-whole">{parts[0]} (whole chapter)</i> : <RubricPath parts={parts} hit={hl} />}
-          </span>
-          {r.grade && <span className={`srch-grade g${r.grade}`} title={`Grade ${r.grade}`}>{bookAbbrev(catalog.remedy(tab.remedyId ?? 0).abbrev, r.grade)}</span>}
-          {r.co != null && tab.mode === 'remedy' && <span className="srch-co" title="Other remedies of the same or a higher grade">+{r.co}</span>}
-          {multiRep && !r.grade && <span className="srch-repbadge">{r.rep.info.abbrev}</span>}
-          <span className="srch-count" title="Remedies in this rubric">{r.rep.remedyCount(r.index)}</span>
-        </div>
-        {showRemedies && <RemedyLine rep={r.rep} index={r.index} highlight={remFilter ?? tab.remedyId ?? null} />}
-      </div>,
+        top={k * ROW}
+        height={ROW}
+        cursor={k === cursor}
+        checked={selSet.has(ref)}
+        posinset={pos.at[k]}
+        setsize={pos.size}
+        hl={hl}
+        multiRep={multiRep}
+        showRemedies={showRemedies}
+        remedyMode={tab.mode === 'remedy'}
+        remedyId={tab.remedyId ?? null}
+        highlight={remFilter ?? tab.remedyId ?? null}
+        on={on}
+      />,
     )
   }
   return (
@@ -619,9 +693,66 @@ function ResultList({ listRef, tab, rows, cursor, selSet, selected, rowHeight, v
   )
 }
 
+interface RowHandlers {
+  selected: () => RubricRef[]
+  click: (e: ReactMouseEvent, k: number) => void
+  cursor: (k: number) => void
+  open: (r: HitRow) => void
+  menu: (e: ReactMouseEvent, k: number, r: HitRow) => void
+}
+
+/**
+ * One result option, memoised: its props are the row (stable for a result set), position, state
+ * flags, the per-query highlighter (cached per parsed query) and one stable handler object.
+ */
+const ResultRow = memo(function ResultRow({ r, k, id, top, height, cursor, checked, posinset, setsize, hl, multiRep, showRemedies, remedyMode, remedyId, highlight, on }: {
+  r: HitRow; k: number; id: string; top: number; height: number; cursor: boolean; checked: boolean; posinset: number; setsize: number
+  hl: ((n: string) => boolean) | null; multiRep: boolean; showRemedies: boolean; remedyMode: boolean; remedyId: number | null; highlight: number | null; on: RowHandlers
+}) {
+  const catalog = useCatalog()
+  const ref = rowRef(r)
+  const parts = r.rep.lineage(r.index).map(i => r.rep.text(i))
+  return (
+    <div
+      id={id}
+      role="option"
+      aria-selected={checked}
+      aria-posinset={posinset}
+      aria-setsize={setsize}
+      className={`srch-row${cursor ? ' cursor' : ''}${checked ? ' checked' : ''}`}
+      style={{ top, height }}
+      draggable
+      onDragStart={e => {
+        const refs = checked ? on.selected() : [ref]
+        e.dataTransfer.setData(RUBRIC_MIME, refs.join(' '))
+        e.dataTransfer.setData('text/plain', refs.map(x => { const [a, i] = [x.slice(0, x.lastIndexOf(':')), Number(x.slice(x.lastIndexOf(':') + 1))]; const rp = catalog.repertory(a); return rp ? rp.path(i) : x }).join('\n'))
+        e.dataTransfer.effectAllowed = 'copy'
+      }}
+      onMouseDown={e => { if (e.button === 0) on.cursor(k) }}
+      onClick={e => on.click(e, k)}
+      onDoubleClick={e => { if (!(e.target as HTMLElement).closest('.srch-cb')) on.open(r) }}
+      onContextMenu={e => on.menu(e, k, r)}
+    >
+      <div className="srch-line">
+        <span className={`srch-cb${checked ? ' on' : ''}`} aria-hidden="true" title={checked ? 'Deselect (Space)' : 'Select (Space)'} />
+        <span className="srch-path" onMouseEnter={titleIfTruncated(() => r.rep.path(r.index, ', ') + (multiRep ? ` (${r.rep.info.title})` : ''))}>
+          {r.grade && parts.length > 1 ? <RubricPath parts={parts} hit={hl} skip={1} /> : r.grade ? <i className="srch-whole">{parts[0]} (whole chapter)</i> : <RubricPath parts={parts} hit={hl} />}
+        </span>
+        {r.grade && <span className={`srch-grade g${r.grade}`} title={`Grade ${r.grade}`}>{bookAbbrev(catalog.remedy(remedyId ?? 0).abbrev, r.grade)}</span>}
+        {r.co != null && remedyMode && <span className="srch-co" title="Other remedies of the same or a higher grade">+{r.co}</span>}
+        {multiRep && !r.grade && <span className="srch-repbadge">{r.rep.info.abbrev}</span>}
+        <span className="srch-count" title="Remedies in this rubric">{r.rep.remedyCount(r.index)}</span>
+      </div>
+      {showRemedies && <RemedyLine rep={r.rep} index={r.index} highlight={highlight} />}
+    </div>
+  )
+})
+
 const EMPTY: RubricRef[] = []
 /** Below this body width the summary starts hidden, so rubric paths stay readable. */
 const SUMMARY_AUTO_MIN = 760
+/** The summary is counted after the results have been stable this long. */
+const SUMMARY_DELAY_MS = 250
 
 function RemedyLine({ rep, index, highlight }: { rep: Repertory; index: number; highlight: number | null }) {
   const catalog = useCatalog()
@@ -669,10 +800,23 @@ function Summary({ tab, hits, remFilter, onFilter, rowsForChapters, onJump }: {
   const tabs = useApp(s => s.tabs)
   const otherSearches = tabs.filter((t): t is SearchTab => t.kind === 'search' && t.id !== tab.id)
   const [view, setView] = useState<'remedies' | 'compare' | 'chapters'>(rowsForChapters ? 'chapters' : 'remedies')
-  const freq = useMemo(() => remedyFrequency(hits, 25), [hits])
+  // counted once the results settle (a 250 ms pause), in slices: typing never waits for the summary
+  const [freqFor, setFreqFor] = useState<{ hits: HitRow[]; freq: { top: RemedyFrequency[]; distinct: number } } | null>(null)
+  useEffect(() => {
+    const ac = new AbortController()
+    const id = setTimeout(() => {
+      remedyFrequencySliced(hits, 25, ac.signal).then(
+        freq => { if (!ac.signal.aborted) startTransition(() => setFreqFor({ hits, freq })) },
+        e => { if (!(e instanceof SearchAborted)) throw e },
+      )
+    }, SUMMARY_DELAY_MS)
+    return () => { clearTimeout(id); ac.abort() }
+  }, [hits])
+  const freq = freqFor?.freq ?? null
+  const freqStale = freqFor?.hits !== hits
   const compareKey = otherSearches.map(t => `${t.id}${t.query}${t.remedyId}${t.scope}${t.chapter}${t.collapse}${t.minGrade}${t.maxSize}${t.maxCo}`).join('|')
   const compare = useMemo(() => (view === 'compare' ? compareSearches([tab, ...otherSearches], catalog) : null), [view, tab, compareKey]) // eslint-disable-line react-hooks/exhaustive-deps
-  const max = freq.top[0]?.count ?? 1
+  const max = freq?.top[0]?.count ?? 1
 
   return (
     <aside className="srch-sum" aria-label="Result summary">
@@ -683,9 +827,12 @@ function Summary({ tab, hits, remFilter, onFilter, rowsForChapters, onJump }: {
       </div>
       {view === 'remedies' && (
         <>
-          <p className="srch-sum-note">Occurrences in {hits.length.toLocaleString()} rubric{hits.length === 1 ? '' : 's'} · {freq.distinct.toLocaleString()} remedies. Click a bar to filter.</p>
-          <ol className="srch-bars">
-            {freq.top.filter(f => !rowsForChapters || f.remedyId !== tab.remedyId).map(f => (
+          <p className="srch-sum-note" aria-busy={freqStale}>
+            {freq ? <>Occurrences in {freqFor!.hits.length.toLocaleString()} rubric{freqFor!.hits.length === 1 ? '' : 's'} · {freq.distinct.toLocaleString()} remedies. Click a bar to filter.</> : <>Counting remedies…</>}
+            {freq && freqStale && <Loader2 size={11} className="spin srch-sum-busy" aria-label="Updating" />}
+          </p>
+          <ol className={`srch-bars${freqStale ? ' stale' : ''}`}>
+            {(freq?.top ?? []).filter(f => !rowsForChapters || f.remedyId !== tab.remedyId).map(f => (
               <FreqRow key={f.remedyId} f={f} max={max} active={remFilter === f.remedyId} onClick={() => onFilter(remFilter === f.remedyId ? null : f.remedyId)} onOpen={() => actions.openTab({ kind: 'remedy', remedyId: f.remedyId })} />
             ))}
           </ol>
