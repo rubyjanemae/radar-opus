@@ -1,0 +1,36 @@
+[
+ {
+  "abbrev": "publicum",
+  "title": "Repertorium Publicum",
+  "fullTitle": "Repertorium Publicum",
+  "lang": "en",
+  "author": "Vladimir Polony",
+  "year": 2008,
+  "publisher": "Vladimir Polony, Stupy 24, Banska Bystrica, Slovakia",
+  "license": "GPL v3 - as part of the OpenRep source code",
+  "rubricCount": 74667,
+  "uniquePaths": 74666,
+  "nodeCount": 74370,
+  "syntheticCount": 0,
+  "duplicatePaths": 1,
+  "entryCount": 729565,
+  "file": "rep-publicum.json"
+ },
+ {
+  "abbrev": "kent-de",
+  "title": "Kents Repertorium [deutsch]",
+  "fullTitle": "Übersetzung von: Repertory of the Homeopathic Materia Medica",
+  "lang": "de",
+  "author": "J. T. Kent",
+  "year": 2012,
+  "publisher": "Bildungswerk für therapeutische Berufe/Joscha Körschgen",
+  "license": "GPL v3 - as part of the fork of the OpenRep program, published on Github",
+  "rubricCount": 68741,
+  "uniquePaths": 68120,
+  "nodeCount": 68392,
+  "syntheticCount": 279,
+  "duplicatePaths": 609,
+  "entryCount": 619648,
+  "file": "rep-kent-de.json"
+ }
+]
