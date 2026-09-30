@@ -37,12 +37,14 @@ export function SearchView({ tab }: { tab: SearchTab }) {
   const [version, setVersion] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
   const repKey = tabRepertories(tab).join(',')
+  const renderedPending = useRef(false)
 
   // make sure every repertory in scope is loaded and indexed
   useEffect(() => {
     let alive = true
     const { pending } = readyTargets(tab)
-    if (!pending.length) return
+    // The background warm-up may have finished the index between render and this effect: re-read the targets.
+    if (!pending.length) { if (renderedPending.current) setVersion(v => v + 1); return }
     setLoadError(null)
     prepare(pending).then(() => alive && setVersion(v => v + 1), e => alive && setLoadError(e instanceof Error ? e.message : String(e)))
     return () => { alive = false }
@@ -50,6 +52,7 @@ export function SearchView({ tab }: { tab: SearchTab }) {
 
   const update = (patch: Partial<SearchTab>) => actions.updateTab<SearchTab>(tab.id, patch)
   const { targets, pending } = useMemo(() => readyTargets(tab), [repKey, scope, tab.chapter, version]) // eslint-disable-line react-hooks/exhaustive-deps
+  renderedPending.current = pending.length > 0
 
   return (
     <div className="srch" data-mode={mode}>

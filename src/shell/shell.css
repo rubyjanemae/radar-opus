@@ -72,17 +72,20 @@
 .toolbar .qf-input { height: var(--ctl-h); border-radius: var(--radius); font-size: var(--fs-sm); }
 .clip-switch { gap: 3px; }
 .clip-chip {
-  position: relative; width: 28px; height: var(--ctl-h); border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev);
+  display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 28px; height: var(--ctl-h); padding: 0 6px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev);
   font-size: var(--fs-xs); font-weight: 700; color: var(--text-2); box-shadow: inset 0 -2px 0 var(--chip);
 }
-/* count badge: on-colour text per clipboard colour (--chip-fg), sits on the chip's top-right corner */
+/* symptom count: a small raised pill beside the clipboard number, inside the chip, in the clipboard's
+   colour with its on-colour text (--chip-fg); inverted on the active (filled) chip */
 .clip-chip sup {
-  position: absolute; top: -3px; right: -3px; min-width: 16px; height: 15px; padding: 0 4px; border-radius: 8px;
-  background: var(--chip); color: var(--chip-fg, #fff); font-size: 10px; font-weight: 700; line-height: 15px; box-shadow: 0 0 0 1.5px var(--bg-elev);
+  align-self: flex-start; margin-top: 3px; min-width: 15px; height: 14px; padding: 0 3px; border-radius: 7px;
+  background: var(--chip); color: var(--chip-fg, #fff); font-size: 10px; font-weight: 700; line-height: 14px; vertical-align: baseline;
 }
 .clip-chip sup:empty { display: none; }
 .clip-chip:hover { border-color: var(--border-strong); }
 .clip-chip.active { background: var(--chip); color: var(--chip-fg, #fff); border-color: var(--chip); }
+.clip-chip.active sup { background: var(--chip-fg, #fff); color: var(--chip); }
 
 /* ───────── main panes ───────── */
 .shell-main { flex: 1; display: flex; min-height: 0; }
@@ -124,6 +127,11 @@
 .tab-close { flex: none; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--text-2); opacity: 0; }
 .tab:hover .tab-close, .tab.active .tab-close { opacity: 1; }
 .tab-close:hover { background: var(--bg-active); color: var(--text); }
+/* the active tab keeps its title readable however many tabs are open */
+.tab.active { flex-shrink: 0; min-width: 120px; }
+/* inactive tabs: the close button floats over the title end on hover, so a shrunk tab keeps its room for the title */
+.tab:not(.active) .tab-close { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: var(--bg-hover); }
+.tab:not(.active) .tab-close:hover { background: var(--bg-active); }
 .tab-pin { color: var(--text-3); margin: 0 3px; }
 .tab-new { flex: none; margin: 0 0 4px 4px; }
 

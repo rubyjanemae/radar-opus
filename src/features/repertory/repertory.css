@@ -18,14 +18,21 @@
 .rv-crumb-more { display: inline-grid; place-items: center; padding: 2px 4px; color: var(--text-3); }
 .rv-sep { color: var(--text-3); padding: 0 1px; }
 .rv-tools { flex: none; display: flex; align-items: center; gap: 6px; }
-.rv-seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; }
-.rv-seg button { border: 0; background: var(--bg-elev); height: 22px; padding: 0 8px; font-size: var(--fs-xs); color: var(--text-2); }
-.rv-seg button + button { border-left: 1px solid var(--border); }
-.rv-seg button:hover { background: var(--bg-hover); }
-.rv-seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-.rv-seg button { display: inline-flex; align-items: center; gap: 4px; }
+/* joined segmented control (book display modes, take intensity): one bordered strip of buttons */
+.rseg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; background: var(--bg-elev); }
+.rseg > button, .rseg > label {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: 0; margin: 0; background: transparent;
+  height: 22px; padding: 0 8px; font-size: 12px; color: var(--text-2); cursor: default;
+}
+.rseg > button + button, .rseg > label + label { border-left: 1px solid var(--border); }
+.rseg > button:hover, .rseg > label:hover { background: var(--bg-hover); color: var(--text); }
+.rseg > .on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.rseg > button:focus-visible, .rseg > label:focus-within { outline: 2px solid var(--focus); outline-offset: -2px; }
+/* header controls share one 24px height and 12px text */
+.rv-tools .rseg > button { height: 22px; }
 .rv-seg-icon { display: none; }
-.rv-grade { height: 24px; font-size: var(--fs-xs); }
+.rv-grade { height: 24px; font-size: 12px; padding-top: 0; padding-bottom: 0; }
+.rv-tools .btn-sm { height: 24px; font-size: 12px; }
 /* medium pane: the symptom path gets its own row, the tools sit below it */
 @container rvhead (max-width: 760px) {
   .rv-head-in { flex-wrap: wrap; padding-top: 2px; padding-bottom: 4px; }
@@ -36,7 +43,7 @@
 @container rvhead (max-width: 440px) {
   .rv-seg-label, .rv-take-label { display: none; }
   .rv-seg-icon { display: block; }
-  .rv-seg button { padding: 0 6px; }
+  .rv-seg > button { padding: 0 6px; }
 }
 .rv-take { display: inline-flex; }
 .rv-take-main { border-top-right-radius: 0; border-bottom-right-radius: 0; }
@@ -72,6 +79,9 @@
 .rv-mark-bm { color: var(--warning); fill: currentColor; }
 .rv-mark-note { color: var(--accent); }
 .rv-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* a remedy never splits across lines (abbreviation or full name): lines break between remedies */
+.rv-rem { white-space: nowrap; }
+.rv-sr { user-select: none; }
 .rv-text { font-weight: 400; }
 .rv-main .rv-text { font-weight: 700; color: var(--g2); font-variant: small-caps; letter-spacing: .01em; font-size: 1.04em; }
 .rv-main { padding-top: 5px; }
@@ -87,10 +97,15 @@
 .rv-rem.rv-hl { background: color-mix(in srgb, var(--warning) 35%, transparent); outline: 1px solid color-mix(in srgb, var(--warning) 70%, transparent); }
 .rv-names .rv-rem.g4 { letter-spacing: 0; }
 .rv-hidden { margin-left: 6px; font: 500 10.5px var(--font-ui); color: var(--text-3); white-space: nowrap; }
+/* clipboard membership: a coloured square with the clipboard number before the rubric text (a
+   different shape from the round remedy-count pill) */
 .rv-clip {
-  display: inline-grid; place-items: center; width: 15px; height: 15px; margin-left: 5px; border-radius: 50%;
+  display: inline-grid; place-items: center; min-width: 14px; height: 14px; margin-right: 5px; padding: 0 2px; border-radius: 3px;
   background: var(--chip); color: #fff; font: 700 9.5px/1 var(--font-ui); vertical-align: 1px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--chip) 60%, var(--text));
 }
+.rv-clip + .rv-clip { margin-left: -2px; }
+.rv-chapter .rv-clip { vertical-align: 3px; }
 .rv-note {
   margin: 2px 0 3px; padding: 2px 8px; border-left: 2px solid var(--accent); background: var(--bg-sunken);
   font: italic var(--fs-sm)/1.45 var(--font-ui); color: var(--text-2); white-space: pre-wrap;
@@ -99,8 +114,9 @@
   flex: none; display: flex; align-items: center; gap: 12px; height: 22px; padding: 0 10px; border-top: 1px solid var(--border);
   background: var(--chrome); font-size: var(--fs-xs); color: var(--text-3);
 }
-.rv-foot-keys { flex: 1; display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap; }
+.rv-foot-keys { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap; }
 .rv-foot-keys .kbd { margin-left: 6px; }
+.rv-foot-keys .kbd:first-child { margin-left: 0; }
 .rv-foot-btn { border: 0; background: transparent; color: var(--text-2); font-size: var(--fs-xs); padding: 0 4px; border-radius: 3px; }
 .rv-foot-btn:hover { background: var(--bg-hover); }
 
@@ -138,7 +154,7 @@
 .rv-chooser .input { width: 100%; }
 .rv-chooser-list { max-height: 320px; overflow: auto; margin-top: 4px; }
 .rv-chooser-item { display: flex; justify-content: space-between; align-items: center; height: 24px; padding: 0 8px; border-radius: 4px; font-size: var(--fs-sm); }
-.rv-chooser-item.active { background: var(--accent); color: #fff; }
+.rv-chooser-item.active { background: var(--accent-fill); color: var(--on-accent, #fff); }
 .rv-chooser-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rv-chooser-recent { flex: none; margin: 0 6px; color: var(--text-3); }
 .rv-chooser-item.active .rv-chooser-recent { color: rgba(255, 255, 255, .8); }
@@ -175,6 +191,7 @@
 .rnav-count { flex: none; font-size: 10.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .rnav-skel { padding: 10px; display: grid; gap: 9px; }
 .rnav-skel .skeleton { height: 10px; }
+.rnav-loading { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-3); }
 .rnav-empty { display: grid; gap: 4px; padding: 16px 12px; color: var(--text-3); font-size: var(--fs-sm); }
 .rnav-empty strong { color: var(--text-2); }
 .rnav-replist { display: grid; gap: 6px; margin-top: 8px; }
@@ -221,12 +238,21 @@
 .rfind-row { position: absolute; left: 0; right: 0; height: 24px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; font-size: var(--fs-sm); }
 .rfind-row.chapter { font-weight: 600; }
 .rfind-row:hover { background: var(--bg-hover); }
-.rfind-row.active { background: var(--accent); color: #fff; }
+.rfind-row.active { background: var(--accent-fill); color: var(--on-accent, #fff); }
 .rfind-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rfind-count { font-size: 10.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .rfind-kids { width: 48px; display: inline-flex; justify-content: flex-end; align-items: center; font-size: 10.5px; color: var(--text-3); }
 .rfind-row.active .rfind-count, .rfind-row.active .rfind-kids { color: rgba(255, 255, 255, .8); }
 .rfind-empty, .rfind-loading { padding: 16px; color: var(--text-3); font-size: var(--fs-sm); }
+/* no match: the results area collapses to the message and one actionable row */
+.rfind-none { display: grid; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev); }
+.rfind-none .rfind-empty { padding: 8px 10px 4px; }
+.rfind-searchall {
+  display: flex; align-items: center; gap: 8px; height: 28px; margin: 0 4px 4px; padding: 0 8px; border: 0; border-radius: 4px;
+  background: var(--accent-fill); color: var(--on-accent, #fff); font-size: var(--fs-sm); text-align: left;
+}
+.rfind-searchall:hover { background: var(--accent-fill-2); }
+.rfind-searchall .kbd { margin-left: auto; }
 .rfind-foot { display: flex; align-items: center; gap: 8px; }
 .rfind-stay { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-sm); color: var(--text-2); }
 .rfind-hint { flex: 1; font-size: var(--fs-xs); color: var(--text-3); display: flex; gap: 4px; align-items: center; justify-content: flex-end; }
@@ -236,15 +262,16 @@
 .rtake { display: grid; gap: 12px; }
 .rtake-rubric { font-family: var(--font-book); font-size: calc(var(--fs) + 1px); font-weight: 600; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .rtake-count { font: 500 var(--fs-xs) var(--font-ui); color: var(--text-3); }
-.rtake-set { border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px 10px; margin: 0; }
-.rtake-set legend { padding: 0 4px; font-size: var(--fs-xs); color: var(--text-2); font-weight: 600; }
-.rtake-weights { display: flex; gap: 6px; }
-.rtake-weight { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 28px; border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: var(--fs-sm); font-weight: 600; }
-.rtake-weight.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-.rtake-weight:focus-within { box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 25%, transparent); }
-.rtake-weight input { position: absolute; opacity: 0; pointer-events: none; }
+.rtake-sec { display: grid; gap: 6px; }
+.rtake-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); }
+.rtake-weights { display: flex; }
+.rtake-weights > label { flex: 1; height: 28px; font-size: var(--fs-sm); font-weight: 600; position: relative; }
+.rtake-weights > label.on { background: var(--accent-fill); color: var(--on-accent, #fff); }
+.rtake-weights input { position: absolute; opacity: 0; pointer-events: none; }
 .rtake-flags { display: grid; gap: 6px; }
 .rtake-flags label { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
+.rtake-flags label.disabled { color: var(--text-3); }
+.rtake-flags label.disabled small { opacity: .8; }
 .rtake-flags small { color: var(--text-3); margin-left: 4px; }
 .rtake-row { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
 .rtake-summary { margin-right: auto; font-size: var(--fs-xs); color: var(--text-3); align-self: center; }

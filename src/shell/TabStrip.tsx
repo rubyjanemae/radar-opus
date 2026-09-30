@@ -1,8 +1,11 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { BookOpen, Library, BarChart3, BookText, FlaskConical, Users, User, Search, Network, Pin, X, Plus, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react'
 import { useCatalog } from '../data/CatalogContext'
 import { actions, useApp } from '../state/store'
 import type { NewTab, Tab } from '../state/workspace'
+import type { Catalog } from '../data/catalog'
+import type { AppState } from '../state/store'
 import { useContextMenu } from '../ui/Menu'
 import type { MenuItem } from '../ui/Menu'
 import { tabTitle } from './tabTitle'
@@ -16,12 +19,26 @@ const ICONS = {
 export const TAB_PANEL_ID = 'document-panel'
 export const tabDomId = (id: string) => `doctab-${id}`
 
+/** What the strip draws for one tab. Only these fields re-render it, not every change inside a tab (a moved cursor). */
+interface TabView { id: string; kind: Tab['kind']; pinned: boolean; title: string; subtitle?: string }
+const SEP = '\u0001'
+const tabKey = (t: Tab, catalog: Catalog, s: AppState) => {
+  const { title, subtitle } = tabTitle(t, catalog, s)
+  return [t.id, t.kind, t.pinned ? '1' : '', title, subtitle ?? ''].join(SEP)
+}
+const parseKey = (k: string): TabView => {
+  const [id, kind, pinned, title, subtitle] = k.split(SEP)
+  return { id, kind: kind as Tab['kind'], pinned: pinned === '1', title, subtitle: subtitle || undefined }
+}
+/** The full tab record, read when an action needs it (duplicate) rather than subscribed to. */
+const fullTab = (id: string) => useApp.getState().tabs.find(t => t.id === id)
+
 export const TabStrip = memo(function TabStrip() {
   const catalog = useCatalog()
-  const tabs = useApp(s => s.tabs)
+  const keys = useApp(useShallow(s => s.tabs.map(t => tabKey(t, catalog, s))))
+  // useShallow keeps `keys` identical while nothing the strip shows has changed
+  const tabs = useMemo(() => keys.map(parseKey), [keys])
   const activeId = useApp(s => s.activeTabId)
-  const patients = useApp(s => s.patients)
-  const consultations = useApp(s => s.consultations)
   const cm = useContextMenu()
   const [drag, setDrag] = useState<{ id: string; over: number } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -56,18 +73,17 @@ export const TabStrip = memo(function TabStrip() {
     if (el) el.scrollBy({ left: dir * Math.max(120, el.clientWidth * 0.7), behavior: 'smooth' })
   }
 
-  const menuFor = (t: Tab): MenuItem[] => [
+  const menuFor = (t: TabView): MenuItem[] => [
     { label: t.pinned ? 'Unpin tab' : 'Pin tab', run: () => actions.togglePinTab(t.id) },
-    { label: 'Duplicate tab', run: () => { const { id: _id, ...rest } = t; void _id; actions.openTab({ ...rest, pinned: false } as NewTab, { reuse: false }) } },
+    { label: 'Duplicate tab', run: () => { const full = fullTab(t.id); if (!full) return; const { id: _id, ...rest } = full; void _id; actions.openTab({ ...rest, pinned: false } as NewTab, { reuse: false }) } },
     { type: 'separator' },
     t.id === activeId ? { command: 'tab.close', label: 'Close', disabled: !!t.pinned } : { label: 'Close', run: () => actions.closeTab(t.id), disabled: !!t.pinned },
     { label: 'Close others', run: () => actions.closeOtherTabs(t.id), disabled: tabs.length < 2 },
     { label: 'Close tabs to the right', run: () => { const i = tabs.findIndex(x => x.id === t.id); tabs.slice(i + 1).forEach(x => actions.closeTab(x.id)) }, disabled: tabs.findIndex(x => x.id === t.id) === tabs.length - 1 },
   ]
 
-  const titles = tabs.map(t => tabTitle(t, catalog, { patients, consultations }))
-  const allTabsMenu = (): MenuItem[] => tabs.map((t, i) => {
-    const { title, subtitle } = titles[i]
+  const allTabsMenu = (): MenuItem[] => tabs.map(t => {
+    const { title, subtitle } = t
     return { label: subtitle ? `${title} — ${subtitle}` : title, checked: t.id === activeId, run: () => actions.activateTab(t.id) }
   })
 
@@ -91,7 +107,7 @@ export const TabStrip = memo(function TabStrip() {
         }}
       >
         {tabs.map((t, i) => {
-          const { title, subtitle } = titles[i]
+          const { title, subtitle } = t
           const Icon = ICONS[t.kind]
           const active = t.id === activeId
           const showSub = !!subtitle && subtitle !== title && t.kind !== 'repertory'

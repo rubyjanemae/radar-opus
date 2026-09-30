@@ -84,7 +84,7 @@ function Chapters({ abbrev }: { abbrev: string }) {
       {rep.chapters.map(c => (
         <button key={c} className="rtoc-chapter" onClick={() => void goToRef(`${abbrev}:${c}`)} title={`Open ${rep.text(c)}`}>
           <span>{rep.text(c)}</span>
-          <span className="rtoc-n">{(rep.subtreeEndOf(c) - c - 1).toLocaleString()}</span>
+          <span className="rtoc-n">{(rep.subtreeEndOf(c) - c - 1).toLocaleString()} rubrics</span>
         </button>
       ))}
     </div>

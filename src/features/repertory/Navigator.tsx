@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Bookmark, ChevronDown, ChevronRight, History, Library, ListTree, Search, Settings2, X } from 'lucide-react'
+import { Bookmark, ChevronDown, ChevronRight, History, Library, ListTree, LoaderCircle, Search, Settings2, X } from 'lucide-react'
 import { useCatalog, useRepertory } from '../../data/CatalogContext'
 import { parseRef } from '../../data/catalog'
 import type { Repertory } from '../../data/repertory'
@@ -30,12 +30,17 @@ function loadSections(): Record<string, boolean> {
   try { return JSON.parse(localStorage.getItem('rnav.sections') ?? '{}') as Record<string, boolean> } catch { return {} }
 }
 
+/** The repertory tab the navigator last followed; kept across remounts of the navigator pane. */
+let lastRepTabId: string | null = null
+
 export function Navigator() {
   const activeTab = useApp(selectActiveTab)
   const tabs = useApp(s => s.tabs)
-  const lastRepTab = useRef<string | null>(null)
-  if (activeTab?.kind === 'repertory') lastRepTab.current = activeTab.id
-  const tab = (activeTab?.kind === 'repertory' ? activeTab : tabs.find(t => t.id === lastRepTab.current && t.kind === 'repertory')) as RepertoryTab | undefined
+  if (activeTab?.kind === 'repertory') lastRepTabId = activeTab.id
+  // while another kind of document is active the navigator keeps showing the last repertory read
+  // (or any open one), so it stays useful for jumping back into the book
+  const tab = (activeTab?.kind === 'repertory' ? activeTab
+    : tabs.find(t => t.id === lastRepTabId && t.kind === 'repertory') ?? tabs.find(t => t.kind === 'repertory')) as RepertoryTab | undefined
   const [sections, setSections] = useState(loadSections)
   const toggleSection = (k: string) => setSections(s => {
     const next = { ...s, [k]: !s[k] }
@@ -85,7 +90,12 @@ function TreeSection({ tab }: { tab: RepertoryTab }) {
         <button className="icon-btn" title="Find rubric (F2)" aria-label="Find rubric" onClick={() => runCommand('nav.chapter')}><Search size={13} /></button>
       </div>
       {error ? <div className="rnav-empty"><strong>Could not load</strong><span>{error.message}</span></div>
-        : !rep ? <div className="rnav-skel">{Array.from({ length: 12 }, (_, i) => <div key={i} className="skeleton" style={{ width: `${45 + ((i * 29) % 45)}%` }} />)}</div>
+        : !rep ? (
+          <div className="rnav-skel" role="status" aria-busy="true">
+            <span className="rnav-loading"><LoaderCircle size={12} className="spin" /> Loading {title}</span>
+            {Array.from({ length: 12 }, (_, i) => <div key={i} className="skeleton" style={{ width: `${45 + ((i * 29) % 45)}%` }} />)}
+          </div>
+        )
           : <Tree tab={tab} rep={rep} />}
     </div>
   )
@@ -236,7 +246,7 @@ function Tree({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
           {kids ? (open ? <ChevronDown size={12} /> : <ChevronRight size={12} />) : null}
         </span>
         <span className="rnav-text">{rep.text(i)}</span>
-        {showCounts && count > 0 && <span className="rnav-count">{count}</span>}
+        {showCounts && count > 0 && <span className="rnav-count" title={`${count.toLocaleString()} ${count === 1 ? 'remedy' : 'remedies'}`}>{count.toLocaleString()}</span>}
       </div>,
     )
   }

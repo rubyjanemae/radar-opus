@@ -199,34 +199,38 @@ describe('no-op mutations record nothing', () => {
 })
 
 describe('symptom structure', () => {
-  it('split parts drop the combined label', () => {
+  it('split parts keep the source label, note and flags', () => {
     withCase()
-    const id = actions.addSymptom(clipboard().id, { rubrics: ['r:7', 'r:8'], label: 'Fear (with 1 sub-rubric)', group: 'a' })!
+    const id = actions.addSymptom(clipboard().id, { rubrics: ['r:7', 'r:8'], label: 'Fear, worse at night', note: 'n', group: 'a', exclusive: true, weight: 3 })!
     actions.splitSymptom(clipboard().id, id)
     const parts = clipboard().symptoms.slice(-2)
     expect(parts.map(p => p.rubrics[0])).toEqual(['r:7', 'r:8'])
-    expect(parts.every(p => p.label === undefined)).toBe(true)
-    expect(parts.every(p => p.group === 'a')).toBe(true)
+    expect(parts.every(p => p.label === 'Fear, worse at night' && p.note === 'n')).toBe(true)
+    expect(parts.every(p => p.group === 'a' && p.exclusive && p.weight === 3 && p.combine === 'union')).toBe(true)
+    expect(new Set(parts.map(p => p.id)).size).toBe(2)
+    actions.undo()
+    expect(clipboard().symptoms.at(-1)!.id).toBe(id)
   })
 
-  it('combine does not inherit the first part label, exclusion or group', () => {
+  it('combine inherits the first part label, exclusion and group', () => {
     withCase()
     const [a, b] = clipboard().symptoms
     actions.updateSymptom(clipboard().id, a.id, { label: 'Only A', exclusive: true, group: 'a' })
-    actions.updateSymptom(clipboard().id, b.id, { group: 'b', weight: 3 })
+    actions.updateSymptom(clipboard().id, b.id, { label: 'B', group: 'b', weight: 3 })
     actions.combineSymptoms(clipboard().id, [a.id, b.id], 'intersection')
     const merged = clipboard().symptoms[0]
     expect(merged.rubrics).toEqual(['r:1', 'r:2'])
-    expect(merged).toMatchObject({ combine: 'intersection', exclusive: false, group: null, weight: 3 })
-    expect(merged.label).toBeUndefined()
+    expect(merged).toMatchObject({ combine: 'intersection', exclusive: true, group: 'a', weight: 3, label: 'Only A' })
   })
 
-  it('combine keeps a group shared by every part', () => {
+  it('combine of unlabelled parts has no label', () => {
     withCase()
     const [a, b] = clipboard().symptoms
     actions.updateSymptoms(clipboard().id, [a.id, b.id], { group: 'c' })
     actions.combineSymptoms(clipboard().id, [a.id, b.id], 'union')
     expect(clipboard().symptoms[0].group).toBe('c')
+    expect(clipboard().symptoms[0].label).toBeUndefined()
+    expect(clipboard().symptoms[0].exclusive).toBe(false)
   })
 
   it('transfer skips (copy) or merges (move) symptoms already in the target and toasts the count', () => {

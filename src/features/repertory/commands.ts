@@ -48,7 +48,8 @@ export function register(catalog: Catalog) {
     { id: 'nav.chapter', title: 'Find rubric…', category: 'Repertory', keys: ['F2'], keywords: 'chapter go to navigate', run: () => openFind(false) },
     { id: 'nav.findHere', title: 'Find from current rubric…', category: 'Repertory', keys: ['F3'], enabled: () => !!currentRubric(), run: () => openFind(true) },
     {
-      id: 'repertory.cycleDisplay', title: 'Cycle rubric display', category: 'Repertory', keys: ['Space'], scope: '.rv',
+      // Space only on the rubric list itself: on a button, radio or select inside the book it keeps its native meaning
+      id: 'repertory.cycleDisplay', title: 'Cycle rubric display', category: 'Repertory', keys: ['Space'], scope: '.rv-scroll', scopeLabel: 'in the rubric list',
       keywords: 'count remedies names space',
       enabled: () => !!activeRepertoryTab(),
       run: () => cycleDisplay(),

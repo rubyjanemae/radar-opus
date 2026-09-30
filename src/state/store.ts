@@ -679,7 +679,10 @@ export const actions = {
     if (skipped) actions.toast(`${skipped} symptom${skipped === 1 ? ' was' : 's were'} already in ${targetName || 'the target clipboard'}: ${copy ? 'skipped' : 'merged'}`, 'info')
     return { transferred, skipped }
   },
-  /** Combine several symptoms into one (rubrics merged). The combined symptom starts without label or exclusion. */
+  /**
+   * Combine several symptoms into one (rubrics merged). The combined symptom keeps the first part's
+   * label, note, exclusion and group; weight is the highest, eliminatory/causal if any part was.
+   */
   combineSymptoms(clipboardId: string, symptomIds: string[], mode: 'union' | 'intersection') {
     if (symptomIds.length < 2) return
     const ids = new Set(symptomIds)
@@ -687,11 +690,12 @@ export const actions = {
       const parts = cb.symptoms.filter(x => ids.has(x.id))
       if (parts.length < 2) return cb
       const first = cb.symptoms.findIndex(x => ids.has(x.id))
-      const groups = new Set(parts.map(p => p.group))
+      const head = parts[0]
       const merged: Symptom = {
         id: uid('s'), rubrics: [...new Set(parts.flatMap(p => p.rubrics))], combine: mode,
-        weight: Math.max(...parts.map(p => p.weight)) as Weight, eliminatory: parts.some(p => p.eliminatory), exclusive: false,
-        group: groups.size === 1 ? parts[0].group : null, causal: parts.some(p => p.causal), addedAt: parts[0].addedAt,
+        weight: Math.max(...parts.map(p => p.weight)) as Weight, eliminatory: parts.some(p => p.eliminatory), exclusive: head.exclusive,
+        group: head.group, causal: parts.some(p => p.causal), addedAt: head.addedAt,
+        ...(head.label !== undefined ? { label: head.label } : {}), ...(head.note !== undefined ? { note: head.note } : {}),
       }
       const rest = cb.symptoms.filter(x => !ids.has(x.id))
       rest.splice(first, 0, merged)
@@ -699,16 +703,13 @@ export const actions = {
     }))
     set(() => ({ selectedSymptomIds: [] }))
   },
-  /** Split a combined symptom into one symptom per rubric (the combined label does not describe the parts). */
+  /** Split a combined symptom into one symptom per rubric; each part keeps the source's label, note, weight and flags. */
   splitSymptom(clipboardId: string, symptomId: string) {
     mutateCase('Split symptom', s => updateClipboard(s, clipboardId, cb => {
       const i = cb.symptoms.findIndex(x => x.id === symptomId)
       const sym = cb.symptoms[i]
       if (!sym || sym.rubrics.length < 2) return cb
-      const parts = sym.rubrics.map(r => {
-        const { label: _label, ...rest } = sym
-        return { ...rest, id: uid('s'), rubrics: [r], combine: 'union' as const }
-      })
+      const parts = sym.rubrics.map((r): Symptom => ({ ...sym, id: uid('s'), rubrics: [r], combine: 'union' }))
       const list = [...cb.symptoms]
       list.splice(i, 1, ...parts)
       return { ...cb, symptoms: list }

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronRight, CornerDownRight } from 'lucide-react'
+import { ChevronRight, CornerDownRight, Search } from 'lucide-react'
 import { Dialog } from '../../ui/Dialog'
 import { useCatalog, useRepertory } from '../../data/CatalogContext'
 import type { Repertory } from '../../data/repertory'
 import { useFixedVirtual } from './virtual'
-import { describeTake, parseTake } from './take'
-import { levelItems } from './logic'
+import { DEFAULT_TAKE, describeTake, parseTake } from './take'
+import { findInitial, levelItems, splitFindQuery } from './logic'
 import { goToRef, takeRefs } from './ops'
+import { openSearch } from '../search/ops'
 
 const ROW = 24
 const STAY_KEY = 'rfind.stayInChapter'
@@ -33,27 +34,25 @@ export function FindDialog({ onClose, repertory, from = -1, current = -1 }: Prop
 function FindBody({ rep, from, current, onClose, abbrev, setAbbrev }: { rep: Repertory; from: number; current: number; onClose: () => void; abbrev: string; setAbbrev: (a: string) => void }) {
   const catalog = useCatalog()
   const [stay, setStay] = useState(readStay)
-  const initial = useMemo(() => {
-    if (from >= 0 && from < rep.size) return { level: rep.parent(from), active: from }
-    if (stay && current >= 0 && current < rep.size) {
-      const line = rep.lineage(current)
-      return { level: line[0], active: line[1] ?? rep.children(line[0])[0] ?? -1 }
-    }
-    return { level: -1, active: current >= 0 && current < rep.size ? rep.chapterRoot(current) : -1 }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const initial = useMemo(() => findInitial(rep, { from, current, stay }), []) // eslint-disable-line react-hooks/exhaustive-deps
   const [level, setLevel] = useState(initial.level)
   const [query, setQuery] = useState('')
-  const [active, setActive] = useState(initial.active)
+  const [active, setActiveRaw] = useState(initial.active)
+  /** The reader moved the highlight: Esc then shows that rubric in the book. */
+  const moved = useRef(false)
+  const setActive = (i: number) => { if (i !== active) moved.current = true; setActiveRaw(i) }
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
-  const takeMode = /^[+=]/.test(query)
-  const items = useMemo(() => levelItems(rep, level, takeMode ? '' : query), [rep, level, query, takeMode])
+  // "fear+2": the text before + or = filters the level, the rest is a take command for the highlighted rubric
+  const { filter, take } = splitFindQuery(query)
+  const takeMode = take != null
+  const items = useMemo(() => levelItems(rep, level, filter), [rep, level, filter])
   const activeIdx = Math.max(0, items.indexOf(active))
   const cur = items[activeIdx] ?? -1
   const v = useFixedVirtual(listRef, items.length, ROW)
   useEffect(() => { v.scrollToIndex(activeIdx, 'auto') }, [activeIdx, items]) // eslint-disable-line react-hooks/exhaustive-deps
-  const parsed = takeMode ? parseTake(query) : null
+  const parsed = take != null ? parseTake(take) : null
 
   const descend = (i: number) => {
     if (!rep.childCountOf(i)) return false
@@ -66,6 +65,7 @@ function FindBody({ rep, from, current, onClose, abbrev, setAbbrev }: { rep: Rep
   }
   const go = (i: number) => { if (i < 0) return; onClose(); void goToRef(rep.ref(i)) }
   const move = (d: number) => { if (items.length) setActive(items[Math.max(0, Math.min(items.length - 1, activeIdx + d))]) }
+  const searchAll = () => { const q = filter.trim(); onClose(); openSearch(q) }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     let handled = true
@@ -74,11 +74,17 @@ function FindBody({ rep, from, current, onClose, abbrev, setAbbrev }: { rep: Rep
     else if (e.key === 'PageDown') move(v.pageSize)
     else if (e.key === 'PageUp') move(-v.pageSize)
     else if (e.key === 'Enter') {
-      if (takeMode) { if (parsed?.ok && cur >= 0) { takeRefs([rep.ref(cur)], parsed.options); setQuery('') } }
+      if (takeMode) { if (parsed?.ok && cur >= 0) { takeRefs([rep.ref(cur)], parsed.options); setQuery(filter) } }
+      else if (!items.length && filter.trim()) searchAll()
       else if (e.shiftKey || e.ctrlKey || e.metaKey) go(cur)
       else if (cur >= 0 && !descend(cur)) go(cur)
+    } else if (e.key === 'Escape') {
+      // leave Find at the rubric last highlighted (if the reader moved to one); the book keeps focus
+      if (moved.current && cur >= 0) go(cur)
+      else onClose()
     } else if (e.key === 'ArrowRight' && !query && cur >= 0) descend(cur)
     else if ((e.key === 'ArrowLeft' || e.key === 'Backspace') && !query) up()
+    else if (e.key === 'F4' && filter.trim()) searchAll()
     else if (e.key === 'F2' || e.key === 'F3') { /* swallow: already finding */ }
     else handled = false
     if (handled) { e.preventDefault(); e.stopPropagation() }
@@ -131,24 +137,42 @@ function FindBody({ rep, from, current, onClose, abbrev, setAbbrev }: { rep: Rep
         role="combobox"
         aria-expanded="true"
         aria-controls="rfind-list"
-        aria-activedescendant={cur >= 0 ? `rfind-${cur}` : undefined}
+        aria-activedescendant={cur >= 0 ? `rfind-${cur}` : filter.trim() ? 'rfind-searchall' : undefined}
         value={query}
         spellCheck={false}
         autoComplete="off"
-        onChange={e => { setQuery(e.target.value); const q = e.target.value; if (!/^[+=]/.test(q)) { const first = levelItems(rep, level, q)[0]; if (first != null) setActive(first) } }}
+        onChange={e => {
+          const q = e.target.value
+          setQuery(q)
+          const { filter: f, take: t } = splitFindQuery(q)
+          if (t == null) { const first = levelItems(rep, level, f)[0]; if (first != null) setActive(first) }
+        }}
         onKeyDown={onKeyDown}
       />
-      {takeMode && <div className={`rfind-take${parsed?.ok ? '' : ' err'}`}>{parsed?.ok ? <>Enter takes <b>{cur >= 0 ? rep.text(cur) : '—'}</b> ({describeTake(parsed.options)})</> : parsed?.error}</div>}
-      <div className="rfind-list" id="rfind-list" role="listbox" aria-label="Rubrics" ref={listRef}>
-        {items.length === 0 ? <div className="rfind-empty">Nothing at this level matches “{query}”</div>
-          : <div style={{ height: v.total, position: 'relative' }}>{rows}</div>}
+      {takeMode && <div className={`rfind-take${parsed?.ok ? '' : ' err'}`}>{parsed?.ok ? <>Enter takes <b>{cur >= 0 ? rep.text(cur) : '—'}</b> ({describeTake(parsed.options)}), Find stays open</> : parsed?.error}</div>}
+      <div className="sr-only" role="status" aria-live="polite">
+        {items.length === 0 ? `No match at this level` : `${items.length} ${level < 0 ? (items.length === 1 ? 'chapter' : 'chapters') : (items.length === 1 ? 'rubric' : 'rubrics')}`}
       </div>
+      {items.length === 0 ? (
+        <div className="rfind-none" id="rfind-list" role="listbox" aria-label="Rubrics">
+          <div className="rfind-empty">Nothing {level < 0 ? 'among the chapters' : `in ${rep.text(level)}`} matches “{filter}”</div>
+          {filter.trim() && (
+            <button className="rfind-searchall" id="rfind-searchall" role="option" tabIndex={-1} aria-selected="true" onClick={searchAll}>
+              <Search size={13} /> Search all rubrics for “{filter.trim()}” <kbd className="kbd">F4</kbd>
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="rfind-list" id="rfind-list" role="listbox" aria-label="Rubrics" ref={listRef}>
+          <div style={{ height: v.total, position: 'relative' }}>{rows}</div>
+        </div>
+      )}
       <div className="rfind-foot">
         <label className="rfind-stay">
           <input type="checkbox" checked={stay} onChange={e => { setStay(e.target.checked); writeStay(e.target.checked) }} /> Stay in chapter
         </label>
         <span className="rfind-hint"><kbd className="kbd">↵</kbd> open level <kbd className="kbd">⇧↵</kbd> go to <kbd className="kbd">⌫</kbd> up <kbd className="kbd">+</kbd> take</span>
-        <button className="btn" disabled={cur < 0} onClick={() => cur >= 0 && takeRefs([rep.ref(cur)], { weight: 1, clipboard: null, eliminatory: false, exclusive: false, causal: false, group: null, subRubrics: false })}><CornerDownRight size={13} /> Take</button>
+        <button className="btn" disabled={cur < 0} onClick={() => cur >= 0 && takeRefs([rep.ref(cur)], DEFAULT_TAKE)}><CornerDownRight size={13} /> Take</button>
         <button className="btn btn-primary" disabled={cur < 0} onClick={() => go(cur)}>Go to</button>
       </div>
     </div>

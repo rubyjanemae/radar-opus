@@ -21,34 +21,54 @@ export function prefixSums(count: number, size: (i: number) => number): Float64A
 }
 
 /**
- * Viewport (scrollTop, size) of the scroll element behind `ref`. The element is tracked by
- * identity, not by ref object: when the scroller unmounts and a new one mounts (a tab switch,
- * a conditional render) the listeners re-bind to the new element and the state is re-read.
+ * Viewport of the scroll element behind `ref`. The element is tracked by identity, not by ref
+ * object: when the scroller unmounts and a new one mounts (a tab switch, a conditional render) the
+ * listeners re-bind to the new element and the state is re-read.
+ *
+ * Scrolling does not re-render on every pixel: `topRef` always holds the live scrollTop, and state
+ * (a re-render) changes only when the size changes or `rangeKey(top, height)` does, i.e. when the
+ * range of rendered rows changes.
  */
-function useViewport(ref: RefObject<HTMLElement | null>) {
-  const [vp, setVp] = useState({ top: 0, height: 0, width: 0 })
+function useViewport(ref: RefObject<HTMLElement | null>, rangeKey: (top: number, height: number) => string) {
+  const [vp, setVp] = useState({ height: 0, width: 0, key: '' })
   const [el, setEl] = useState<HTMLElement | null>(null)
+  const topRef = useRef(0)
+  const keyFn = useRef(rangeKey)
+  keyFn.current = rangeKey
   // runs after every render: pick up a remounted scroll element
   useLayoutEffect(() => {
     if (ref.current !== el) setEl(ref.current)
   })
+  const update = useCallback(() => {
+    if (!el) return
+    const top = el.scrollTop, height = el.clientHeight, width = el.clientWidth
+    topRef.current = top
+    const key = keyFn.current(top, height)
+    setVp(v => (v.key === key && v.height === height && v.width === width) ? v : { height, width, key })
+  }, [el])
   useLayoutEffect(() => {
     if (!el) return
-    const update = () => setVp(v => (v.top === el.scrollTop && v.height === el.clientHeight && v.width === el.clientWidth) ? v : { top: el.scrollTop, height: el.clientHeight, width: el.clientWidth })
     update()
     el.addEventListener('scroll', update, { passive: true })
     const ro = new ResizeObserver(update)
     ro.observe(el)
     return () => { el.removeEventListener('scroll', update); ro.disconnect() }
-  }, [el])
-  return { vp, el }
+  }, [el, update])
+  return { vp, el, topRef, update }
+}
+
+function fixedRange(top: number, height: number, count: number, rowHeight: number, overscan: number) {
+  const start = Math.max(0, Math.floor(top / rowHeight) - overscan)
+  const end = Math.min(count, Math.ceil((top + height) / rowHeight) + overscan)
+  return { start, end }
 }
 
 /** Fixed row-height virtualisation (trees, pickers). */
 export function useFixedVirtual(ref: RefObject<HTMLElement | null>, count: number, rowHeight: number, overscan = 8) {
-  const { vp } = useViewport(ref)
-  const start = Math.max(0, Math.floor(vp.top / rowHeight) - overscan)
-  const end = Math.min(count, Math.ceil((vp.top + vp.height) / rowHeight) + overscan)
+  const { vp, topRef, update } = useViewport(ref, (top, height) => { const r = fixedRange(top, height, count, rowHeight, overscan); return `${r.start}:${r.end}` })
+  // the row count or height changed: the rendered range must be re-derived from the live scrollTop
+  useLayoutEffect(update, [count, rowHeight, update])
+  const { start, end } = fixedRange(topRef.current, vp.height, count, rowHeight, overscan)
   const scrollToIndex = useCallback((i: number, align: 'auto' | 'center' = 'auto') => {
     const el = ref.current
     if (!el || i < 0) return
@@ -88,8 +108,16 @@ export interface VariableVirtualOptions {
  * anchors instead, so the view never jumps.
  */
 export function useVariableVirtual(ref: RefObject<HTMLElement | null>, count: number, estimate: (i: number, width: number) => number, resetKey: unknown, opts: VariableVirtualOptions = {}) {
-  const overscan = opts.overscan ?? 600
-  const { vp, el: scrollEl } = useViewport(ref)
+  const offsetsRef = useRef<Float64Array>(new Float64Array(1))
+  const countRef = useRef(count)
+  countRef.current = count
+  // about one viewport above and below: fast scrolling does not show blank rows, a long book stays cheap
+  const overscanFor = (height: number) => opts.overscan ?? Math.max(300, height)
+  const range = (top: number, height: number) => {
+    const o = offsetsRef.current, n = Math.min(countRef.current, o.length - 1), ov = overscanFor(height)
+    return { start: Math.max(0, indexAt(o, n, top - ov)), end: Math.min(n, indexAt(o, n, top + height + ov) + 1) }
+  }
+  const { vp, el: scrollEl, topRef, update } = useViewport(ref, (top, height) => { const r = range(top, height); return `${r.start}:${r.end}` })
   const sizes = useRef<Float32Array>(new Float32Array(0))
   const [version, setVersion] = useState(0)
   const widthRef = useRef(0)
@@ -97,7 +125,6 @@ export function useVariableVirtual(ref: RefObject<HTMLElement | null>, count: nu
   const lastSet = useRef<number | null>(null)
   const estimateRef = useRef(estimate)
   estimateRef.current = estimate
-  const offsetsRef = useRef<Float64Array>(new Float64Array(1))
   /** Offsets of the last committed layout (what the DOM and scrollTop reflect). */
   const appliedRef = useRef<Float64Array>(new Float64Array(1))
   const contentRef = useRef<unknown>(opts.contentKey)
@@ -208,9 +235,9 @@ export function useVariableVirtual(ref: RefObject<HTMLElement | null>, count: nu
     if (changed) setVersion(v => v + 1)
   }, [key])
 
-  const start = Math.max(0, indexAt(offsets, count, vp.top - overscan))
-  let end = indexAt(offsets, count, vp.top + vp.height + overscan) + 1
-  end = Math.min(count, end)
+  // offsets changed (measurements, a reset): re-derive the rendered range from the live scrollTop
+  useLayoutEffect(update, [offsets, update])
+  const { start, end } = range(topRef.current, vp.height)
 
   /** Scroll row `index` into view and pin it there while heights settle. */
   const scrollToIndex = useCallback((index: number, align: 'auto' | 'start' | 'center' = 'auto') => {
@@ -231,7 +258,7 @@ export function useVariableVirtual(ref: RefObject<HTMLElement | null>, count: nu
     pin.current = { index, delta: offsetsRef.current[index] - el.scrollTop }
   }, [ref, count])
 
-  return { start, end, offsets, total: offsets[count] ?? 0, measure, scrollToIndex, anchor, viewport: vp }
+  return { start, end, offsets, total: offsets[count] ?? 0, measure, scrollToIndex, anchor, viewport: vp, scrollEl }
 }
 
 function targetScroll(el: HTMLElement, offsets: Float64Array, index: number, align: 'auto' | 'start' | 'center'): number {

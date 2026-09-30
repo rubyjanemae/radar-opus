@@ -117,10 +117,21 @@ export function Shell() {
       </div>
       <ErrorBoundary label="The status bar" compact><StatusBar /></ErrorBoundary>
       {paletteOpen && <ErrorBoundary label="The command palette" fallback={() => null} onError={e => { actions.setCommandPalette(false); actions.toast(`The command palette hit an error: ${e.message}`, 'error') }}><CommandPalette onClose={() => actions.setCommandPalette(false)} /></ErrorBoundary>}
-      <DialogHost />
-      <WorkspaceChrome />
+      <SafeDialogHost />
+      <ErrorBoundary label="The workspace chrome" fallback={() => null} onError={e => actions.toast(`The welcome tour hit an error: ${e.message}`, 'error')}><WorkspaceChrome /></ErrorBoundary>
       <Toasts />
     </div>
+  )
+}
+
+/** The dialog host behind its own boundary; the next dialog opened clears a previous failure. */
+function SafeDialogHost() {
+  const dialog = useApp(s => s.dialog)
+  return (
+    <ErrorBoundary label="The dialog host" resetKey={dialog} fallback={() => null}
+      onError={e => { actions.closeDialog(); actions.toast(`A dialog hit an error: ${e.message}`, 'error') }}>
+      <DialogHost />
+    </ErrorBoundary>
   )
 }
 

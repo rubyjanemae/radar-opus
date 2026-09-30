@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { openApp } from './helpers'
+import { openApp, waitForSaved } from './helpers'
 
 test('shell boots with menubar, toolbar, tabs and status bar', async ({ page }) => {
   await openApp(page)
@@ -13,7 +13,8 @@ async function freshApp(page: import('@playwright/test').Page, w = 1440, h = 900
   await page.setViewportSize({ width: w, height: h })
   await page.addInitScript(() => { try { localStorage.setItem('radar-opus.welcome.v1', 'done') } catch { /* blocked */ } })
   await openApp(page)
-  await page.waitForTimeout(300)
+  // first-run seeding has settled once autosave has written it
+  await waitForSaved(page)
 }
 const activeInfo = (page: import('@playwright/test').Page) => page.evaluate(() => {
   const a = document.activeElement as HTMLElement | null
@@ -92,8 +93,7 @@ test('closing a tab with Alt+W moves focus into the next document', async ({ pag
 test('toolbar Take follows ticked search results', async ({ page }) => {
   await freshApp(page)
   await expect(page.locator('.rv-row').first()).toBeVisible()
-  // (starting a search while the background index warm-up begins can stall; wait it out)
-  await page.waitForTimeout(2500)
+  await waitForSaved(page)
   await page.keyboard.press('F4')
   const input = page.getByPlaceholder(/Words in rubric paths/)
   await input.fill('anxiety')
@@ -132,4 +132,65 @@ test('1152px: the document pane keeps at least 640px beside both side panes', as
   await freshApp(page, 1152, 720)
   const doc = await page.locator('.pane-center').boundingBox()
   expect(doc!.width).toBeGreaterThanOrEqual(639)
+})
+
+test('moving through rubrics does not re-render the chrome (menubar, toolbar, tab strip, clipboards)', async ({ page }) => {
+  // a minimal devtools hook: count commits in which a named component actually rendered
+  await page.addInitScript(() => {
+    const w = window as unknown as { __renders: Record<string, number>; __REACT_DEVTOOLS_GLOBAL_HOOK__: unknown }
+    w.__renders = {}
+    type F = { type: unknown; child: F | null; sibling: F | null; alternate: F | null; memoizedProps: unknown; memoizedState: unknown }
+    const seen = new WeakMap<F, { p: unknown; s: unknown }>()
+    const nameOf = (t: unknown): string | null => {
+      if (typeof t === 'function') return (t as { displayName?: string; name: string }).displayName || (t as { name: string }).name
+      const inner = (t as { type?: unknown } | null)?.type
+      return typeof inner === 'function' ? nameOf(inner) : null
+    }
+    w.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+      supportsFiber: true, renderers: new Map(), inject: () => 1, checkDCE() {}, onCommitFiberUnmount() {}, onPostCommitFiberRoot() {},
+      onCommitFiberRoot(_: unknown, root: { current: F }) {
+        const walk = (f: F | null) => {
+          for (; f; f = f.sibling) {
+            const n = nameOf(f.type)
+            if (n) {
+              const prev = seen.get(f) ?? (f.alternate ? seen.get(f.alternate) : undefined)
+              const rec = { p: f.memoizedProps, s: f.memoizedState }
+              if (prev && (prev.p !== rec.p || prev.s !== rec.s)) w.__renders[n] = (w.__renders[n] ?? 0) + 1
+              seen.set(f, rec)
+              if (f.alternate) seen.set(f.alternate, rec)
+            }
+            walk(f.child)
+          }
+        }
+        walk(root.current.child)
+      },
+    }
+  })
+  await freshApp(page)
+  await page.locator('.rv-row').first().click()
+  await page.keyboard.press('ArrowDown')
+  await page.waitForTimeout(200)
+  await page.evaluate(() => { (window as unknown as { __renders: object }).__renders = {} })
+  for (let i = 0; i < 10; i++) { await page.keyboard.press('ArrowDown'); await page.waitForTimeout(30) }
+  await page.waitForTimeout(300)
+  const r = await page.evaluate(() => (window as unknown as { __renders: Record<string, number> }).__renders)
+  // the book itself did move
+  expect(r.RepertoryView ?? 0).toBeGreaterThan(0)
+  for (const name of ['MenuBar', 'TabStrip', 'ClipboardPanel', 'AnalysisDock', 'WorkspaceChrome']) expect(r[name] ?? 0, name).toBe(0)
+  expect(r.Toolbar ?? 0).toBeLessThanOrEqual(1)
+})
+
+test('clipboard chip counts sit inside their chip, beside the number', async ({ page }) => {
+  await freshApp(page)
+  const chips = page.locator('.clip-chip')
+  const n = await chips.count()
+  expect(n).toBeGreaterThan(0)
+  for (let i = 0; i < n; i++) {
+    const chip = await chips.nth(i).boundingBox()
+    const sup = await chips.nth(i).locator('sup').boundingBox()
+    if (!sup) continue
+    expect(sup.x).toBeGreaterThanOrEqual(chip!.x)
+    expect(sup.x + sup.width).toBeLessThanOrEqual(chip!.x + chip!.width)
+    expect(sup.y).toBeGreaterThanOrEqual(chip!.y)
+  }
 })

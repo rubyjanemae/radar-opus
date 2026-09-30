@@ -48,27 +48,27 @@ export function TakeOptionsDialog({ onClose, refs = [] }: { onClose: () => void;
           {refs.length === 1 ? refLabel(refs[0]) : `${refs.length} rubrics`}
           {first && <span className="rtake-count">{first.rep.remedyCount(first.index)} remedies</span>}
         </div>
-        <fieldset className="rtake-set">
-          <legend>Intensity</legend>
-          <div className="rtake-weights" role="radiogroup" aria-label="Intensity">
+        <div className="rtake-sec">
+          <div className="rtake-label" id="rtake-w-label">Intensity</div>
+          <div className="rtake-weights rseg" role="radiogroup" aria-labelledby="rtake-w-label">
             {[0, 1, 2, 3, 4].map(w => (
-              <label key={w} className={`rtake-weight${o.weight === w ? ' on' : ''}`} title={w === 0 ? 'Kept on the clipboard, ignored in the analysis' : `Counts ×${w}`}>
+              <label key={w} className={o.weight === w ? 'on' : ''} title={w === 0 ? 'Kept on the clipboard, ignored in the analysis' : `Counts ×${w}`}>
                 <input type="radio" name="rtake-w" value={w} checked={o.weight === w} onChange={() => set({ weight: w as Weight })} />
                 {w === 0 ? '0 · ignore' : `×${w}`}
               </label>
             ))}
           </div>
-        </fieldset>
-        <fieldset className="rtake-set rtake-flags">
-          <legend>Qualification</legend>
+        </div>
+        <div className="rtake-sec rtake-flags" role="group" aria-labelledby="rtake-q-label">
+          <div className="rtake-label" id="rtake-q-label">Qualification</div>
           <label><input type="checkbox" checked={o.eliminatory} onChange={e => set({ eliminatory: e.target.checked, exclusive: e.target.checked ? false : o.exclusive })} /> Eliminative <small>only remedies in this rubric stay</small></label>
           <label><input type="checkbox" checked={o.exclusive} onChange={e => set({ exclusive: e.target.checked, eliminatory: e.target.checked ? false : o.eliminatory })} /> Excluding <small>remedies in this rubric are removed</small></label>
           <label><input type="checkbox" checked={o.causal} onChange={e => set({ causal: e.target.checked })} /> Causal <small>causation / never well since</small></label>
-          <label>
+          <label className={subCount < 1 ? 'disabled' : ''}>
             <input type="checkbox" checked={o.subRubrics} disabled={subCount < 1} onChange={e => set({ subRubrics: e.target.checked })} /> With sub-rubrics
             <small>{subCount > 0 ? `combine with ${subCount} sub-rubrics` : 'no sub-rubrics with remedies'}</small>
           </label>
-        </fieldset>
+        </div>
         <div className="rtake-row">
           <label className="field">Group
             <select className="select" value={o.group ?? ''} onChange={e => set({ group: e.target.value || null })}>
