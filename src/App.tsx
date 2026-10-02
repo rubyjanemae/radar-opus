@@ -7,6 +7,7 @@ import { registerCoreCommands } from './commands/core'
 import { claimWorkspace, instanceMode, requestHandover } from './state/instance'
 import { clearStoredWorkspace, exportRawData, hydrate, RestoreError, startAutosave } from './state/persist'
 import { Shell } from './shell/Shell'
+import { accountConfigured } from './features/account/env'
 import { downloadBlob } from './ui/files'
 import { installModalGuard } from './ui/modal'
 import './ui/ConfirmDialog'
@@ -18,6 +19,7 @@ type Boot =
   | { phase: 'loading'; step: string }
   | { phase: 'ready'; catalog: Catalog }
   | { phase: 'error'; message: string; restore: boolean }
+  | { phase: 'auth'; screen: ReactNode }
 
 /*
  * Boot runs once per page (module-level promise): StrictMode's double effect and remounts reuse it,
@@ -26,6 +28,7 @@ type Boot =
 let bootPromise: Promise<Catalog> | null = null
 let stepListener: ((step: string) => void) | null = null
 const step = (s: string) => stepListener?.(s)
+let authListener: ((screen: ReactNode) => void) | null = null
 
 /** Let the browser paint and handle input between startup steps (scheduler.yield where supported). */
 function yieldToMain(): Promise<void> {
@@ -35,6 +38,10 @@ function yieldToMain(): Promise<void> {
 }
 
 async function boot(): Promise<Catalog> {
+  // Built with a Supabase project: sign in before the workspace loads (no env: local-only, no gate).
+  const account = accountConfigured ? await import('./features/account/gate') : null
+  const user = account ? await account.signIn(screen => authListener?.(screen)) : null
+  step('Loading remedies…')
   const catalog = await Catalog.load()
   step('Restoring workspace…')
   await claimWorkspace()
@@ -44,7 +51,8 @@ async function boot(): Promise<Catalog> {
   if (!hadState) {
     // The demo practice builder is only needed on a first run: keep it out of the main bundle.
     const { seedWorkspace } = await import('./seed/seed')
-    await seedWorkspace(catalog)
+    // signed in: no demo practice (it would be uploaded to the account)
+    await seedWorkspace(catalog, { demo: !account })
   }
   // each startup step in its own task, so none of them adds to the first render's task
   await yieldToMain()
@@ -54,6 +62,10 @@ async function boot(): Promise<Catalog> {
     keywords: 'toast undo notification', enabled: () => !!document.querySelector('.toasts .toast-action'), run: () => { focusLatestToastAction() },
   }])
   startAutosave()
+  if (account && user) {
+    step('Syncing…')
+    try { await account.startSync(user) } catch (e) { console.warn('Sync could not start', e) }
+  }
   await yieldToMain()
   return catalog
 }
@@ -126,6 +138,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     stepListener = s => { if (!cancelled) setState({ phase: 'loading', step: s }) }
+    authListener = screen => { if (!cancelled) setState({ phase: 'auth', screen }) }
     bootOnce().then(
       // a transition: the first render of the workspace is time-sliced instead of one long task
       catalog => { if (!cancelled) startTransition(() => setState({ phase: 'ready', catalog })) },
@@ -136,6 +149,7 @@ export default function App() {
 
   useEffect(() => installKeybindings(), [])
 
+  if (state.phase === 'auth') return <>{state.screen}</>
   if (state.phase === 'error') return <BootError message={state.message} restore={state.restore} />
   if (state.phase === 'loading') {
     return (

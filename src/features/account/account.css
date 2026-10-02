@@ -1,0 +1,14 @@
+/* Sign-in gate (acct-*) */
+.acct-card { width: min(340px, calc(100vw - 32px)); display: grid; gap: 10px; padding: 20px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: var(--fs); box-shadow: 0 6px 24px color-mix(in srgb, var(--text) 10%, transparent); }
+.acct-head { display: flex; align-items: center; gap: 10px; }
+.acct-head h1 { margin: 0; font-size: 15px; font-weight: 600; }
+.acct-note { margin: 0; color: var(--text-2); font-size: var(--fs-sm); }
+.acct-field { display: grid; gap: 3px; font-size: var(--fs-sm); color: var(--text-2); }
+.acct-field .input { width: 100%; height: var(--row); box-sizing: border-box; }
+.acct-msg { margin: 0; font-size: var(--fs-sm); }
+.acct-err { color: var(--danger); }
+.acct-info { color: var(--success); }
+.acct-submit { justify-content: center; }
+.acct-links { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--fs-sm); }
+.acct-link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.acct-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
