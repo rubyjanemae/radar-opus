@@ -345,6 +345,13 @@ let suspended = false
 let writable = true
 let autosave: { dispose: () => void; flushNow: () => Promise<void>; schedule: () => void } | null = null
 const savedListeners = new Set<() => void>()
+/** Record keys written (puts with their values) and deleted by one successful flush (cloud sync pushes these). */
+export interface RecordsWritten { puts: [string, unknown][]; dels: string[] }
+const recordListeners = new Set<(w: RecordsWritten) => void>()
+export function onRecordsWritten(fn: (w: RecordsWritten) => void) { recordListeners.add(fn); return () => { recordListeners.delete(fn) } }
+/** The storage backend (sync keeps its own `sync:` keys next to the records); null without persistence. */
+export function persistBackend(): PersistBackend | null { return backend }
+
 /** Called after every successful write (the instance module tells read-only tabs to refresh). */
 export function onSaved(fn: () => void) { savedListeners.add(fn); return () => { savedListeners.delete(fn) } }
 
@@ -401,7 +408,9 @@ export function startAutosave(): () => void {
     writing = backend.write(backup ? [backup, ...d.puts] : d.puts, d.dels).then(
       () => { if (pendingBackup === backup) pendingBackup = null; applyFlushed(d, snap)
         // More work queued (an edit made while this write was in flight) keeps the status on 'pending'.
-        setStatus(debounce || cancelIdle || followUp ? 'pending' : 'saved'); savedListeners.forEach(fn => fn()) },
+        setStatus(debounce || cancelIdle || followUp ? 'pending' : 'saved'); savedListeners.forEach(fn => fn())
+        const recPuts = d.puts.filter(([k]) => k.startsWith(P) || k.startsWith(C))
+        if (recPuts.length || d.dels.length) recordListeners.forEach(fn => fn({ puts: recPuts, dels: d.dels })) },
       e => { console.error('Autosave failed', e); setStatus(followUp ? 'pending' : 'error') },
     ).finally(() => { writing = null })
     return writing

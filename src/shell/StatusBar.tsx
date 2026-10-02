@@ -3,6 +3,8 @@ import { useCatalog } from '../data/CatalogContext'
 import { useApp, selectActiveTab, selectActiveConsultation, selectActiveClipboard } from '../state/store'
 import { formatKeys } from '../commands/registry'
 import { useStatusContext } from './statusContext'
+import { useSyncExternalStore } from 'react'
+import { accountStatus } from '../features/account/status'
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`
 
@@ -17,6 +19,7 @@ export const StatusBar = memo(function StatusBar() {
   const activeTabId = useApp(s => s.activeTabId)
   const docStatus = useStatusContext(s => (s.owner === activeTabId ? s.text : null))
 
+  const account = useSyncExternalStore(accountStatus.subscribe, accountStatus.get)
   let left = docStatus ?? 'Ready'
   if (rubric) {
     const sep = rubric.lastIndexOf(':')
@@ -36,6 +39,7 @@ export const StatusBar = memo(function StatusBar() {
       {clipboard && <span className="status-item"><span className="status-swatch" style={{ background: clipboard.color }} aria-hidden="true" />{clipboard.name}: {plural(clipboard.symptoms.length, 'symptom')}{selected ? ` (${selected} selected)` : ''}</span>}
       {total != null && <span className="status-item">{total} in case</span>}
       <span className="status-item status-totals" title={`${catalog.repertoryInfos.length} repertories`}>Library: {plural(allRubrics, 'rubric')} · {plural(catalog.remedies.size, 'remedy', 'remedies')}</span>
+      {account.email && <span className="status-item status-account" title={`Signed in as ${account.email}`}>{account.email}</span>}
       <span className="status-item status-hint"><span className="kbd">{formatKeys('Mod+K')}</span> commands</span>
     </footer>
   )
