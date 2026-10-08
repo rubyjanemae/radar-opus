@@ -1,8 +1,10 @@
 import type { MenuItem } from '../ui/Menu'
 import type { Catalog } from '../data/catalog'
 import { STRATEGIES } from '../engine/analysis'
+import { accountConfigured } from '../features/account/env'
 
 const sep: MenuItem = { type: 'separator' }
+const accountMenu = accountConfigured
 
 /**
  * Menubar layout. Items reference command ids from the registry; a command that is
@@ -27,6 +29,8 @@ export function buildMenus(catalog: Catalog): { label: string; items: MenuItem[]
         { command: 'case.report' },
         sep,
         { command: 'app.settings' },
+        // registered only when built with a Supabase project (hidden otherwise)
+        ...(accountMenu ? [sep, { command: 'account.syncNow' }, { command: 'account.signOut' }] : []),
       ],
     },
     {
