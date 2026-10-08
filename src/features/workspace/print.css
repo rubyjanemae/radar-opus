@@ -1,0 +1,62 @@
+/*
+ * Print base: printing the window prints the active document only, in light colours, without
+ * any application or in-document chrome. Features with dedicated print layouts (analysis grid,
+ * monographs, case reports) render their own print roots and hide the app; these rules shape the
+ * plain "print this view" case.
+ */
+@media print {
+  :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+    --bg: #fff; --bg-elev: #fff; --bg-sunken: #f4f4f4; --bg-hover: #fff; --bg-active: #fff; --bg-selected: #fff;
+    --chrome: #fff; --chrome-2: #fff; --border: #c8c8c8; --border-strong: #999;
+    --text: #000; --text-2: #333; --text-3: #555; --accent: #1d4aa9; --accent-soft: #fff;
+    --g1: #222; --g2: #1c55b8; --g3: #c2261b; --g4: #8a1911;
+    color-scheme: light;
+  }
+  @page { margin: 14mm 12mm; }
+  /* feature print roots (e.g. .an-print-root) hide the app while they print; otherwise print the app */
+  body:not(:has(> .an-print-root)) > #root { display: block !important; }
+  html, body, #root { background: #fff !important; height: auto !important; overflow: visible !important; }
+
+  /* the document flows across pages: undo the fixed-height app frame down to the active view */
+  .shell, .shell-main, .pane-center, .pane-center-body, .tab-content, .tab-content > *, .tab-doc > *,
+  .rv, .rv-bodywrap, .rv-scroll {
+    display: block !important; height: auto !important; min-height: 0 !important; max-height: none !important;
+    overflow: visible !important; contain: none !important; position: static !important;
+  }
+  .pane-center { background: #fff !important; }
+
+  /* application chrome */
+  .menubar, .toolbar, .tabstrip, .statusbar, .splitter, .splitter-vertical, .splitter-horizontal,
+  .pane-left, .pane-right, .analysis-dock, .ws-scrim,
+  .toasts, .menu-list, .dialog-backdrop, .ws-tour, .pal-backdrop, #ws-live { display: none !important; }
+
+  /* in-document chrome: toolbars, status and hint bars, interactive controls */
+  .pane-center :is(.btn, .icon-btn, .tool-btn, select, input, textarea, [role="toolbar"], [role="radiogroup"]),
+  .pane-center :is(.rv-tools, .rv-foot, .rv-runhead, .rv-tip, .rv-hand, .rv-hlbar > .btn, .rv-hlbar > .icon-btn),
+  .pane-center :is(.an-toolbar, .an-bar, .fam-toolbar, .fam-status, .mm-toolbar, .srch-bar, .srch-status, .ri-bar, .rp-hint, .pt-hint, .qf-foot, .qf-status) {
+    display: none !important;
+  }
+  /* the symptom path prints in full, wrapping if needed; folded levels were a screen-width measure */
+  .rv-crumbs { flex-wrap: wrap !important; overflow: visible !important; }
+  .rv-crumb { max-width: none !important; overflow: visible !important; }
+  .pane-center .rv-crumb-fold { display: none !important; }
+  .rv-crumb-fold:first-child + .rv-crumb-wrap > .rv-sep { display: none !important; }
+
+  /* the virtualised book: print the rendered rows in reading order instead of stacked by transform */
+  .rv-canvas { height: auto !important; position: static !important; }
+  .rv-row {
+    position: static !important; transform: none !important; will-change: auto !important;
+    break-inside: avoid; page-break-inside: avoid;
+  }
+  .rv-chapter, .rv-main { break-after: avoid; }
+
+  /* no selection or hover tints */
+  .pane-center :is([aria-selected="true"], .rv-current, .rv-row:hover, .rv-hl) {
+    background: transparent !important; box-shadow: none !important; outline: none !important;
+  }
+
+  .g1, .g2, .g3, .g4 { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  a { color: inherit; text-decoration: none; }
+  :focus-visible { outline: none !important; box-shadow: none !important; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

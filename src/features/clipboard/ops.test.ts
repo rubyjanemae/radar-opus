@@ -1,0 +1,204 @@
+import { beforeEach, describe, expect, it } from 'vitest'
+import { actions, selectActiveClipboard, useApp } from '../../state/store'
+import * as ops from './ops'
+
+const cb = () => selectActiveClipboard(useApp.getState())!
+/** Answer the confirm dialog an op opened. */
+function answerConfirm(ok: boolean) {
+  const d = useApp.getState().dialog
+  expect(d?.kind).toBe('app.confirm')
+  ;(d!.props as { resolve: (ok: boolean) => void }).resolve(ok)
+  actions.closeDialog()
+}
+const ids = () => cb().symptoms.map(s => s.id)
+
+beforeEach(() => {
+  useApp.setState({ patients: {}, consultations: {}, activeConsultationId: null, activeClipboardId: null, selectedSymptomIds: [], past: [], future: [], toasts: [], dialog: null })
+  const pid = actions.createPatient({ firstName: 'Test' })
+  actions.createConsultation(pid)
+  actions.addRubrics(['r:1', 'r:2', 'r:3', 'r:4'])
+  ops.setPanelUi({ cursorId: null, anchorId: null, groupPending: false })
+})
+
+describe('clipboard ops', () => {
+  it('sets weight on the selection', () => {
+    actions.setSelectedSymptoms(ids().slice(0, 2))
+    ops.setWeight(3)
+    expect(cb().symptoms.map(s => s.weight)).toEqual([3, 3, 1, 1])
+  })
+
+  it('falls back to the cursor row when nothing is selected', () => {
+    ops.setPanelUi({ cursorId: ids()[2] })
+    ops.setWeight(0)
+    expect(cb().symptoms[2].weight).toBe(0)
+  })
+
+  it('eliminative and excluding are mutually exclusive, toggles flip', () => {
+    actions.setSelectedSymptoms([ids()[0]])
+    ops.toggleFlag('eliminatory')
+    expect(cb().symptoms[0].eliminatory).toBe(true)
+    ops.toggleFlag('exclusive')
+    expect(cb().symptoms[0]).toMatchObject({ eliminatory: false, exclusive: true })
+    ops.toggleFlag('exclusive')
+    expect(cb().symptoms[0].exclusive).toBe(false)
+  })
+
+  it('assigns and clears groups', () => {
+    actions.setSelectedSymptoms(ids().slice(1, 3))
+    ops.setGroup('B')
+    expect(cb().symptoms.map(s => s.group)).toEqual([null, 'b', 'b', null])
+    ops.setGroup(null)
+    expect(cb().symptoms.every(s => s.group === null)).toBe(true)
+  })
+
+  it('moves the selection with ctrl+arrows', () => {
+    const [a, b, c, d] = ids()
+    actions.setSelectedSymptoms([c])
+    ops.moveSelected(-1)
+    expect(ids()).toEqual([a, c, b, d])
+    expect(ops.canMove(-1)).toBe(true)
+    ops.moveSelected(-1)
+    expect(ops.canMove(-1)).toBe(false)
+  })
+
+  it('removes with an undo toast that restores positions', () => {
+    const before = ids()
+    actions.setSelectedSymptoms([before[1], before[3]])
+    ops.removeSelected()
+    expect(ids()).toEqual([before[0], before[2]])
+    const toast = useApp.getState().toasts.at(-1)!
+    expect(toast.action?.label).toBe('Undo')
+    // an unrelated edit after the removal survives the undo
+    actions.updateSymptom(cb().id, before[0], { weight: 4 })
+    toast.action!.run()
+    expect(ids()).toEqual(before)
+    expect(cb().symptoms[0].weight).toBe(4)
+  })
+
+  it('combines and splits', () => {
+    actions.setSelectedSymptoms(ids().slice(0, 2))
+    ops.combine('intersection')
+    expect(cb().symptoms).toHaveLength(3)
+    expect(cb().symptoms[0]).toMatchObject({ rubrics: ['r:1', 'r:2'], combine: 'intersection' })
+    expect(ops.canSplit()).toBe(true)
+    ops.split()
+    expect(cb().symptoms.map(s => s.rubrics[0])).toEqual(['r:1', 'r:2', 'r:3', 'r:4'])
+  })
+
+  it('splits several combined symptoms in one undo step', () => {
+    actions.setSelectedSymptoms(ids().slice(0, 2))
+    ops.combine('union')
+    actions.setSelectedSymptoms(ids().slice(1, 3))
+    ops.combine('intersection')
+    expect(cb().symptoms.map(s => s.rubrics.length)).toEqual([2, 2])
+    const past = useApp.getState().past.length
+    actions.setSelectedSymptoms(ids())
+    ops.split()
+    expect(cb().symptoms).toHaveLength(4)
+    expect(useApp.getState().past.length).toBe(past + 1)
+    actions.undo()
+    expect(cb().symptoms.map(s => s.rubrics.length)).toEqual([2, 2])
+  })
+
+  it('moves and copies to another clipboard', () => {
+    const first = cb().id
+    const second = actions.addClipboard()!
+    actions.setActiveClipboard(first)
+    actions.setSelectedSymptoms([ids()[0]])
+    ops.transferSelected(second, true)
+    expect(cb().symptoms).toHaveLength(4)
+    actions.setSelectedSymptoms([ids()[1]])
+    ops.transferSelected(second, false)
+    expect(cb().symptoms).toHaveLength(3)
+    const target = useApp.getState().consultations[useApp.getState().activeConsultationId!].clipboards.find(c => c.id === second)!
+    expect(target.symptoms).toHaveLength(2)
+  })
+
+  it('cycles and selects clipboards by position', () => {
+    const first = cb().id
+    const second = actions.addClipboard()!
+    ops.selectClipboardAt(0)
+    expect(cb().id).toBe(first)
+    ops.cycleClipboard(1)
+    expect(cb().id).toBe(second)
+    ops.cycleClipboard(1)
+    expect(cb().id).toBe(first)
+  })
+
+  it('clears with undo', () => {
+    ops.clearClipboard()
+    expect(cb().symptoms).toHaveLength(0)
+    useApp.getState().toasts.at(-1)!.action!.run()
+    expect(cb().symptoms).toHaveLength(4)
+  })
+
+  it('undo of a deleted clipboard restores it in place without undoing later edits', async () => {
+    const c = () => useApp.getState().consultations[useApp.getState().activeConsultationId!]
+    const first = cb().id
+    const second = actions.addClipboard()!
+    actions.addRubrics(['r:9'], { clipboardId: second })
+    actions.renameClipboard(second, 'Mentals')
+    actions.addClipboard()
+    ops.toggleInAnalysis(second)
+    ops.toggleInAnalysis(second)
+    actions.setActiveClipboard(second)
+    const done = ops.deleteClipboard()
+    // it holds a symptom: nothing happens before the confirmation
+    expect(c().clipboards).toHaveLength(3)
+    answerConfirm(true)
+    expect(await done).toBe(true)
+    expect(c().clipboards).toHaveLength(2)
+    const toast = useApp.getState().toasts.at(-1)!
+    // a later, unrelated edit
+    actions.updateSymptom(first, c().clipboards[0].symptoms[0].id, { weight: 4 })
+    toast.action!.run()
+    expect(c().clipboards.map(x => x.id)[1]).toBe(second)
+    expect(c().clipboards[1]).toMatchObject({ name: 'Mentals', symptoms: [{ rubrics: ['r:9'] }] })
+    expect(c().analysis.clipboardIds).toContain(second)
+    expect(c().clipboards[0].symptoms[0].weight).toBe(4)
+    expect(cb().id).toBe(second)
+  })
+
+  it('clears all clipboards in one step after confirmation, undo restores them', async () => {
+    const c = () => useApp.getState().consultations[useApp.getState().activeConsultationId!]
+    const second = actions.addClipboard()!
+    actions.addRubrics(['r:7', 'r:8'], { clipboardId: second })
+    expect(ops.hasAnySymptoms()).toBe(true)
+    const past = useApp.getState().past.length
+    const cancelled = ops.clearAllClipboards()
+    answerConfirm(false)
+    expect(await cancelled).toBe(false)
+    expect(c().clipboards.map(x => x.symptoms.length)).toEqual([4, 2])
+    const done = ops.clearAllClipboards()
+    answerConfirm(true)
+    expect(await done).toBe(true)
+    expect(c().clipboards.every(x => x.symptoms.length === 0)).toBe(true)
+    expect(useApp.getState().past.length).toBe(past + 1)
+    useApp.getState().toasts.at(-1)!.action!.run()
+    expect(c().clipboards.map(x => x.symptoms.length)).toEqual([4, 2])
+  })
+
+  it('deletes an empty clipboard without asking; a cancelled delete keeps it', async () => {
+    const c = () => useApp.getState().consultations[useApp.getState().activeConsultationId!]
+    const second = actions.addClipboard()!
+    expect(await ops.deleteClipboard(second)).toBe(true)
+    expect(useApp.getState().dialog).toBeNull()
+    expect(c().clipboards).toHaveLength(1)
+    const third = actions.addClipboard()!
+    const first = c().clipboards[0].id
+    const p = ops.deleteClipboard(first)
+    answerConfirm(false)
+    expect(await p).toBe(false)
+    expect(c().clipboards.map(x => x.id)).toEqual([first, third])
+  })
+
+  it('toggles clipboards in the analysis selection, keeping clipboard order', () => {
+    const first = cb().id
+    const second = actions.addClipboard()!
+    const c = () => useApp.getState().consultations[useApp.getState().activeConsultationId!]
+    ops.toggleInAnalysis(first)
+    expect(c().analysis.clipboardIds).toEqual([second])
+    ops.toggleInAnalysis(first)
+    expect(c().analysis.clipboardIds).toEqual([first, second])
+  })
+})

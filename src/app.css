@@ -1,0 +1,20 @@
+/* App frame: optional instance banner above the shell. */
+.app-frame { display: flex; flex-direction: column; height: 100vh; min-width: 0; }
+.app-frame > .shell { flex: 1; height: auto; min-height: 0; }
+
+.app-instance-banner {
+  flex: none; display: flex; align-items: center; gap: 12px; padding: 5px 12px;
+  background: var(--accent-soft); color: var(--text); border-bottom: 1px solid var(--border-strong); font-size: var(--fs-sm);
+}
+.app-instance-banner span { flex: 1; min-width: 0; }
+.app-instance-banner .btn { flex: none; }
+
+/* Boot error card actions */
+.app-boot-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.app-boot-hint { margin: 0; max-width: 420px; }
+
+/* Generic confirm dialog (ui/ConfirmDialog) */
+.app-confirm-msg { margin: 0; line-height: 1.5; }
+.app-confirm-detail { margin: 8px 0 0; color: var(--text-2); line-height: 1.5; font-size: var(--fs-sm); }
+.dialog .app-btn-danger { background: var(--danger); border-color: var(--danger); color: var(--on-accent); }
+.dialog .app-btn-danger:hover { filter: brightness(1.08); }

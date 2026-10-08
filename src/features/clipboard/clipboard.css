@@ -1,0 +1,180 @@
+/* Symptom clipboards (right pane). Prefix: cbp- */
+/* text on filled status badges: white where it reaches 4.5:1, the dark ink colour on the light dark-theme fills */
+.cbp {
+  --cbp-on-success: var(--on-accent); --cbp-on-danger: var(--on-accent);
+  --cbp-warning-fill: color-mix(in srgb, var(--warning) 80%, #000); --cbp-on-warning: var(--on-accent);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cbp { --cbp-on-success: var(--bg); --cbp-on-danger: var(--bg); --cbp-warning-fill: var(--warning); --cbp-on-warning: var(--bg); }
+}
+:root[data-theme="dark"] .cbp { --cbp-on-success: var(--bg); --cbp-on-danger: var(--bg); --cbp-warning-fill: var(--warning); --cbp-on-warning: var(--bg); }
+.cbp { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--bg-elev); }
+.cbp-grow { flex: 1; }
+
+/* case selector */
+.cbp-case {
+  flex: none; display: flex; align-items: center; gap: 4px; height: 34px; padding: 0 4px 0 4px;
+  border-bottom: 1px solid var(--border); background: var(--chrome);
+}
+.cbp-case-btn {
+  flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; height: 26px; padding: 0 6px;
+  border: 1px solid transparent; border-radius: var(--radius); background: transparent; text-align: left;
+}
+.cbp-case-btn:hover, .cbp-case-btn[aria-expanded="true"] { background: var(--bg-hover); border-color: var(--border); }
+.cbp-case-patient { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.cbp-case-cons { color: var(--text-3); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 0; }
+/* the patient name keeps priority: the consultation title and date go first when the dock is narrow */
+.cbp { container-type: inline-size; container-name: cbp; }
+.cbp-case-date { white-space: nowrap; }
+@container cbp (max-width: 340px) { .cbp-case-date { display: none; } }
+@container cbp (max-width: 240px) { .cbp-case-cons { display: none; } }
+.cbp-case-none { color: var(--text-3); flex: 1; }
+.cbp-case-caret { flex: none; align-self: center; color: var(--text-3); }
+
+/* clipboard chips */
+.cbp-chips {
+  flex: none; display: flex; align-items: flex-start; gap: 4px; padding: 5px 4px 5px 6px;
+  border-bottom: 1px solid var(--border); background: var(--bg);
+}
+.cbp-chip-wrap { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.cbp-chip-actions { flex: none; display: flex; align-items: center; gap: 2px; height: 24px; }
+.cbp-chip {
+  --chip: var(--accent);
+  position: relative; display: inline-flex; align-items: center; gap: 5px; height: 24px; max-width: 100%; min-width: 0; padding: 0 6px 0 3px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elev); color: var(--text-2); font-size: var(--fs-xs);
+}
+.cbp-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.cbp-chip.active { border-color: var(--chip); color: var(--text); box-shadow: inset 0 0 0 1px var(--chip); background: color-mix(in srgb, var(--chip) 10%, var(--bg-elev)); font-weight: 600; }
+.cbp-chip.off { border-style: dashed; }
+.cbp-chip.off .cbp-chip-name { text-decoration: line-through; text-decoration-color: var(--text-3); }
+.cbp-chip.drop { outline: 2px solid var(--chip); outline-offset: 1px; background: color-mix(in srgb, var(--chip) 18%, var(--bg-elev)); }
+.cbp-chip-num {
+  flex: none; display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%;
+  background: var(--chip); color: var(--chip-fg, var(--on-accent)); font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.cbp-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 200px; }
+.cbp-chips.compact .cbp-chip-wrap { gap: 3px 2px; }
+.cbp-chip.mini { gap: 1px; padding: 0 3px 0 2px; }
+.cbp-chip.mini .cbp-chip-count { min-width: 0; padding: 0 0 0 1px; background: none; color: var(--text-3); font-size: 10px; font-weight: 500; }
+.cbp-chips.compact .cbp-chip-name { max-width: 76px; }
+.cbp-chip-count { flex: none; min-width: 16px; padding: 0 4px; border-radius: 8px; background: var(--bg-sunken); color: var(--text-2); font-size: 10px; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; }
+.cbp-chip.active .cbp-chip-count { background: var(--chip); color: var(--chip-fg, var(--on-accent)); }
+.cbp-chip-add { width: 22px; height: 22px; border: 1px dashed var(--border-strong); border-radius: 11px; }
+.cbp-rename {
+  width: auto; min-width: 60px; max-width: 120px; height: 18px; padding: 0 4px; border: 1px solid var(--focus); border-radius: 3px;
+  background: var(--bg-elev); font-size: var(--fs-xs); outline: none;
+}
+
+/* list */
+.cbp-tabpanel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cbp-list { flex: 1; min-height: 0; overflow: auto; outline: none; padding: 2px 0 8px; position: relative; }
+.cbp-list:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+.cbp-list.drop-end::after { content: ""; display: block; height: 2px; margin: 0 6px; background: var(--accent); border-radius: 1px; }
+.cbp-warn-text { flex: 1; min-width: 0; }
+.cbp-warn .btn { flex: none; }
+.cbp-warn { display: flex; align-items: center; gap: 6px; margin: 4px 6px; padding: 4px 8px; border-radius: 4px; background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--text); font-size: var(--fs-xs); }
+
+.cbp-row {
+  position: relative; display: grid; grid-template-columns: 20px 32px minmax(0, 1fr) auto; align-items: start; align-content: center; column-gap: 6px;
+  min-height: var(--row); padding: 2px 8px 2px 4px; box-sizing: border-box; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  font-size: var(--fs-sm); line-height: 18px; outline: none; user-select: none;
+}
+.cbp-row:hover { background: var(--bg-hover); }
+.cbp-row.sel { background: var(--bg-selected); }
+.cbp-row.cursor:focus { box-shadow: inset 2px 0 0 var(--accent), inset 0 0 0 1px var(--focus); }
+.cbp-row.drop-before::before, .cbp-row.drop-after::after {
+  content: ""; position: absolute; left: 4px; right: 4px; height: 2px; background: var(--accent); border-radius: 1px; pointer-events: none;
+}
+.cbp-row.drop-before::before { top: -1px; }
+.cbp-row.drop-after::after { bottom: -1px; }
+.cbp-row.ignored .cbp-text, .cbp-row.ignored .cbp-size, .cbp-row.ignored .cbp-idx { opacity: .45; }
+.cbp-row.ignored .cbp-rest, .cbp-row.ignored .cbp-chapter { text-decoration: line-through; text-decoration-color: var(--text-3); }
+
+.cbp-idx { color: var(--text-3); font-size: var(--fs-xs); text-align: right; font-variant-numeric: tabular-nums; }
+
+.cbp-int { display: inline-flex; align-items: flex-end; gap: 2px; height: 18px; padding: 2px 0; cursor: pointer; }
+.cbp-bar { width: 4px; border-radius: 1px; background: color-mix(in srgb, var(--border-strong) 70%, transparent); }
+.cbp-bar:nth-child(1) { height: 5px; }
+.cbp-bar:nth-child(2) { height: 8px; }
+.cbp-bar:nth-child(3) { height: 11px; }
+.cbp-bar:nth-child(4) { height: 14px; }
+.cbp-bar.on { background: var(--accent); }
+.cbp-bar:hover { background: var(--accent-2); }
+.cbp-int-num { margin-left: 3px; width: 8px; font-size: 10px; font-weight: 600; color: var(--text-3); line-height: 12px; font-variant-numeric: tabular-nums; }
+.cbp-int.w0 .cbp-int-num { color: var(--text-3); }
+.cbp-int.w3 .cbp-int-num, .cbp-int.w4 .cbp-int-num { color: var(--accent); font-weight: 800; }
+
+.cbp-text { min-width: 0; }
+/* one line per rubric (uniform 24px rows); the full path is in the row's title tooltip */
+.cbp-path { height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cbp-chapter { font-weight: 700; text-transform: uppercase; letter-spacing: .02em; font-size: .92em; color: var(--text); }
+.cbp-rest { color: var(--text); }
+.cbp-chapter + .cbp-rest::before { content: " – "; color: var(--text-3); font-weight: 400; }
+.cbp-loading { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); font-style: italic; }
+.cbp-loading > .cbp-skel { margin-right: 6px; vertical-align: middle; }
+.cbp-parts .cbp-loading { display: inline; }
+.cbp-skel {
+  display: inline-block; width: 48px; height: 8px; border-radius: 4px; background: var(--bg-sunken);
+  background-image: linear-gradient(90deg, transparent, color-mix(in srgb, var(--border-strong) 60%, transparent), transparent);
+  background-size: 200% 100%; animation: cbp-shimmer 1.2s linear infinite;
+}
+.cbp-skel.sm { width: 18px; vertical-align: middle; }
+@keyframes cbp-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .cbp-skel { animation: none; } }
+.cbp-combined-head { display: flex; align-items: flex-start; gap: 5px; color: var(--text-2); font-size: var(--fs-xs); font-weight: 600; }
+.cbp-combined-head .cbp-op { flex: none; margin-top: 1px; }
+.cbp-combined-label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cbp-op { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 3px; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 12px; }
+.cbp-parts { list-style: none; margin: 1px 0 0; padding: 0 0 0 4px; border-left: 2px solid var(--accent-soft); }
+.cbp-parts li { display: flex; gap: 4px; line-height: 17px; }
+.cbp-parts li > :last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cbp-op-sm { flex: none; width: 10px; color: var(--accent); font-weight: 700; }
+
+.cbp-meta { display: flex; align-items: center; gap: 3px; height: 18px; }
+.cbp-rep { height: 15px; padding: 0 4px; border: 1px solid var(--border-strong); border-radius: 3px; color: var(--text-2); font-size: 9.5px; font-weight: 600; line-height: 13px; text-transform: lowercase; }
+.cbp-flag {
+  display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 3px;
+  font-size: 10px; font-weight: 800; line-height: 1;
+}
+.cbp-flag.f-e { background: var(--success); color: var(--cbp-on-success); }
+.cbp-flag.f-x { background: var(--danger); color: var(--cbp-on-danger); }
+.cbp-flag.f-c { background: var(--cbp-warning-fill); color: var(--cbp-on-warning); }
+/* group marker: small orange rounded square with the lowercase letter (as in the analysis) */
+.cbp-flag.f-g { background: color-mix(in srgb, var(--warning) 22%, transparent); color: color-mix(in srgb, var(--warning) 70%, var(--text)); font-weight: 700; text-transform: lowercase; }
+.cbp-note { position: relative; display: inline-grid; place-items: center; color: var(--warning); cursor: help; }
+.cbp-note-tip {
+  display: none; position: absolute; right: -4px; top: calc(100% + 6px); z-index: 20; width: max-content; max-width: 260px;
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-elev); box-shadow: var(--shadow-2);
+  color: var(--text); font-size: var(--fs-xs); line-height: 1.45; white-space: pre-wrap; word-break: break-word; pointer-events: none;
+}
+.cbp-note:hover .cbp-note-tip { display: block; }
+.cbp-size { min-width: 26px; text-align: right; color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+
+/* empty */
+.cbp-empty { padding: 28px 20px; gap: 8px; }
+.cbp-empty > svg { color: var(--text-3); }
+.cbp-empty .btn svg { stroke: currentColor; }
+.cbp-empty p { margin: 0; max-width: 260px; line-height: 1.5; }
+.cbp-empty-actions { display: flex; gap: 6px; margin-top: 6px; }
+.cbp-howto { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; text-align: left; max-width: 270px; line-height: 1.5; }
+.cbp-howto li { padding-left: 10px; position: relative; }
+.cbp-howto li::before { content: "•"; position: absolute; left: 0; color: var(--text-3); }
+
+/* footer */
+.cbp-foot {
+  flex: none; display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 6px 0 10px;
+  border-top: 1px solid var(--border); background: var(--chrome); font-size: var(--fs-xs); color: var(--text-2);
+}
+.cbp-stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+.cbp-prompt { color: var(--accent); font-weight: 600; }
+.cbp-status { min-width: 0; padding: 4px 0; line-height: 1.35; }
+.cbp-foot .btn[aria-disabled="true"] { opacity: .5; cursor: default; }
+.cbp-foot .btn-primary[aria-disabled="true"]:hover { background: var(--accent); border-color: var(--accent); }
+.cbp-form-error { margin: -4px 0 0; color: var(--danger); font-size: var(--fs-xs); }
+.cbp-key { margin-left: 2px; padding: 0 3px; border: 1px solid color-mix(in srgb, var(--on-accent) 55%, transparent); border-radius: 3px; color: var(--on-accent); font-size: 10px; font-weight: 600; line-height: 13px; }
+
+/* dialogs */
+.cbp-dialog-subject { font-weight: 600; font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cbp-dialog-hint { margin: 0; color: var(--text-3); font-size: var(--fs-xs); }
+.cbp-form { display: grid; gap: 10px; }
+.cbp-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
