@@ -44,21 +44,54 @@ describe('menus', () => {
     expect(missing).toEqual([])
   })
 
-  it('has menu entries for repertories and strategies', () => {
-    expect(refs.some(r => r.id === 'repertory.open.publicum')).toBe(true)
-    expect(refs.some(r => r.id.startsWith('analysis.strategy.'))).toBe(true)
+  it('has menu entries for the analysis methods', () => {
+    expect(refs.some(r => r.id.startsWith('analysis.default.'))).toBe(true)
   })
 
-  it('offers case report print/export in the Case menu, reusing the File commands', () => {
-    const items = menus.find(m => m.label === 'Case')!.items
-    const ids = items.map(i => (i.type === 'separator' || i.type === 'label') ? '|' : i.command)
-    const at = ids.indexOf('case.report')
-    expect(at).toBeGreaterThan(0)
-    expect(ids[at - 1]).toBe('|')
-    expect(ids[at + 1]).toBe('file.exportCase')
+  it('uses the RadarOpus menu titles in their order', () => {
+    expect(menus.map(m => m.label)).toEqual(['File', 'Edit', 'Additions', 'View', 'Search', 'Take', 'Analysis', 'Tools', 'Window', 'Help'])
+  })
+
+  it('lists only RadarOpus items, in RadarOpus wording (the macOS Help menu aside)', () => {
+    // RadarOpus 4.2.7's menu items (menu titles and item wording; the clone shows those it can perform)
+    const RO: Record<string, string[]> = {
+      File: ['Create a new patient', 'Create a new consultation', 'Save patient information', 'Export patient information', 'Print', 'Print preview', 'Print setup'],
+      Edit: ['Undo', 'Copy', 'Paste', 'Copy symptom text only', 'Copy analysis', 'Delete selection', 'Select all', 'Unselect all'],
+      Additions: ['Add or modify a symptom note', 'Remove a symptom note'],
+      View: ['Table of contents', 'Clipboard pane', 'Open list of repertories', 'Open list of references', 'Open list of patients', 'List of remedies', 'List of families', 'Bookmarks', 'Go back', 'Go forward', 'History'],
+      Search: ['Find a rubric', 'Find a rubric starting from the current rubric', 'Search text in the current document', 'Search', 'Advanced search'],
+      Take: ['Take with intensity 1 (+1)', 'Take with intensity 2 (+2)', 'Take with intensity 3 (+3)', 'Take with intensity 4 (+4)', 'Take with default options', 'Take and specify the options'],
+      Analysis: ['Show current analysis with symptoms only', 'Show current analysis with symptoms and remedies', 'Limit to a family', 'Start a new analysis (clear all clipboards)', 'Select your default analysis method'],
+      Tools: ['User accounts', 'Database management'],
+      Window: ['Zoom in', 'Zoom out', 'Next window', 'Previous window', 'Close current window', 'Close all windows'],
+    }
+    for (const m of menus) {
+      if (m.label === 'Help') continue
+      const labels = m.items.filter(i => i.type !== 'separator' && i.type !== 'label').map(i => i.label ?? i.command)
+      const allowed = RO[m.label]
+      expect(labels.filter(l => !allowed.includes(l!)), m.label).toEqual([])
+      // RadarOpus order
+      expect(labels.map(l => allowed.indexOf(l!)), m.label).toEqual([...labels.map(l => allowed.indexOf(l!))].sort((a, b) => a - b))
+    }
+  })
+
+  it('offers Print and the patient export in File', () => {
     const file = refs.filter(r => r.path.startsWith('File')).map(r => r.id)
-    expect(file).toContain('case.report')
     expect(file).toContain('file.exportCase')
+    expect(file).toContain('file.print')
+  })
+
+  it('keeps the workspace backup under Tools › Database management', () => {
+    const tools = refs.filter(r => r.path.startsWith('Tools › Database management')).map(r => r.id)
+    for (const id of ['file.exportWorkspace', 'file.importWorkspace', 'file.importCase']) expect(tools).toContain(id)
+  })
+
+  it('reaches the table of contents and the window commands from the menus', () => {
+    const view = refs.filter(r => r.path.startsWith('View')).map(r => r.id)
+    for (const id of ['view.toc', 'repertory.toc']) expect(view).toContain(id)
+    const win = refs.filter(r => r.path.startsWith('Window')).map(r => r.id)
+    for (const id of ['view.zoomIn', 'view.zoomOut', 'tab.next', 'tab.prev', 'tab.close', 'window.closeAll']) expect(win).toContain(id)
+    expect(displayKey(getCommand('view.toc')!.keys)).toBe('Mod+F2')
   })
 
   it('gives every registered command a title and category', () => {
@@ -118,14 +151,21 @@ describe('menus', () => {
     expect(displayKey(getCommand('patients.open')!.keys)).toBe('Mod+3')
   })
 
-  it('lists one File › Print… entry for Ctrl+P, named after the enabled print command', () => {
+  it('lists one File › Print entry for Ctrl+P, named after the enabled print command, enabled like the toolbar Print', () => {
     const file = menus.find(m => m.label === 'File')!.items
     const printing = file.filter(it => !('type' in it && it.type) && resolveMenuItem(it as MenuEntry).keys === 'Mod+P')
     expect(printing).toHaveLength(1)
     const r = resolveMenuItem(printing[0] as MenuEntry)
-    // nothing printable is open in a bare test workspace
-    expect(r.label).toBe('Print…')
-    expect(r.disabled).toBe(true)
+    // nothing printable is open in a bare test workspace: it prints the page, like the toolbar's Print
+    expect(r.label).toBe('Print')
+    expect(r.disabled).toBe(false)
+  })
+
+  it('follows RadarOpus order in View (History after Go forward) and Window (open windows after Close all windows)', () => {
+    const labels = (m: string) => menus.find(x => x.label === m)!.items.map(i => (i.type === 'separator' ? '|' : i.type === 'label' ? i.label : (i.label ?? i.command)))
+    const view = labels('View')
+    expect(view.slice(view.indexOf('Go back'), view.indexOf('Go back') + 3)).toEqual(['Go back', 'Go forward', 'History'])
+    expect(labels('Window').slice(0, 6)).toEqual(['Zoom in', 'Zoom out', 'Next window', 'Previous window', 'Close current window', 'Close all windows'])
   })
 })
 
@@ -155,5 +195,14 @@ describe('clipboard chip on-colour text', () => {
     const { onColor } = await import('./color')
     for (const light of ['#e0a100', '#2e9e5b', '#16a2b8', '#e8680c', '#7cb342']) expect(onColor(light), light).toBe('#1c2129')
     for (const dark of ['#2f6fdb', '#8e44ad', '#c2185b', '#5d4037', '#6c757d']) expect(onColor(dark), dark).toBe('#fff')
+  })
+})
+
+describe('document window titles', () => {
+  it('name a book as RadarOpus does: title, then surname in capitals and initials', async () => {
+    const { authorShort } = await import('./tabTitle')
+    expect(authorShort('Vladimir Polony')).toBe('POLONY V.')
+    expect(authorShort('J. T. Kent')).toBe('KENT J. T.')
+    expect(authorShort('Boericke')).toBe('BOERICKE')
   })
 })

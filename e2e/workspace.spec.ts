@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { openApp, waitForSaved } from './helpers'
+import { openApp, showClipboardPane, showToc, waitForSaved } from './helpers'
 
 async function menu(page: Page, top: string, item: string) {
   await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: top, exact: true }).click()
@@ -11,7 +11,7 @@ const html = (page: Page) => page.locator('html')
 
 test('settings: tabs, live changes and keyboard toggle', async ({ page }) => {
   await openApp(page)
-  await page.keyboard.press('Control+Comma')
+  await page.keyboard.press('ControlOrMeta+Comma')
   const dlg = page.getByRole('dialog', { name: 'Settings' })
   await expect(dlg).toBeVisible()
   await expect(dlg.getByRole('tab', { name: 'General' })).toBeFocused()
@@ -49,11 +49,11 @@ test('settings: tabs, live changes and keyboard toggle', async ({ page }) => {
   await expect(dlg.locator('.ws-strategy.on')).toContainText('Small rubrics')
 
   // the menu reflects the same settings (one source of truth)
-  await page.keyboard.press('Control+Comma')
+  await page.keyboard.press('ControlOrMeta+Comma')
   await expect(dlg).toBeHidden()
-  await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'View', exact: true }).click()
-  await page.getByRole('menu').getByRole('menuitem', { name: 'Show remedies' }).hover()
-  await expect(page.getByRole('menuitemcheckbox', { name: 'Grade 3 and higher' }).or(page.getByRole('menuitem', { name: /Grade 3 and higher/ }))).toBeVisible()
+  await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'Analysis', exact: true }).click()
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Select your default analysis method' }).hover()
+  await expect(page.getByRole('menuitemcheckbox', { name: /^Small rubrics \(Organon/ })).toHaveAttribute('aria-checked', 'true')
   await page.keyboard.press('Escape')
 
   // settings persist across reloads
@@ -106,17 +106,18 @@ test('keyboard shortcuts: F1, search, cheat sheets and run from the list', async
   await expect(dlg.locator('.ws-sc-row', { hasText: 'About Radar Opus' })).toBeVisible()
 
   // click runs the command
-  await dlg.getByLabel('Search shortcuts').fill('navigator pane')
-  await expect(page.locator('.pane-left')).toBeVisible()
-  await dlg.locator('.ws-sc-row', { hasText: 'Navigator pane' }).click()
-  await expect(dlg).toBeHidden()
+  await dlg.getByLabel('Search shortcuts').fill('table of contents')
+  // hidden on a fresh start (RadarOpus)
   await expect(page.locator('.pane-left')).toHaveCount(0)
+  await dlg.locator('.ws-sc-row', { hasText: 'Table of contents' }).first().click()
+  await expect(dlg).toBeHidden()
+  await expect(page.locator('.pane-left')).toBeVisible()
   // Enter in the search box runs the first match
   await page.keyboard.press('F1')
-  await dlg.getByLabel('Search shortcuts').fill('navigator pane')
+  await dlg.getByLabel('Search shortcuts').fill('table of contents')
   await page.keyboard.press('Enter')
   await expect(dlg).toBeHidden()
-  await expect(page.locator('.pane-left')).toBeVisible()
+  await expect(page.locator('.pane-left')).toHaveCount(0)
 
   // F1 toggles
   await page.keyboard.press('F1')
@@ -174,7 +175,7 @@ test('welcome tour: shows once on first run, keyboard driven', async ({ page }) 
   await expect(page.locator('.ws-tour')).toHaveCount(0)
 
   // can be replayed from Help and dismissed with Escape; panes it opened are restored
-  await page.keyboard.press('Control+b')
+  await page.keyboard.press('ControlOrMeta+b')
   await expect(page.locator('.pane-left')).toHaveCount(0)
   await menu(page, 'Help', 'Welcome tour')
   await expect(card).toBeVisible()
@@ -186,18 +187,20 @@ test('welcome tour: shows once on first run, keyboard driven', async ({ page }) 
 
 test('pane focus cycling with Ctrl+F6', async ({ page }) => {
   await openApp(page)
+  await showToc(page)
+  await showClipboardPane(page)
   const inPane = (sel: string) => page.evaluate(s => !!document.querySelector(s)?.contains(document.activeElement), sel)
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
-  await page.keyboard.press('Control+F6')
+  await page.keyboard.press('ControlOrMeta+F6')
   await expect.poll(() => inPane('.pane-left')).toBe(true)
   await expect(page.getByRole('tree').first()).toBeFocused()
-  await page.keyboard.press('Control+F6')
+  await page.keyboard.press('ControlOrMeta+F6')
   await expect.poll(() => inPane('.pane-center .tab-content')).toBe(true)
-  await page.keyboard.press('Control+F6')
+  await page.keyboard.press('ControlOrMeta+F6')
   await expect.poll(() => inPane('.pane-right')).toBe(true)
-  await page.keyboard.press('Control+Shift+F6')
+  await page.keyboard.press('ControlOrMeta+Shift+F6')
   await expect.poll(() => inPane('.pane-center .tab-content')).toBe(true)
-  await page.keyboard.press('Control+Shift+F6')
+  await page.keyboard.press('ControlOrMeta+Shift+F6')
   await expect.poll(() => inPane('.pane-left')).toBe(true)
 })
 
@@ -208,7 +211,7 @@ test('narrow window: side panes become overlays', async ({ page }) => {
   await expect(page.locator('.pane-left')).toHaveCount(0)
   await expect(page.locator('.pane-right')).toHaveCount(0)
   await page.locator('.rv-scroll').focus()
-  await page.keyboard.press('Control+b')
+  await page.keyboard.press('ControlOrMeta+b')
   const nav = page.locator('.pane-left')
   const clip = page.locator('.pane-right')
   await expect(nav).toBeVisible()
@@ -217,7 +220,7 @@ test('narrow window: side panes become overlays', async ({ page }) => {
   // the overlay takes focus
   await expect.poll(() => nav.evaluate(el => el.contains(document.activeElement))).toBe(true)
   // opening the other overlay closes this one and moves focus there
-  await page.keyboard.press('Control+Shift+B')
+  await page.keyboard.press('ControlOrMeta+Shift+B')
   await expect(clip).toBeVisible()
   await expect(nav).toHaveCount(0)
   await expect.poll(() => clip.evaluate(el => el.contains(document.activeElement))).toBe(true)
@@ -227,26 +230,25 @@ test('narrow window: side panes become overlays', async ({ page }) => {
   await expect(page.locator('.ws-scrim')).toHaveCount(0)
   await expect(page.locator('.rv-scroll')).toBeFocused()
   // clicking the scrim closes the overlay
-  await page.keyboard.press('Control+b')
+  await page.keyboard.press('ControlOrMeta+b')
   await expect(nav).toBeVisible()
   await page.locator('.ws-scrim').click({ position: { x: 600, y: 300 } })
   await expect(nav).toHaveCount(0)
-  // the pane toggles stay reachable in the toolbar; the rest folds into "More tools"
-  await expect(page.getByRole('button', { name: 'Navigator pane' })).toBeInViewport()
-  await expect(page.getByRole('button', { name: 'Clipboard pane' })).toBeInViewport()
-  await page.getByRole('button', { name: 'More tools' }).click()
-  await expect(page.getByRole('menuitem', { name: /Patients/ })).toBeVisible()
-  await page.keyboard.press('Escape')
+  // the table of contents toggle stays reachable in the status strip, the toolbar keeps Patients
+  await expect(page.getByLabel('Status').getByRole('button', { name: /table of contents/ })).toBeInViewport()
+  await expect(page.getByRole('toolbar', { name: 'Main toolbar' }).getByRole('button', { name: 'Patients', exact: true })).toBeInViewport()
   // widening restores the side-by-side layout
   await page.setViewportSize({ width: 1440, height: 900 })
   await expect(page.locator('html')).not.toHaveAttribute('data-narrow', 'true')
-  await expect(page.locator('.pane-left')).toBeVisible()
-  await expect(page.locator('.pane-right')).toBeVisible()
+  // the table of contents was hidden before the window narrowed (fresh start): it stays hidden
+  await expect(page.locator('.pane-left')).toHaveCount(0)
+  // the clipboard pane is opt-in (RadarOpus): it stays as it was before the window narrowed
+  await expect(page.locator('.pane-right')).toHaveCount(0)
 })
 
 test('data: storage estimate and reset demo data', async ({ page }) => {
   await openApp(page)
-  await page.keyboard.press('Control+Comma')
+  await page.keyboard.press('ControlOrMeta+Comma')
   const dlg = page.getByRole('dialog', { name: 'Settings' })
   await dlg.getByRole('radio', { name: 'Dark' }).click()
   await dlg.getByRole('tab', { name: 'Data' }).click()
@@ -279,15 +281,18 @@ test('data: storage estimate and reset demo data', async ({ page }) => {
 
 test('settings: fixed height across tabs, restore defaults can be undone', async ({ page }) => {
   await openApp(page)
-  await page.keyboard.press('Control+Comma')
+  await page.keyboard.press('ControlOrMeta+Comma')
   const dlg = page.getByRole('dialog', { name: 'Settings' })
   const done = dlg.getByRole('button', { name: 'Done' })
   const ys: number[] = []
+  // measured once the dialog's opening animation has settled (the dialog loads lazily: wait for it first)
+  await expect(done).toBeVisible()
+  await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => null))))
   for (const t of ['General', 'Repertory', 'Analysis', 'Data']) {
     await dlg.getByRole('tab', { name: t }).click()
     ys.push((await done.boundingBox())!.y)
   }
-  expect(new Set(ys.map(Math.round)).size).toBe(1)
+  expect(new Set(ys.map(Math.round)).size, ys.join(",")).toBe(1)
   // the apply-to-consultation action sits at the top of the Analysis tab
   await dlg.getByRole('tab', { name: 'Analysis' }).click()
   await expect(dlg.locator('.ws-callout')).toBeInViewport()
@@ -306,16 +311,19 @@ test('book re-flows when the document width changes', async ({ page }) => {
   await openApp(page)
   await page.waitForSelector('.rv-row')
   const overlaps = () => page.evaluate(() => {
-    const rows = [...document.querySelectorAll('.rv-row')].map(r => r.getBoundingClientRect()).sort((a, b) => a.top - b.top)
+    // the book has two columns: rubric blocks must not overlap within a column
     let n = 0
-    for (let i = 1; i < rows.length; i++) if (rows[i].top < rows[i - 1].bottom - 1) n++
+    for (const col of document.querySelectorAll('.tab-doc[data-active] .rv-col')) {
+      const rows = [...col.querySelectorAll('.rv-blk')].map(r => r.getBoundingClientRect()).sort((a, b) => a.top - b.top)
+      for (let i = 1; i < rows.length; i++) if (rows[i].top < rows[i - 1].bottom - 1) n++
+    }
     return n
   })
   for (const w of [1152, 1024, 1440]) {
     await page.setViewportSize({ width: w, height: 720 })
     await expect.poll(overlaps).toBe(0)
   }
-  await page.keyboard.press('Control+b')
+  await page.keyboard.press('ControlOrMeta+b')
   await expect.poll(overlaps).toBe(0)
   // print: rows flow in reading order, chrome is hidden; the screen layout is intact afterwards
   await page.emulateMedia({ media: 'print' })
@@ -341,7 +349,7 @@ test('shortcuts reference: merged zoom row, scoped print, no duplicate keys', as
   expect(errors).toEqual([])
   await page.keyboard.press('Escape')
   // settings theme segmented control uses the shared accent-tint style
-  await page.keyboard.press('Control+Comma')
+  await page.keyboard.press('ControlOrMeta+Comma')
   const theme = page.getByRole('dialog', { name: 'Settings' }).getByRole('radiogroup', { name: 'Theme' })
   await expect(theme).toHaveClass(/\bseg\b/)
   await expect(theme.getByRole('radio', { checked: true })).toHaveClass(/\bseg-btn\b/)
@@ -358,7 +366,7 @@ test('welcome tour step dots are not tabs', async ({ page }) => {
 test('settings reflow at 200% zoom (720×450): the text size reset stays inside the panel', async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 450 })
   await openApp(page)
-  await page.keyboard.press('Control+Comma')
+  await page.keyboard.press('ControlOrMeta+Comma')
   const reset = page.getByRole('button', { name: 'Reset text size' })
   await reset.scrollIntoViewIfNeeded()
   const panel = await page.locator('.ws-settings-panel').boundingBox()

@@ -71,6 +71,34 @@ const f1Out = (r: AnalysisResult) => r.rows.map(x => {
 const f1Rounded = (r: AnalysisResult, d = 4) => r.rows.map(x => `${F1_NAME[x.remedyId]}${Math.round(x.score * 10 ** d) / 10 ** d}`)
 const f1Excluded = (r: AnalysisResult) => r.excludedRows.map(x => `${F1_NAME[x.remedyId]} ${exclusionCode(x)}`).sort()
 
+describe('Prominence (RadarOpus scale, the default)', () => {
+  // one rubric with grades 3, 2, 1 and 4: RadarOpus prints 160 / 120 / 100 for grades 3 / 2 / 1 at intensity 1
+  const G: Record<string, Map<number, Grade>> = { 'p:1': new Map<number, Grade>([[1, 1], [2, 3], [3, 2], [4, 3], [5, 1], [6, 4 as Grade]]) }
+  const NAMES: Record<number, string> = { 1: 'acon', 2: 'calc', 3: 'anac', 4: 'caust', 5: 'bell', 6: 'sulph' }
+  const src: RubricSource = { grades: ref => G[ref] ?? null, label: ref => ref, remedyName: id => NAMES[id] }
+  const run = (weight: Symptom['weight'], patch: Partial<AnalysisOptions> = {}) =>
+    analyze(src, [cb([sym('p:1', { weight })])], opts({ strategy: 'graded-prominence', ...patch }))
+  const out = (r: AnalysisResult) => r.rows.map(x => `${NAMES[x.remedyId]} ${formatScore(r.strategy, x)}`)
+
+  it('is the default strategy', () => {
+    expect(normalizeStrategy(undefined)).toBe('graded-prominence')
+    expect(STRATEGIES[0]).toMatchObject({ id: 'graded-prominence', name: 'Prominence' })
+  })
+  it('a single rubric at intensity 1 scores 160 / 120 / 100 for grades 3 / 2 / 1, ties by abbreviation', () => {
+    expect(out(run(1))).toEqual(['sulph 240', 'calc 160', 'caust 160', 'anac 120', 'acon 100', 'bell 100'])
+    expect([1, 2, 3, 4].map(g => gradeValue('graded-prominence', g))).toEqual([100, 120, 160, 240])
+  })
+  it('scales with the intensity, which "use intensity" off ignores', () => {
+    expect(out(run(2)).slice(0, 2)).toEqual(['sulph 480', 'calc 320'])
+    expect(out(run(2, { useIntensity: false })).slice(0, 2)).toEqual(['sulph 240', 'calc 160'])
+    expect(out(run(0))).toEqual([])
+  })
+  it('sums over symptoms (F1: A 160 + 2×100 + 120 + 100)', () => {
+    expect(f1Out(runF1('graded-prominence', true))).toEqual(['A580', 'B540', 'C380', 'F340', 'D320', 'E220'])
+    expect(f1Out(runF1('graded-prominence', false))).toEqual(['A480', 'B380', 'C380', 'D320', 'E220', 'F220'])
+  })
+})
+
 describe('scoring-spec F1 base quantities', () => {
   it('C, D, CI, DI per remedy', () => {
     const r = runF1('sum-symptoms-degrees', true)
@@ -358,10 +386,10 @@ describe('robustness: no NaN, known strategies only', () => {
   })
   it('an unknown strategy id analyses with the default strategy', () => {
     const r = runF1('no-such-strategy' as StrategyId, true)
-    expect(r.strategy).toBe('sum-symptoms-degrees')
-    expect(f1Out(r)).toEqual(['A(5/8)', 'B(4/9)', 'C(3/6)', 'F(3/5)', 'D(3/4)', 'E(2/3)'])
+    expect(r.strategy).toBe('graded-prominence')
+    expect(f1Out(r)).toEqual(['A580', 'B540', 'C380', 'F340', 'D320', 'E220'])
     expect(normalizeStrategy('kent')).toBe('kent')
-    expect(normalizeStrategy(42)).toBe('sum-symptoms-degrees')
+    expect(normalizeStrategy(42)).toBe('graded-prominence')
   })
   it('family limit excludes with reason family-limit (ANA-021)', () => {
     const r = runF1('sum-symptoms-degrees', false, F1(), { remedyFilter: [F1_ID.A, F1_ID.D] })
@@ -433,7 +461,7 @@ describe('factors and metadata', () => {
   })
   it('every strategy has metadata', () => {
     const ids: StrategyId[] = [
-      'sum-symptoms-degrees', 'sum-symptoms', 'sum-degrees', 'weighted', 'small-rubrics', 'remedy-size', 'small-remedies', 'kent', 'boenninghausen', 'elimination',
+      'graded-prominence', 'sum-symptoms-degrees', 'sum-symptoms', 'sum-degrees', 'weighted', 'small-rubrics', 'remedy-size', 'small-remedies', 'kent', 'boenninghausen', 'elimination',
       'sum-symptoms-plus-degrees', 'small-rubrics-cont', 'prominence', 'polarity', 'segments', 'composite',
     ]
     expect(STRATEGIES.map(s => s.id).sort()).toEqual([...ids].sort())

@@ -1,6 +1,6 @@
 import type { Catalog } from '../../data/catalog'
 import type { Command } from '../../commands/registry'
-import { registerCommands } from '../../commands/registry'
+import { registerCommands, runCommand } from '../../commands/registry'
 import { registerDialog } from '../../shell/dialogs'
 import type { DialogComponent } from '../../shell/dialogs'
 import type { Weight } from '../../engine/model'
@@ -31,7 +31,9 @@ export function register(catalog: Catalog) {
     { id: 'clipboard.delete', title: 'Delete clipboard', category: 'Case', enabled: () => ops.clipboards().length > 1, run: async () => { await ops.deleteClipboard() } },
     { id: 'clipboard.selectAll', title: 'Select all symptoms', category: 'Edit', keys: ['Mod+A'], scope: ops.PANEL_SCOPE, enabled: hasCase, run: ops.selectAll },
     { id: 'clipboard.deleteSelected', title: 'Remove selected symptoms', category: 'Edit', keys: ['Delete', 'Backspace'], scope: ops.LIST_SCOPE, enabled: ops.hasTarget, run: ops.removeSelected },
-    { id: 'view.clipboardsOnly', title: 'Show clipboards', category: 'View', keys: ['F7'], run: ops.focusPanel, keywords: 'symptoms focus' },
+    // RadarOpus has no clipboard side pane: F7 (Analysis › Show current analysis with symptoms only) shows the
+    // symptoms in the analysis window, without its remedy columns (F8 brings them back). The pane, opt-in from View › Clipboard pane, takes focus when it is open.
+    { id: 'view.clipboardsOnly', title: 'Show clipboards', category: 'View', keys: ['F7'], run: () => { if (st().layout.showClipboard) ops.focusPanel(); else runCommand('analysis.symptomsOnly') }, keywords: 'symptoms focus' },
 
     { id: 'symptom.combineUnion', title: 'Combine symptoms (union)', category: 'Case', enabled: ops.canCombine, run: () => ops.combine('union'), keywords: 'or merge' },
     { id: 'symptom.combineIntersection', title: 'Combine symptoms (intersection)', category: 'Case', enabled: ops.canCombine, run: () => ops.combine('intersection'), keywords: 'and merge' },

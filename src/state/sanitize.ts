@@ -86,7 +86,11 @@ export function sanitizeSettings(saved: unknown): Settings {
     theme: ['light', 'dark', 'system'], density: ['compact', 'comfortable'], remedyStyle: ['abbrev', 'name'], minGradeShown: [1, 2, 3],
   })
 }
-export function sanitizeLayout(saved: unknown): Layout { return mergeDefaults(DEFAULT_LAYOUT, saved) }
+export function sanitizeLayout(saved: unknown): Layout {
+  const out = mergeDefaults(DEFAULT_LAYOUT, saved)
+  const keys = (v: unknown, d: string[]) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : d)
+  return { ...out, tocOpen: keys(out.tocOpen, DEFAULT_LAYOUT.tocOpen), tocChecked: keys(out.tocChecked, DEFAULT_LAYOUT.tocChecked) }
+}
 
 function sanitizePatient(raw: unknown, key: string): Patient | null {
   if (!isObj(raw)) return null

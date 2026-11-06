@@ -13,7 +13,7 @@ async function ready(page: Page) {
 
 test('quick find: type-ahead, open, take and escape', async ({ page }) => {
   await ready(page)
-  await page.keyboard.press('Control+f')
+  await page.keyboard.press('ControlOrMeta+f')
   const box = page.getByRole('combobox', { name: 'Quick find' })
   await expect(box).toBeFocused()
   await box.pressSequentially('fear night')
@@ -22,22 +22,22 @@ test('quick find: type-ahead, open, take and escape', async ({ page }) => {
   await expect(list.locator('.qf-head').first()).toContainText('Mind')
   // Alt+Enter takes into the clipboard without leaving the box
   await page.keyboard.press('Alt+Enter')
-  await expect(page.locator('.toast').filter({ hasText: /Taken Mind - fear - night/ })).toBeVisible()
+  await expect(page.locator('.toasts [role=status] > div').filter({ hasText: /Taken MIND - FEAR - night/ })).toBeAttached()
   // Enter opens the rubric in the repertory
   await page.keyboard.press('Enter')
   await expect(list).toBeHidden()
   await expect(crumbs(page).locator('.rv-crumb-last')).toHaveText('night')
   // remedies are offered too, and Esc closes the dropdown
-  await page.keyboard.press('Control+f')
+  await page.keyboard.press('ControlOrMeta+f')
   await page.keyboard.type('nat-m')
   await expect(list.locator('.qf-remedy').first()).toContainText('Natrium')
   await page.keyboard.press('Escape')
   await expect(list).toBeHidden()
   // Ctrl+Enter opens a full search tab
-  await page.keyboard.press('Control+f')
-  await page.keyboard.press('Control+a')
+  await page.keyboard.press('ControlOrMeta+f')
+  await page.keyboard.press('ControlOrMeta+a')
   await page.keyboard.type('head pain')
-  await page.keyboard.press('Control+Enter')
+  await page.keyboard.press('ControlOrMeta+Enter')
   await expect(page.getByRole('combobox', { name: 'Search query' })).toHaveValue('head pain')
   await expect(page.locator('.srch-total')).toContainText('rubrics')
 })
@@ -74,7 +74,7 @@ test('F4 search: operators, selection, take and summary filter', async ({ page }
   await page.keyboard.press('Space')
   await expect(page.locator('.srch-total')).toContainText('2 selected')
   await page.getByRole('button', { name: /^Take 2/ }).click()
-  await expect(page.locator('.toast').filter({ hasText: /Taken 2 rubrics|2 rubrics taken/ })).toBeVisible()
+  await expect(page.locator('.toasts [role=status] > div').filter({ hasText: /Taken 2 rubrics|2 rubrics taken/ })).toBeAttached()
 
   // summary: clicking a remedy bar filters the results
   const bar = page.locator('.srch-sum .srch-barrow').first()
@@ -141,7 +141,7 @@ test('multiple search tabs and graphical comparison', async ({ page }) => {
   await ready(page)
   await page.keyboard.press('F4')
   await page.getByRole('combobox', { name: 'Search query' }).fill('head pain night')
-  await page.keyboard.press('Control+Shift+F')
+  await page.keyboard.press('ControlOrMeta+Shift+F')
   await expect(searchTabs(page)).toHaveCount(2)
   await page.getByRole('combobox', { name: 'Search query' }).fill('vertigo morning')
   await page.locator('.srch-sum').getByRole('tab', { name: 'Compare (2)' }).click()
@@ -152,7 +152,7 @@ test('multiple search tabs and graphical comparison', async ({ page }) => {
 test('command palette: commands, prefixes, remedies, rubrics, focus restore', async ({ page }) => {
   await ready(page)
   await page.locator('.rv-scroll').focus()
-  await page.keyboard.press('Control+k')
+  await page.keyboard.press('ControlOrMeta+k')
   const pal = page.getByRole('dialog', { name: 'Command palette' })
   await expect(pal).toBeVisible()
   await page.keyboard.type('>zoom in')
@@ -162,31 +162,33 @@ test('command palette: commands, prefixes, remedies, rubrics, focus restore', as
   await expect(pal).toBeHidden()
   await expect(page.locator('.rv-scroll')).toBeFocused()
 
-  // run a command: toggling the navigator pane
-  const nav = page.getByRole('complementary', { name: 'Repertory navigator' })
+  // run a command: toggling the table of contents
+  const nav = page.getByRole('complementary', { name: 'Table of contents' })
   const had = await nav.count()
-  await page.keyboard.press('Control+k')
-  await page.keyboard.type('navigator pane')
+  await page.keyboard.press('ControlOrMeta+k')
+  await page.keyboard.type('table of contents')
   await page.keyboard.press('Enter')
   await expect(nav).toHaveCount(had ? 0 : 1)
 
   // remedies with '#'
-  await page.keyboard.press('Control+k')
+  await page.keyboard.press('ControlOrMeta+k')
   await page.keyboard.type('#nat-m')
   await expect(pal.getByRole('option').first()).toContainText('Natrium')
 
   // rubrics as you type
-  await page.keyboard.press('Control+a')
+  await page.keyboard.press('ControlOrMeta+a')
   await page.keyboard.type('/fear night')
-  await expect(pal.getByRole('option').first()).toContainText('night')
+  // while the word index is still being built in idle time the list offers only "Search rubrics for …":
+  // wait until the top option is a rubric
+  await expect(pal.getByRole('option').first().locator('.pal-rubric')).toContainText('night')
   await page.keyboard.press('Enter')
   await expect(pal).toBeHidden()
   await expect(crumbs(page).locator('.rv-crumb-last')).toHaveText('night')
 
   // mouse: clicking an item runs it; recent commands come first
-  await page.keyboard.press('Control+k')
+  await page.keyboard.press('ControlOrMeta+k')
   await expect(pal.locator('.pal-head').first()).toHaveText('Recently used')
-  await pal.getByRole('option', { name: /Navigator pane/ }).click()
+  await pal.getByRole('option', { name: /^Table of contents/ }).click()
   await expect(nav).toHaveCount(had ? 1 : 0)
 })
 
@@ -200,7 +202,7 @@ test('command palette: typing stays under a frame budget; enabled() runs once pe
     ;(window as unknown as { __en: number }).__en = 0
     c.enabled = () => { (window as unknown as { __en: number }).__en++; return orig ? orig() : true }
   })
-  await page.keyboard.press('Control+k')
+  await page.keyboard.press('ControlOrMeta+k')
   const pal = page.getByRole('dialog', { name: 'Command palette' })
   await expect(pal).toBeVisible()
   await withinBudget(() => typeInPalette(page, 'settings zoom'), times => {
@@ -245,7 +247,7 @@ test('command palette with 2,000 patients: keystrokes stay fast, patient matches
     for (let i = 0; i < 2000; i++) ps.push({ id: `bulk${i}`, firstName: `Anna${i}`, lastName: `Bulkowska${i}`, birthDate: '1980-01-01', sex: 'female', email: '', phone: '', address: '', occupation: '', notes: '', tags: [], createdAt: now, updatedAt: now - i })
     actions.insertCaseData(ps as never, [] as never)
   })
-  await page.keyboard.press('Control+k')
+  await page.keyboard.press('ControlOrMeta+k')
   await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible()
   await settle(page)
   // every one of 2,000 names matches "bulk": mixed mode shows a short patient section
@@ -272,7 +274,7 @@ test('quick find: remedy abbreviations first, one Esc restores focus, recent ite
   const list = page.getByRole('listbox', { name: 'Quick find results' })
 
   // an exact abbreviation puts the remedy first, so Enter opens it (and the box is cleared)
-  await page.keyboard.press('Control+f')
+  await page.keyboard.press('ControlOrMeta+f')
   await page.keyboard.type('sulph')
   await expect(list.getByRole('option').first()).toHaveClass(/qf-remedy/)
   await expect(list.getByRole('option').first()).toContainText('Sulphur')
@@ -283,7 +285,7 @@ test('quick find: remedy abbreviations first, one Esc restores focus, recent ite
   // ordinary words still list rubrics first
   await page.getByRole('tab', { name: /Mind/ }).first().click()
   await book.focus()
-  await page.keyboard.press('Control+f')
+  await page.keyboard.press('ControlOrMeta+f')
   await page.keyboard.type('fear night')
   await expect(list.getByRole('option').first()).toHaveClass(/qf-rubric/)
 
@@ -294,11 +296,11 @@ test('quick find: remedy abbreviations first, one Esc restores focus, recent ite
   await expect(book).toBeFocused()
 
   // an empty box offers recent searches and recent rubrics
-  await page.keyboard.press('Control+f')
+  await page.keyboard.press('ControlOrMeta+f')
   await page.keyboard.type('head pain')
   await page.keyboard.press('Enter')
   await expect(crumbs(page).locator('.rv-crumb-last')).toHaveText('pain')
-  await page.keyboard.press('Control+f')
+  await page.keyboard.press('ControlOrMeta+f')
   await expect(list.getByRole('group', { name: 'Recent searches' })).toContainText('head pain')
   await expect(list.getByRole('group', { name: 'Recent rubrics' }).getByRole('option').first()).toContainText('Head, pain')
   await page.keyboard.press('Enter')
@@ -357,7 +359,7 @@ test('command palette: empty state order, keyword reasons, leaving a prefix mode
   await page.keyboard.press('F4')
   await page.getByRole('tab', { name: /Mind/ }).first().click()
   await page.locator('.rv-scroll').focus()
-  await page.keyboard.press('Control+k')
+  await page.keyboard.press('ControlOrMeta+k')
   const pal = page.getByRole('dialog', { name: 'Command palette' })
   await expect(pal.locator('.pal-head').first()).toHaveText('Open tabs')
   await expect(pal.locator('.pal-opt.disabled')).toHaveCount(0)
@@ -366,15 +368,15 @@ test('command palette: empty state order, keyword reasons, leaving a prefix mode
   await expect(pal.getByRole('option').first()).toContainText('Take')
   await expect(pal.locator('.pal-why').first()).toBeVisible()
   // select-all + typing replaces the mode chip too
-  await page.keyboard.press('Control+a')
+  await page.keyboard.press('ControlOrMeta+a')
   await page.keyboard.type('/fear')
   await expect(pal.locator('.pal-mode')).toHaveText('Rubrics')
-  await page.keyboard.press('Control+a')
+  await page.keyboard.press('ControlOrMeta+a')
   await page.keyboard.type('zoom in')
   await expect(pal.locator('.pal-mode')).toHaveCount(0)
   await expect(pal.getByRole('option').first()).toContainText('Zoom in')
   // the chip's close button leaves the mode and keeps the text
-  await page.keyboard.press('Control+a')
+  await page.keyboard.press('ControlOrMeta+a')
   await page.keyboard.type('#lach')
   await pal.getByRole('button', { name: 'Leave remedies mode' }).click()
   await expect(pal.locator('.pal-mode')).toHaveCount(0)
@@ -401,9 +403,10 @@ test('search results: live count, no controls inside options, combined take is o
   // no case yet: taking creates the case and the symptom, and one undo removes both
   await page.getByRole('button', { name: 'More take options' }).click()
   await page.getByRole('menuitem', { name: 'Take as one combined symptom' }).click()
-  await expect(page.locator('.statusbar')).toContainText('1 symptom')
+  // the clipboard strip shows the active clipboard's symptom count (RadarOpus's status strip holds only links)
+  await expect(page.locator('.clip-slot.active .clip-slot-count')).toHaveText('1')
   await results.focus()
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect(page.locator('.statusbar')).not.toContainText('symptom')
   // nothing matches: said in the live region, shown outside the listbox
   await q.fill('zzqqx')
@@ -502,7 +505,7 @@ test('F4 results: Enter focuses the first result, + take bar takes like the book
   await expect(bar).toContainText('×2')
   await page.keyboard.press('Enter')
   await expect(bar).toBeHidden()
-  await expect(page.locator('.toast').filter({ hasText: /Taken Mind - .*night/ }).last()).toBeVisible()
+  await expect(page.locator('.toasts [role=status]')).toContainText(/Taken MIND - .*night/)
   await expect(results).toBeFocused()
   await expect(page.locator('.tabstrip [role=tab]')).toHaveCount(tabsBefore)
   await expect(page.locator('.tabstrip [role=tab][aria-selected=true]')).toHaveAttribute('data-kind', 'search')
@@ -517,7 +520,7 @@ test('F4 results: Enter focuses the first result, + take bar takes like the book
   await page.keyboard.type('1>2')
   await page.keyboard.press('Enter')
   // the take toast merges quick takes: it names clipboard 2 as a target now
-  await expect(page.locator('.toast').filter({ hasText: /2 → / }).last()).toBeVisible()
+  await expect(page.locator('.toasts [role=status]')).toContainText(/2 → /)
   // Backspace goes back to the query; F3 opens Find at the rubric under the cursor
   await page.keyboard.press('Backspace')
   await expect(q).toBeFocused()
@@ -541,13 +544,13 @@ test('F4 and quick find typing never block the main thread for long', async ({ p
   await page.evaluate(() => { (window as unknown as { __lt: number[] }).__lt = [] })
   await q.pressSequentially('pain a', { delay: 50 })
   await expect(page.locator('.srch-desc')).toContainText('pain and a')
-  await page.keyboard.press('Control+f')
+  await page.keyboard.press('ControlOrMeta+f')
   await expect(page.getByRole('combobox', { name: 'Quick find' })).toBeFocused()
   await settle(page)
   await page.evaluate(() => { (window as unknown as { __lt: number[] }).__lt = [] })
   await page.keyboard.type('he', { delay: 50 })
   await expect(page.getByRole('listbox', { name: 'Quick find results' }).locator('.qf-rubric').first()).toBeVisible()
-  await page.keyboard.press('Control+a')
+  await page.keyboard.press('ControlOrMeta+a')
   await page.keyboard.type('pa', { delay: 50 })
   await expect(page.getByRole('listbox', { name: 'Quick find results' }).locator('.qf-rubric').first()).toBeVisible()
   await settle(page)

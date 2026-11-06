@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { installRenderCounter, openApp, openRemedy, settle, takeRenders, withinBudget } from './helpers'
+import { installRenderCounter, openApp, openRemedy, settle, showClipboardPane, showToc, takeRenders, withinBudget } from './helpers'
 
 const reader = (page: Page) => page.locator('.mm-reader')
 
 async function openMM(page: Page) {
   await openApp(page)
-  await page.keyboard.press('Control+2')
+  await page.keyboard.press('ControlOrMeta+2')
   await expect(page.getByRole('listbox', { name: 'Boericke remedies' })).toBeVisible()
 }
 
@@ -82,7 +82,7 @@ test('materia medica: full-text search with hits and next/previous', async ({ pa
 
 test('remedy picker (Ctrl+4) and the remedy information window', async ({ page }) => {
   await openApp(page)
-  await page.keyboard.press('Control+4')
+  await page.keyboard.press('ControlOrMeta+4')
   const dlg = page.getByRole('dialog', { name: 'Remedies' })
   await expect(dlg).toBeVisible()
   await page.keyboard.type('natrum mur')
@@ -121,7 +121,7 @@ test('remedy picker (Ctrl+4) and the remedy information window', async ({ page }
   await expect(page.locator('.tab-doc[data-active] .ri-view')).toBeHidden()
 
   // Open in MM from the remedy window
-  await page.keyboard.press('Control+4')
+  await page.keyboard.press('ControlOrMeta+4')
   await expect(page.getByRole('dialog', { name: 'Remedies' })).toBeVisible()
   await page.getByLabel('Search remedies').fill('sepia')
   await expect(page.getByRole('dialog', { name: 'Remedies' }).getByRole('option').first()).toContainText('Sep')
@@ -213,9 +213,9 @@ test('materia medica: ranked filter, hit-only highlights, abbreviations and prin
   await expect(reader(page)).not.toHaveClass(/mm-show-abbr/)
 
   // after printing, focus is back in the app and shortcuts work
-  await page.keyboard.press('Control+p')
+  await page.keyboard.press('ControlOrMeta+p')
   await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).not.toBe('IFRAME')
-  await page.keyboard.press('Control+4')
+  await page.keyboard.press('ControlOrMeta+4')
   await expect(page.getByRole('dialog', { name: 'Remedies' })).toBeVisible()
 })
 
@@ -234,6 +234,9 @@ test.describe('remedy information window at 1152x720', () => {
 
   test('fits with the side panes open; keynotes survive a repertory switch; keys work after tab switch', async ({ page }) => {
     await openApp(page)
+    // RadarOpus starts with the table of contents closed: open it and the clipboard pane (the narrow case)
+    await showToc(page)
+    await showClipboardPane(page)
     await openRemedy(page, 'sulphur', /Sulph/)
     const view = page.locator('.tab-doc[data-active] .ri-view')
     await expect(view.locator('h1')).toHaveText('Sulphur')
@@ -261,6 +264,8 @@ test.describe('remedy information window at 1152x720', () => {
     // leave the tab and come back through the tab strip: section keys work straight away
     await page.getByRole('tab', { name: /Mind/ }).first().click()
     await page.getByRole('tab', { name: /Sulph/ }).first().click()
+    // focus moves into the remedy window once it is shown (asynchronously): no extra click is needed
+    await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('.tab-doc[data-active] .ri-view'))).toBe(true)
     await page.keyboard.press('2')
     await expect(page.locator('.tab-doc[data-active] .ri-view').getByRole('tab', { name: /Relationships/ })).toHaveAttribute('aria-selected', 'true')
     const compare = page.locator('.ri-relgroup', { hasText: 'Compare' }).first()
@@ -289,7 +294,7 @@ test('relationships that trailed other sections are parsed (Ars, Lyc→Calc, Cal
   await open('calc', 'Calcarea Carbonica')
   await expect(group('inimical').locator('.ri-chip b')).toHaveText(['Bry', 'Sulph'])
   // and the MM section menu lists Relationship for Ars
-  await page.keyboard.press('Control+2')
+  await page.keyboard.press('ControlOrMeta+2')
   const filter = page.getByRole('textbox', { name: 'Filter remedies' })
   await filter.fill('ars')
   await filter.press('Enter')
@@ -363,7 +368,7 @@ for (const vp of [{ width: 1440, height: 900 }, { width: 1152, height: 720 }]) {
       expect(await page.locator('.ri-common').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
 
       // Ctrl+2 from the remedy window opens its monograph
-      await page.keyboard.press('Control+2')
+      await page.keyboard.press('ControlOrMeta+2')
       await expect(reader(page).locator('.mm-head h1')).toHaveText('NATRIUM MURIATICUM')
       const view = (await page.locator('.mm-view').boundingBox())!
       for (const b of await page.locator('.mm-toolbar button').all()) {
@@ -456,7 +461,7 @@ test('remedy picker: announces the count, list is focusable, Esc gives focus bac
   await openMM(page)
   const list = page.getByRole('listbox', { name: 'Boericke remedies' })
   await expect(list).toBeFocused()
-  await page.keyboard.press('Control+4')
+  await page.keyboard.press('ControlOrMeta+4')
   const dlg = page.getByRole('dialog', { name: 'Remedies' })
   await expect(dlg).toBeVisible()
   await page.keyboard.type('nat')
@@ -526,7 +531,7 @@ test('remedy information opens without a long task; citations and keynotes arriv
     w.__lt = []
     new PerformanceObserver(l => { for (const e of l.getEntries()) w.__lt.push(e.duration) }).observe({ type: 'longtask' })
   })
-  await page.keyboard.press('Control+k')
+  await page.keyboard.press('ControlOrMeta+k')
   await page.keyboard.type('Remedy information')
   await expect(page.getByRole('option', { name: /Remedy information/ }).first()).toBeVisible()
   await page.evaluate(() => { (window as unknown as { __lt: number[] }).__lt = [] })

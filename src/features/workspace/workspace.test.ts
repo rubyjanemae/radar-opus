@@ -259,8 +259,9 @@ describe('fitSidePanes', () => {
       expect(f.clipboard).toBeGreaterThanOrEqual(240)
     }
     const f = fitSidePanes(1152, layout)
-    expect(f.tree).toBeLessThanOrEqual(230)
-    expect(f.clipboard).toBeLessThanOrEqual(290)
+    // the 400 px table of contents and the 340 px clipboard give up room in proportion to their slack
+    expect(f.tree).toBeLessThanOrEqual(245)
+    expect(f.clipboard).toBeLessThanOrEqual(270)
   })
   it('gives the room of a hidden pane to the other', () => {
     expect(fitSidePanes(1152, { ...layout, showTree: false })).toEqual({ tree: 0, clipboard: layout.clipboardWidth })

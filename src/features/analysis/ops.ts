@@ -8,7 +8,7 @@ import { downloadBlob } from '../../ui/files'
 import { openPrescription } from '../patients/ops'
 import type { ExportMeta } from './labels'
 import { sourceFor } from './source'
-import { analyzeCached, repertoriesOf } from './useAnalysis'
+import { analysisViewGrade, analyzeCached, repertoriesOf } from './useAnalysis'
 
 const st = () => useApp.getState()
 let catalogRef: Catalog | null = null
@@ -60,11 +60,16 @@ export function isAnalysisVisible(consultationId: string): boolean {
 }
 
 /** Open (or focus) the analysis tab of a consultation, moving keyboard focus into it. */
-export function openAnalysisFor(consultationId: string, remedy?: number) {
+/** `symptomsOnly`: F7 shows the symptom pane alone; every other way in (F8, remedy jumps) shows symptoms and remedies. */
+export function openAnalysisFor(consultationId: string, remedy?: number, symptomsOnly = false) {
   if (!st().consultations[consultationId]) return
+  // notifications about the previous step (a take's "Taken … · Undo") would cover the grid's lower right;
+  // the analysis window shows none (RadarOpus), and Edit › Undo still undoes the step
+  for (const t of st().toasts) actions.dismissToast(t.id)
   actions.openTab({ kind: 'analysis', consultationId })
   const t = activeAnalysisTab()
   if (!t) return
+  if (!!t.symptomsOnly !== symptomsOnly) actions.updateTab<AnalysisTab>(t.id, { symptomsOnly })
   if (remedy !== undefined) requestReveal(t.id, remedy)
   else requestFocus(t.id)
 }
@@ -132,13 +137,13 @@ export function onReveal(fn: (tabId: string, remedyId: number) => void) {
   return () => { revealListeners.delete(fn) }
 }
 
-export function openAnalysis(remedy?: number) {
+export function openAnalysis(remedy?: number, symptomsOnly = false) {
   const id = targetConsultationId()
   if (!id) {
     actions.toast('No active case. Create or open a case to analyse its symptoms.', 'info', { label: 'New case', run: () => actions.openDialog('clipboard.newCase') })
     return
   }
-  openAnalysisFor(id, remedy)
+  openAnalysisFor(id, remedy, symptomsOnly)
 }
 
 /** Remedy box / external jumps: select the remedy and append it as a pinned column when it is not shown. */
@@ -155,6 +160,15 @@ const optionsOf = (id: string | null) => (id ? st().consultations[id]?.analysis 
 
 export function setStrategy(strategy: StrategyId, consultationId = targetConsultationId()) { setOptions({ strategy }, consultationId) }
 
+/**
+ * Analysis › Select your default analysis method: the method new analyses start with (settings), which
+ * the current case's analysis also switches to so the choice shows at once.
+ */
+export function setDefaultStrategy(strategy: StrategyId, consultationId = targetConsultationId()) {
+  actions.setSettings({ defaultStrategy: strategy })
+  if (consultationId && optionsOf(consultationId)?.strategy !== strategy) setStrategy(strategy, consultationId)
+}
+
 export function toggleIntensity(consultationId = targetConsultationId()) {
   const o = optionsOf(consultationId)
   if (o) setOptions({ useIntensity: o.useIntensity === false }, consultationId)
@@ -167,7 +181,8 @@ export function toggleShowExcluded(consultationId = targetConsultationId()) {
 
 export function setView(view: AnalysisViewMode) {
   const t = activeAnalysisTab()
-  if (t) actions.updateTab<AnalysisTab>(t.id, { view })
+  // choosing a display brings the remedies back after "symptoms only" (F7)
+  if (t) actions.updateTab<AnalysisTab>(t.id, { view, symptomsOnly: false })
 }
 
 export function hasFilter(o: AnalysisOptions | null = targetOptions()): boolean {
@@ -237,7 +252,7 @@ export async function computeTarget(id = outputConsultationId()): Promise<Comput
   const cat = catalog()
   await Promise.all(repertoriesOf(c0.clipboards).map(a => cat.loadRepertory(a).catch(() => null)))
   const c = st().consultations[c0.id] ?? c0
-  const result = analyzeCached(sourceFor(cat), cat, c.clipboards, c.analysis, { minGrade: st().settings.minGradeShown ?? 1 })
+  const result = analyzeCached(sourceFor(cat), cat, c.clipboards, c.analysis, { minGrade: analysisViewGrade(c.analysis) })
   const p = st().patients[c.patientId]
   const title = `${p ? `${p.lastName}${p.firstName ? `, ${p.firstName}` : ''}` : 'Case'} · ${c.title} · ${c.date}`
   const meta: ExportMeta = {
@@ -259,6 +274,20 @@ export async function exportCsv(id?: string) {
   const { analysisCsv, safeFileName } = await loadExport()
   downloadBlob(new Blob(['﻿' + analysisCsv(t.result, t.rows, t.meta)], { type: 'text/csv;charset=utf-8' }), `${safeFileName(t.meta.title)}.csv`)
   actions.toast('Analysis exported as CSV', 'success')
+}
+
+/** Edit › Copy analysis: the analysis table as tab-separated text on the system clipboard. */
+export async function copyAnalysis(id?: string) {
+  const t = await computeTarget(id)
+  if (!t) return
+  if (!t.result.symptoms.length) { actions.toast('Nothing to copy: the analysed clipboards are empty', 'info'); return }
+  const { analysisText } = await loadExport()
+  try {
+    await navigator.clipboard.writeText(analysisText(t.result, t.rows, t.meta))
+    actions.toast('Analysis copied', 'success')
+  } catch {
+    actions.toast('Copy failed: the browser did not allow access to the clipboard', 'error')
+  }
 }
 
 export async function exportPng(id?: string) {

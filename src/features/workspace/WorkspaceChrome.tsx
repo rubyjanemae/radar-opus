@@ -51,7 +51,9 @@ export function WorkspaceChrome() {
   useEffect(() => {
     if (!narrow) return
     let prev: SideState = { showTree: useApp.getState().layout.showTree, showClipboard: useApp.getState().layout.showClipboard }
-    let raf = 0
+    // a timeout, not a frame: the pane is committed synchronously, and the next frame can come long
+    // after (a heavy paint), leaving keys to land in the dimmed document meanwhile
+    let timer = 0
     const unsub = useApp.subscribe(s => {
       const next: SideState = { showTree: s.layout.showTree, showClipboard: s.layout.showClipboard }
       if (next.showTree === prev.showTree && next.showClipboard === prev.showClipboard) return
@@ -60,8 +62,8 @@ export function WorkspaceChrome() {
       const closed = (prev.showTree && !next.showTree) || (prev.showClipboard && !next.showClipboard)
       prev = patch ? { ...next, ...patch } : next
       if (patch) actions.setLayout(patch)
-      cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => {
+      clearTimeout(timer)
+      timer = window.setTimeout(() => {
         if (useTour.getState().open || useApp.getState().dialog) return
         if (opened) {
           const el = document.querySelector<HTMLElement>(PANE_SEL[opened])
@@ -70,7 +72,7 @@ export function WorkspaceChrome() {
           const a = document.activeElement
           if (!a || a === document.body || !a.isConnected) focusDocument()
         }
-      })
+      }, 0)
     })
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return
@@ -86,7 +88,7 @@ export function WorkspaceChrome() {
       closeOverlays()
     }
     document.addEventListener('keydown', onKey)
-    return () => { unsub(); cancelAnimationFrame(raf); document.removeEventListener('keydown', onKey) }
+    return () => { unsub(); clearTimeout(timer); document.removeEventListener('keydown', onKey) }
   }, [narrow])
 
   useEffect(() => {

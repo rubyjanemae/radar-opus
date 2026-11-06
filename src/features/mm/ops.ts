@@ -109,15 +109,23 @@ export function canHistory(tabId: string | undefined, dir: -1 | 1): boolean {
  * away (a remedy link in the old text, a button that becomes disabled), the reader takes it.
  */
 export function keepMMFocus(fn: () => void) {
-  const view = document.activeElement?.closest?.('.mm-view') ?? null
+  const start = document.activeElement as HTMLElement | null
+  const view = start?.closest?.('.mm-view') ?? null
   fn()
   if (!view) return
-  requestAnimationFrame(() => {
+  const refocus = () => {
     const a = document.activeElement as HTMLElement | null
     if (a && a !== document.body && a.isConnected && !(a instanceof HTMLButtonElement && a.disabled)) return
     const root = document.querySelector('.tab-content .mm-view') ?? view
     root.querySelector<HTMLElement>('.mm-reader')?.focus({ preventScroll: true })
-  })
+  }
+  requestAnimationFrame(refocus)
+  // under load the clicked button (Forward at the end of the history) can lose focus to its disabling only
+  // after that frame: catch that blur too (it has no related target) and refocus before the next key event
+  if (!start) return
+  const onOut = (e: FocusEvent) => { if (!e.relatedTarget) queueMicrotask(refocus) }
+  start.addEventListener('focusout', onOut, { once: true })
+  setTimeout(() => start.removeEventListener('focusout', onOut), 1000)
 }
 
 // ───────────── remedy window state (transient, per tab) ─────────────

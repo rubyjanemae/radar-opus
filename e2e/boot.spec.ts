@@ -39,11 +39,11 @@ test('lazy dialogs open on first use: find, settings, remedies, case report', as
   await expect(find).toBeHidden()
   await expect(page.locator('.dialog-loading')).toHaveCount(0)
 
-  await page.keyboard.press('Control+4')
+  await page.keyboard.press('ControlOrMeta+4')
   await expect(page.locator('[data-dialog="mm.remedyPicker"]')).toBeVisible()
   await page.keyboard.press('Escape')
 
-  await page.keyboard.press('Control+,')
+  await page.keyboard.press('ControlOrMeta+,')
   await expect(page.locator('[data-dialog="workspace.settings"]').first()).toBeVisible()
   await page.keyboard.press('Escape')
 
@@ -59,7 +59,7 @@ test('lazy dialogs open on first use: find, settings, remedies, case report', as
 test('the analysis preview dock loads its grid when shown', async ({ page }) => {
   await openApp(page)
   await expect(page.locator('.rv')).toBeVisible()
-  await page.keyboard.press('Control+j')
+  await page.keyboard.press('ControlOrMeta+j')
   await expect(page.locator('.analysis-dock')).toBeVisible()
   await expect(page.locator('.analysis-dock [role="grid"]').first()).toBeVisible()
 })
@@ -94,9 +94,12 @@ test('keys typed while a dialog is still loading reach it once it opens', async 
   // the workspace did not see the keys: no search tab, no chapter jump
   await expect(page.getByRole('tab', { name: /Search/ })).toHaveCount(0)
   release()
-  const dlg = page.getByRole('dialog', { name: 'Find rubric' })
+  const dlg = page.getByRole('dialog', { name: /^Navigation window/ })
   await expect(dlg.locator('.rfind-crumb.on')).toHaveText(/weeping/)
-  await page.keyboard.press('Escape')
+  // Go to (Esc would be Cancel, leaving the book as it was): weeping is shown in the book
+  await dlg.getByRole('button', { name: 'Up one level', exact: true }).first().click()
+  await expect(dlg.locator('.rfind-row.active')).toContainText(/weeping/i)
+  await page.keyboard.press('Shift+Enter')
   await expect(dlg).toBeHidden()
   await expect(page.locator('.rv-row[aria-selected="true"]').first()).toContainText(/weeping/i)
 })
@@ -105,7 +108,7 @@ test('Escape while a dialog is loading cancels it and gives focus back', async (
   await page.route(/SettingsDialog/, () => new Promise(() => {}))
   await openApp(page)
   await page.locator('.rv-scroll').focus()
-  await page.keyboard.press('Control+,')
+  await page.keyboard.press('ControlOrMeta+,')
   await expect(page.locator('.dialog-loading')).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(page.locator('.dialog-loading')).toHaveCount(0)

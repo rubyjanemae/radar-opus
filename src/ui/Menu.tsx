@@ -30,6 +30,16 @@ export type MenuItem =
 export type MenuEntry = Extract<MenuItem, { type?: 'item' }>
 const isEntry = (it: MenuItem): it is MenuEntry => !('type' in it) || it.type === undefined || it.type === 'item'
 
+/**
+ * How the latest menu was opened: macOS highlights no item in a menu opened with the mouse (hover or
+ * an arrow key picks one), while a keyboard-opened menu starts on its first item.
+ */
+let lastInputPointer = false
+if (typeof window !== 'undefined') {
+  window.addEventListener('pointerdown', () => { lastInputPointer = true }, true)
+  window.addEventListener('keydown', () => { lastInputPointer = false }, true)
+}
+
 /** Why a menu closed: callers restore focus for keyboard closes and after an item ran. */
 export type MenuCloseReason = 'escape' | 'tab' | 'select' | 'outside' | 'blur'
 
@@ -73,10 +83,12 @@ interface MenuListProps {
   container?: Element | null
   /** Submenus: left edge of the parent menu, used to flip the submenu to the left side when it does not fit on the right. */
   flipX?: number
+  /** Menus opened at a button: its top edge, used to open the menu above it when it does not fit below. */
+  flipY?: number
 }
 
 /** Floating keyboard-navigable menu list; used for menubar dropdowns and context menus. */
-export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, label, nested, onDone, flipX, container }: MenuListProps) {
+export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, label, nested, onDone, flipX, flipY, container }: MenuListProps) {
   const ref = useRef<HTMLDivElement>(null)
   const baseId = useId()
   const itemId = (i: number) => `${baseId}-item-${i}`
@@ -92,9 +104,10 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
     const r = el.getBoundingClientRect()
     const fits = x + r.width <= window.innerWidth - 4
     const nx = fits ? x : flipX !== undefined ? flipX - r.width + 2 : window.innerWidth - r.width - 4
-    const ny = y + r.height > window.innerHeight - 4 ? Math.max(4, window.innerHeight - r.height - 4) : y
+    const below = y + r.height <= window.innerHeight - 4
+    const ny = below ? y : flipY !== undefined && flipY - r.height >= 4 ? flipY - r.height : Math.max(4, window.innerHeight - r.height - 4)
     setPos({ x: Math.max(4, nx), y: ny })
-  }, [x, y, flipX])
+  }, [x, y, flipX, flipY])
 
   // keep the keyboard-active item visible when the menu scrolls (tall menus)
   useEffect(() => {
@@ -105,7 +118,7 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
   useEffect(() => {
     if (autoFocus) {
       ref.current?.focus()
-      setActive(actionable.find(i => !at(i).disabled) ?? -1)
+      if (!lastInputPointer) setActive(actionable.find(i => !at(i).disabled) ?? -1)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -141,7 +154,8 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
     const enabled = actionable.filter(i => !at(i).disabled)
     if (!enabled.length) return
     const k = enabled.indexOf(active)
-    setActive(enabled[(k + d + enabled.length) % enabled.length])
+    // nothing highlighted yet (a mouse-opened menu): Down starts at the first item, Up at the last
+    setActive(k < 0 ? enabled[d > 0 ? 0 : enabled.length - 1] : enabled[(k + d + enabled.length) % enabled.length])
   }
 
   const list = (
@@ -250,7 +264,7 @@ const focusLost = () => { const a = document.activeElement; return !a || a === d
  * item, or by a click that leaves focus nowhere, focus returns to where it was or to the button, never to <body>.
  */
 export function useContextMenu() {
-  const [state, setState] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  const [state, setState] = useState<{ x: number; y: number; flipY?: number; items: MenuItem[] } | null>(null)
   const restore = useRef<HTMLElement | null>(null)
   const trigger = useRef<HTMLElement | null>(null)
   const setExpanded = (v: boolean) => {
@@ -275,7 +289,7 @@ export function useContextMenu() {
       const r = el.getBoundingClientRect()
       remember(el)
       setExpanded(true)
-      setState({ x: r.left + 12, y: r.bottom, items })
+      setState({ x: r.left + 12, y: r.bottom, flipY: r.top, items })
     },
     close() { setExpanded(false); setState(null) },
     isOpen: state !== null,
@@ -284,6 +298,7 @@ export function useContextMenu() {
         items={state.items}
         x={state.x}
         y={state.y}
+        flipY={state.flipY}
         label="Context menu"
         onClose={reason => {
           setState(null)

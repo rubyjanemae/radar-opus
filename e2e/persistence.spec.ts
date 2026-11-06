@@ -63,9 +63,9 @@ test.describe('restoring saved data', () => {
       await writeRaw(page, { 'state-v1': legacyState(extra) })
       await page.reload()
       await page.waitForSelector('.shell[data-ready]')
-      await expect(page.getByLabel('Status')).toContainText('rubrics')
+      await expect(page.getByLabel('Status')).toContainText('table of contents')
       // the patient survived; open the patients list to see it
-      await page.keyboard.press('Control+3')
+      await page.keyboard.press('ControlOrMeta+3')
       await expect(page.locator('.pt-list')).toContainText('Lovelace')
       await waitForSaved(page)
       const keys = await readKeys(page)
@@ -122,10 +122,10 @@ test('undo names what it undid and restores the active case', async ({ page }) =
   await page.locator('.rv-scroll').focus()
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('Insert')
-  await expect(page.locator('.toast').filter({ hasText: /Taken/ })).toBeVisible()
-  await page.keyboard.press('Control+z')
+  await expect(page.locator('.toasts [role=status]')).toContainText('Taken')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect(page.locator('.toast').filter({ hasText: /^Undone: Take/ })).toBeVisible()
-  await page.keyboard.press('Control+Shift+z')
+  await page.keyboard.press('ControlOrMeta+Shift+z')
   await expect(page.locator('.toast').filter({ hasText: /^Redone: Take/ })).toBeVisible()
   await expect(status).toBeVisible()
 })
@@ -135,8 +135,15 @@ test('toast actions are reachable with Alt+N and stay while focused', async ({ p
   await openApp(page)
   await page.locator('.rv-scroll').focus()
   await page.keyboard.press('ArrowDown')
+  // a take shows no card (RadarOpus); its Undo toast does
   await page.keyboard.press('Insert')
-  const toast = page.locator('.toast').filter({ hasText: /Taken/ })
+  await expect(page.locator('.toasts [role=status]')).toContainText('Taken')
+  await expect(page.locator('.toast').filter({ hasText: /Taken/ })).toHaveCount(0)
+  await page.evaluate(async () => {
+    const m = await (window as unknown as { __radarModules: { store: () => Promise<{ actions: { toast: (t: string, tone: string, a: { label: string; run: () => void }) => void } }> } }).__radarModules.store()
+    m.actions.toast('Bookmark removed', 'info', { label: 'Undo', run: () => {} })
+  })
+  const toast = page.locator('.toast').filter({ hasText: 'Bookmark removed' })
   await expect(toast).toBeVisible()
   await page.keyboard.press('Alt+n')
   await expect(toast.getByRole('button', { name: 'Undo' })).toBeFocused()
@@ -151,8 +158,9 @@ test('toast actions are reachable with Alt+N and stay while focused', async ({ p
 test('workspace restore asks first, rejects invalid files and can be undone', async ({ page }) => {
   await openApp(page)
   const menu = async () => {
-    await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'File', exact: true }).click()
-    await page.getByRole('menu').getByRole('menuitem', { name: 'Restore workspace backup…' }).click()
+    await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'Tools', exact: true }).click()
+    await page.getByRole('menu').getByRole('menuitem', { name: 'Database management' }).hover()
+    await page.getByRole('menuitem', { name: 'Restore workspace backup…' }).click()
   }
   // invalid file: error toast, nothing changes
   let chooser = page.waitForEvent('filechooser')
@@ -181,8 +189,9 @@ test('a restored workspace survives an immediate reload (no stale autosave lands
   await openApp(page)
   const file = { format: 'radar-opus-workspace', version: 1, state: legacyState({ settings: { theme: 'dark' } }) }
   const chooser = page.waitForEvent('filechooser')
-  await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'File', exact: true }).click()
-  await page.getByRole('menu').getByRole('menuitem', { name: 'Restore workspace backup…' }).click()
+  await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'Tools', exact: true }).click()
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Database management' }).hover()
+  await page.getByRole('menuitem', { name: 'Restore workspace backup…' }).click()
   await (await chooser).setFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) })
   await page.getByRole('dialog', { name: 'Restore workspace backup' }).getByRole('button', { name: 'Replace workspace' }).click()
   // the success toast appears only once the restored workspace is written
@@ -205,7 +214,7 @@ test('a second tab opens read-only and can take over without losing records', as
 
   // the writer tab creates a patient; the read-only tab follows its saves
   await page.bringToFront()
-  await page.keyboard.press('Control+Alt+N')
+  await page.keyboard.press('ControlOrMeta+Alt+N')
   const dialog = page.getByRole('dialog', { name: 'New patient' })
   await dialog.getByLabel('Last name').fill('Zebrafinch')
   await dialog.getByRole('button', { name: 'Create patient' }).click()
@@ -213,11 +222,11 @@ test('a second tab opens read-only and can take over without losing records', as
   await waitForSaved(page)
 
   await second.bringToFront()
-  await second.keyboard.press('Control+3')
+  await second.keyboard.press('ControlOrMeta+3')
   await expect(second.locator('.pt-list')).toContainText('Zebrafinch')
 
   // an edit made while read-only is kept in memory ...
-  await second.keyboard.press('Control+Alt+N')
+  await second.keyboard.press('ControlOrMeta+Alt+N')
   const dialog2 = second.getByRole('dialog', { name: 'New patient' })
   await dialog2.getByLabel('Last name').fill('Kestrel')
   await dialog2.getByRole('button', { name: 'Create patient' }).click()
@@ -229,7 +238,7 @@ test('a second tab opens read-only and can take over without losing records', as
   await expect(second.locator('.app-instance-banner')).toHaveCount(0)
   await expect(page.locator('.app-instance-banner')).toBeVisible()
   await waitForSaved(second)
-  await second.keyboard.press('Control+3')
+  await second.keyboard.press('ControlOrMeta+3')
   await expect(second.locator('.pt-list')).toContainText('Zebrafinch')
   await expect(second.locator('.pt-list')).toContainText('Kestrel')
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/readonly-after-handover.png` })
@@ -238,7 +247,7 @@ test('a second tab opens read-only and can take over without losing records', as
   await page.close()
   await second.reload()
   await second.waitForSelector('.shell[data-ready]')
-  await second.keyboard.press('Control+3')
+  await second.keyboard.press('ControlOrMeta+3')
   await expect(second.locator('.pt-list')).toContainText('Zebrafinch')
   await expect(second.locator('.pt-list')).toContainText('Kestrel')
 })
@@ -293,7 +302,7 @@ test('undo after a tab handover never discards the other tab\'s records', async 
   }, { a: caseA, o: other })
   await expect.poll(async () => (await check()).kestrel).toBe(true)
   expect((await check()).past).toContain('Take rubric')
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect(page.locator('.toast').filter({ hasText: 'Undone: Take rubric' })).toBeVisible()
   const after = await check()
   expect(after).toMatchObject({ notes: 'Notes written in tab B', cNotes: 'Consultation notes from tab B', rx: other.rx, kestrel: true, taken: false })
@@ -367,9 +376,10 @@ test('an unknown saved strategy falls back to the default and the label matches 
     const s = (await (window as unknown as Bridge).__radarModules.store()).useApp.getState()
     return { strategy: s.consultations.c1.analysis.strategy, params: s.consultations.c1.analysis.params ?? null, weights: s.consultations.c1.clipboards[0].symptoms.map(x => x.weight) }
   })
-  expect(st).toEqual({ strategy: 'sum-symptoms-degrees', params: null, weights: [3, 1] })
+  // an unknown strategy falls back to the default method, Prominence
+  expect(st).toEqual({ strategy: 'graded-prominence', params: null, weights: [3, 1] })
   // the analysis names the strategy that ranks
-  await expect(page.getByRole('button', { name: 'Analysis method: Sum of symptoms (sort degrees)' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('button', { name: 'Analysis method: Prominence' })).toBeVisible({ timeout: 20_000 })
   await expect(page.locator('.shell')).not.toContainText('magic-strategy')
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/strategy-fallback.png` })
 })
@@ -392,6 +402,12 @@ test('2,045 patients: one field edit autosaves only that record in a short task 
       for (let k = 0; k < 3; k++) cs.push({ id: `${id}-c${k}`, patientId: id, date: '2025-01-11', title: `Visit ${k}`, kind: 'follow-up', complaint: '', notes: '', assessment: '', clipboards: [{ id: `${id}-cb${k}`, name: 'Clipboard 1', color: '#2f6fdb', symptoms: [{ id: `${id}-s${k}`, rubrics: ['publicum:100'], combine: 'union', weight: 1, eliminatory: false, exclusive: false, group: null, causal: false, addedAt: now }] }], analysis: { strategy: 'sum-symptoms-degrees', clipboardIds: [`${id}-cb${k}`], remedyFilter: null, excludedRemedies: [], minCoverage: 0, limit: 30 }, prescriptions: [], createdAt: now, updatedAt: now })
     }
     actions.insertCaseData(ps as never, cs as never)
+  })
+  // the book records the rubric it opened on in the workspace Recent list after a one-second dwell;
+  // let that (unrelated) workspace write land before measuring what the patient edit writes
+  await page.waitForFunction(async () => {
+    const { useApp } = await (window as unknown as { __radarModules: import('../src/e2eBridge').E2EModules }).__radarModules.store()
+    return useApp.getState().recentRubrics.length > 0
   })
   await waitForSaved(page)
   const r = await page.evaluate(async () => {

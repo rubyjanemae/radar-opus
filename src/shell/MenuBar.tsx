@@ -1,16 +1,33 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Command as CommandIcon, Search, TextSearch } from 'lucide-react'
 import { flushSync } from 'react-dom'
 import { useCatalog } from '../data/CatalogContext'
-import { onCommandsChanged, formatKeys, isMac } from '../commands/registry'
-import { actions, useApp, selectActiveConsultation } from '../state/store'
+import { onCommandsChanged } from '../commands/registry'
+import { actions, useApp } from '../state/store'
 import { MenuList } from '../ui/Menu'
 import type { MenuCloseReason, MenuItem } from '../ui/Menu'
 import { isModalOpen } from '../ui/modal'
-import { buildMenus } from './menus'
-import { SaveIndicator } from './SaveIndicator'
-import { patientName } from '../features/patients/logic'
+import { buildMenus, HISTORY } from './menus'
+import { historyItems } from './history'
+import { tabTitle } from './tabTitle'
 import { focusDocument } from '../features/workspace/panes'
+
+/**
+ * Menu contents read when a menu opens: View › History lists the current history, and the Window menu
+ * lists one entry per open document after "Close all windows" (RadarOpus).
+ */
+function withLive(menu: { label: string; items: MenuItem[] }, catalog: ReturnType<typeof useCatalog>): MenuItem[] {
+  if (menu.label === 'View') return menu.items.map(it => ('submenu' in it && it.submenu === HISTORY ? { ...it, submenu: historyItems() } : it))
+  if (menu.label !== 'Window') return menu.items
+  const s = useApp.getState()
+  if (!s.tabs.length) return menu.items
+  const windows = s.tabs.map((t, i): MenuItem => {
+    const { title, subtitle } = tabTitle(t, catalog, s)
+    return { label: `${i + 1}. ${subtitle && subtitle !== title && t.kind !== 'repertory' ? `${title} - ${subtitle}` : title}`, checked: t.id === s.activeTabId, run: () => actions.activateTab(t.id) }
+  })
+  const at = menu.items.findIndex(it => 'command' in it && it.command === 'window.closeAll')
+  if (at < 0) return [...menu.items, { type: 'separator' }, ...windows]
+  return [...menu.items.slice(0, at + 1), { type: 'separator' }, ...windows, ...menu.items.slice(at + 1)]
+}
 
 /** Inside the menubar or one of its dropdowns (portalled to <body>). */
 const inMenus = (el: Element | null) => !!el?.closest('[data-menubar], .menu-list')
@@ -37,8 +54,6 @@ export const MenuBar = memo(function MenuBar() {
   const rootRef = useRef<HTMLDivElement>(null)
   /** Where focus was before the menubar was entered; menus give it back when they close. */
   const returnTo = useRef<HTMLElement | null>(null)
-  const consultation = useApp(selectActiveConsultation)
-  const patient = useApp(s => (consultation ? s.patients[consultation.patientId] : null))
 
   const remember = (from: Element | null = document.activeElement) => {
     if (from instanceof HTMLElement && from !== document.body && !inMenus(from)) returnTo.current = from
@@ -120,7 +135,6 @@ export const MenuBar = memo(function MenuBar() {
 
   return (
     <div className="menubar" data-menubar ref={rootRef}>
-      <div className="brand" aria-hidden="true"><span className="brand-mark">R</span><span className="brand-name">Radar Opus</span></div>
       <div className="menubar-measure" ref={measureRef} aria-hidden="true">
         {allMenus.map(m => <span key={m.label} className="menubar-item">{m.label}</span>)}
         <span className="menubar-item">…</span>
@@ -164,7 +178,7 @@ export const MenuBar = memo(function MenuBar() {
       {open !== null && rect && (
         <MenuList
           key={open}
-          items={menus[open].items}
+          items={withLive(menus[open], catalog)}
           x={rect.left}
           y={rect.bottom}
           label={menus[open].label}
@@ -178,21 +192,6 @@ export const MenuBar = memo(function MenuBar() {
         />
       )}
       <div className="menubar-spacer" />
-      {patient && consultation && (
-        <button className="menubar-case" onClick={() => actions.openTab({ kind: 'patient', patientId: patient.id })} title="Open active patient">
-          <span className="menubar-case-dot" aria-hidden="true" />
-          <span className="menubar-case-text">{patientName(patient)} <span className="menubar-case-sub">· {consultation.title}</span></span>
-        </button>
-      )}
-      <button className="menubar-search" onClick={() => actions.setCommandPalette(true)} aria-label="Search commands, rubrics and remedies">
-        <Search size={13} aria-hidden />
-        <span>Search rubrics, remedies, commands</span>
-        <span className="kbd">{formatKeys('Mod+K')}</span>
-      </button>
-      <SaveIndicator />
-      <button className="icon-btn" aria-label="Command palette" title={`Command palette (${formatKeys('Mod+K')})`} onClick={() => actions.setCommandPalette(true)}>
-        {isMac ? <CommandIcon size={14} aria-hidden /> : <TextSearch size={14} aria-hidden />}
-      </button>
     </div>
   )
 })

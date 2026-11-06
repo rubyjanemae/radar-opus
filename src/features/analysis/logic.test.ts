@@ -5,7 +5,7 @@ import type { RubricSource } from '../../engine/analysis'
 import type { AnalysisOptions, Clipboard, Symptom } from '../../engine/model'
 import { tinyRepertory } from '../repertory/fixtures'
 import { caseChapterCoverage, initialCompare, sphereOfAction } from './compare'
-import { analysisCsv, safeFileName, symptomFlags } from './export'
+import { analysisCsv, analysisText, safeFileName, symptomFlags } from './export'
 import { repertoriesOf } from './useAnalysis'
 
 const R: Record<string, [number, Grade][]> = { 't:1': [[1, 3], [2, 1]], 't:2': [[1, 4]], 't:6': [[1, 1], [3, 3]] }
@@ -31,6 +31,12 @@ describe('export', () => {
     expect(lines[9]).toBe('L t:2,Mind,1,A C,1,4,')
     expect(lines[10]).toBe('L t:6,Mind,0,0,2,1,')
     expect(csv.endsWith('\r\n')).toBe(true)
+  })
+  it('copy analysis: the same table as tab-separated text', () => {
+    const lines = analysisText(result, result.rows, meta).trim().split('\n')
+    expect(lines[0]).toBe('Analysis\tKeller, Anna · First\tStrategy\tSum of symptoms (sort degrees)\tIntensity\ton')
+    expect(lines[4]).toBe('Rank\t\t\t\t\t1\t(excluded by you)')
+    expect(lines[8]).toBe('MIND - fear, "night"\tMind\t2\tE\t2\t3\t1')
   })
   it('safe file names', () => {
     expect(safeFileName('Keller, Anna · First / 2026-09-29')).toBe('Keller-Anna-First-2026-09-29')

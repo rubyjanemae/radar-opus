@@ -93,3 +93,52 @@ describe('cardLayout', () => {
     expect(cardLayout(0).cols).toBe(1)
   })
 })
+
+describe('gridLines', () => {
+  const syms = [{ clipboardId: 'a' }, { clipboardId: 'a' }, { clipboardId: 'b' }]
+  it('puts a header line before each clipboard and numbers symptoms within it', async () => {
+    const { gridLines } = await import('./gridLayout')
+    expect(gridLines(syms, true)).toEqual([
+      { kind: 'clip', clipboardId: 'a', collapsed: false, count: 2 },
+      { kind: 'sym', i: 0, n: 1 }, { kind: 'sym', i: 1, n: 2 },
+      { kind: 'clip', clipboardId: 'b', collapsed: false, count: 1 },
+      { kind: 'sym', i: 2, n: 1 },
+    ])
+  })
+  it('hides the symptoms of a collapsed clipboard, keeping its header', async () => {
+    const { gridLines } = await import('./gridLayout')
+    expect(gridLines(syms, true, new Set(['a']))).toEqual([
+      { kind: 'clip', clipboardId: 'a', collapsed: true, count: 2 },
+      { kind: 'clip', clipboardId: 'b', collapsed: false, count: 1 },
+      { kind: 'sym', i: 2, n: 1 },
+    ])
+  })
+  it('an expanded symptom is followed by its detail line', async () => {
+    const { gridLines } = await import('./gridLayout')
+    const withIds = [{ clipboardId: 'a', symptom: { id: 's1' } }, { clipboardId: 'a', symptom: { id: 's2' } }]
+    expect(gridLines(withIds, true, new Set(), new Set(['s1']))).toEqual([
+      { kind: 'clip', clipboardId: 'a', collapsed: false, count: 2 },
+      { kind: 'sym', i: 0, n: 1 }, { kind: 'info', i: 0 }, { kind: 'sym', i: 1, n: 2 },
+    ])
+    // folded clipboards hide the detail lines too; the dock never draws them
+    expect(gridLines(withIds, true, new Set(['a']), new Set(['s1'])).map(l => l.kind)).toEqual(['clip'])
+    expect(gridLines(withIds, false, new Set(), new Set(['s1'])).map(l => l.kind)).toEqual(['sym', 'sym'])
+  })
+  it('without headers: one line per symptom', async () => {
+    const { gridLines } = await import('./gridLayout')
+    expect(gridLines(syms, false).map(l => l.kind)).toEqual(['sym', 'sym', 'sym'])
+  })
+})
+
+describe('fitScore', () => {
+  it('keeps up to four characters and shortens larger values', async () => {
+    const { fitScore } = await import('./gridLayout')
+    expect(fitScore('160')).toBe('160')
+    expect(fitScore('45.5')).toBe('45.5')
+    expect(fitScore('123.4')).toBe('123')
+    expect(fitScore('1234')).toBe('1234')
+    expect(fitScore('12345')).toBe('12k')
+    expect(fitScore('5678.9')).toBe('5.7k')
+    expect(fitScore('CI 12')).toBe('CI')
+  })
+})

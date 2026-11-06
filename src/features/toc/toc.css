@@ -1,0 +1,334 @@
+/* Table of contents panel (RadarOpus "Toc") and the chapter icon set. Prefixes: toc-, chi-. */
+
+:root {
+  --toc-bg: #ffffff;
+  --toc-head-bg: #f2e0d7;
+  --toc-field-bg: #ffffff;
+  --toc-field-border: #e3cfc6;
+  --toc-text: #111111;
+  --toc-text-2: #5b4f4c;
+  --toc-twist: #b4aeb4;
+  --toc-cursor: #b9a9a6;
+  --toc-cursor-bg: transparent;
+  --toc-rule: #a78e88;
+  --toc-tile-ring: #8f2a1c;
+  --toc-check-border: #999999;
+  --toc-check-bg: #f4f4f4;
+  --toc-check-on: #3a78f2;
+  --toc-bar-track: #f4f3f4;
+  --toc-bar-thumb: #ffffff;
+  --toc-bar-line: #c9c4c6;
+  --toc-bar-arrow: #8a8587;
+  /* a pale peach outline that barely stands out from the white panel (RadarOpus) */
+  --toc-star: #e6c7a0;
+  --toc-book: #3c83b8;
+  --toc-book-spine: #5d6670;
+  --toc-book-pages: #c3d3e3;
+  --toc-tree: #4c9a6a;
+  --toc-tree-trunk: #8a6a4c;
+  --toc-flag-blue: #26418f;
+  --toc-flag-red: #d0283a;
+  --toc-flag-white: #ffffff;
+  --toc-flag-black: #1c1c1c;
+  --toc-flag-gold: #f2c318;
+  /* the header glyphs are solid: a dark grey double cog, a mid grey ringed "?", two blue refresh arrows */
+  --toc-hbtn: #7a716f;
+  --toc-help: #948885;
+  --toc-refresh: #2f74c0;
+  --toc-flag-edge: rgba(0, 0, 0, .12);
+  --toc-hbtn-hover: rgba(120, 70, 50, .12);
+
+  /* chapter tiles: two gradient stops and the glyph colour per body system */
+  --chi-fg: #ffffff;
+  --chi-neuro-a: #9a8be6; --chi-neuro-b: #5d4fc0;
+  --chi-senses-a: #7fb6ef; --chi-senses-b: #3d78c9;
+  --chi-oral-a: #f3a3a8; --chi-oral-b: #cf5b6c;
+  --chi-digest-a: #f5c27a; --chi-digest-b: #d9863a;
+  --chi-urinary-a: #85d4d8; --chi-urinary-b: #34999f;
+  --chi-genital-a: #f0a2cf; --chi-genital-b: #c3569a;
+  --chi-resp-a: #9ed2f2; --chi-resp-b: #4b9bd3;
+  --chi-circ-a: #f2908a; --chi-circ-b: #c63b3b;
+  --chi-motor-a: #a9d58f; --chi-motor-b: #5e9f48;
+  --chi-fever-a: #f8ae86; --chi-fever-b: #dd6a3b;
+  --chi-skin-a: #e7c4a4; --chi-skin-b: #b78358;
+  --chi-general-a: #b3bccb; --chi-general-b: #6c7a91;
+  --chi-shine: rgba(255, 255, 255, .35);
+  --chi-edge: rgba(0, 0, 0, .12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --toc-bg: #1d2127;
+    --toc-head-bg: #33292a;
+    --toc-field-bg: #15181d;
+    --toc-field-border: #4a3d3b;
+    --toc-text: #e3e6eb;
+    --toc-text-2: #b3a9a6;
+    --toc-twist: #7a7479;
+    --toc-cursor: #8a7570;
+    --toc-rule: #5a4540;
+    --toc-tile-ring: #ff9d8f;
+    --toc-check-border: #6b6668;
+    --toc-check-bg: #25292f;
+    --toc-check-on: #6d9cf5;
+    --toc-bar-track: #22262c;
+    --toc-bar-thumb: #3a3f47;
+    --toc-bar-line: #474c54;
+    --toc-bar-arrow: #9a959a;
+    --toc-hbtn: #c2b8b5;
+    --toc-help: #a89e9b;
+    --toc-refresh: #5f97cc;
+    --toc-book-spine: #8b96a3;
+    --toc-book-pages: #c9d6e2;
+  --toc-flag-edge: rgba(255, 255, 255, .45);
+    --toc-star: #9c8268;
+    --toc-hbtn-hover: rgba(255, 220, 210, .1);
+    --chi-shine: rgba(255, 255, 255, .16);
+    --chi-edge: rgba(0, 0, 0, .35);
+    --chi-neuro-a: #7465c9; --chi-neuro-b: #3f348f;
+    --chi-senses-a: #4f88c9; --chi-senses-b: #2a5694;
+    --chi-oral-a: #c86c78; --chi-oral-b: #8e3647;
+    --chi-digest-a: #c98f45; --chi-digest-b: #8f5822;
+    --chi-urinary-a: #3fa3a8; --chi-urinary-b: #23676c;
+    --chi-genital-a: #c26aa0; --chi-genital-b: #82346a;
+    --chi-resp-a: #5d9fcf; --chi-resp-b: #2f6696;
+    --chi-circ-a: #c95a55; --chi-circ-b: #8a2626;
+    --chi-motor-a: #74a85d; --chi-motor-b: #3f6e30;
+    --chi-fever-a: #cf7a4f; --chi-fever-b: #924220;
+    --chi-skin-a: #b8916e; --chi-skin-b: #7a5537;
+    --chi-general-a: #7d8799; --chi-general-b: #4a5466;
+  }
+}
+:root[data-theme="dark"] {
+  --toc-bg: #1d2127;
+  --toc-head-bg: #33292a;
+  --toc-field-bg: #15181d;
+  --toc-field-border: #4a3d3b;
+  --toc-text: #e3e6eb;
+  --toc-text-2: #b3a9a6;
+  --toc-twist: #7a7479;
+  --toc-cursor: #8a7570;
+  --toc-rule: #5a4540;
+  --toc-tile-ring: #ff9d8f;
+  --toc-check-border: #6b6668;
+  --toc-check-bg: #25292f;
+  --toc-check-on: #6d9cf5;
+  --toc-bar-track: #22262c;
+  --toc-bar-thumb: #3a3f47;
+  --toc-bar-line: #474c54;
+  --toc-bar-arrow: #9a959a;
+  --toc-hbtn: #c2b8b5;
+  --toc-help: #a89e9b;
+  --toc-refresh: #5f97cc;
+  --toc-book-spine: #8b96a3;
+  --toc-book-pages: #c9d6e2;
+  --toc-flag-edge: rgba(255, 255, 255, .45);
+  --toc-star: #9c8268;
+  --toc-hbtn-hover: rgba(255, 220, 210, .1);
+  --chi-shine: rgba(255, 255, 255, .16);
+  --chi-edge: rgba(0, 0, 0, .35);
+  --chi-neuro-a: #7465c9; --chi-neuro-b: #3f348f;
+  --chi-senses-a: #4f88c9; --chi-senses-b: #2a5694;
+  --chi-oral-a: #c86c78; --chi-oral-b: #8e3647;
+  --chi-digest-a: #c98f45; --chi-digest-b: #8f5822;
+  --chi-urinary-a: #3fa3a8; --chi-urinary-b: #23676c;
+  --chi-genital-a: #c26aa0; --chi-genital-b: #82346a;
+  --chi-resp-a: #5d9fcf; --chi-resp-b: #2f6696;
+  --chi-circ-a: #c95a55; --chi-circ-b: #8a2626;
+  --chi-motor-a: #74a85d; --chi-motor-b: #3f6e30;
+  --chi-fever-a: #cf7a4f; --chi-fever-b: #924220;
+  --chi-skin-a: #b8916e; --chi-skin-b: #7a5537;
+  --chi-general-a: #7d8799; --chi-general-b: #4a5466;
+}
+
+/* ───── chapter icons ───── */
+.chi {
+  --a: var(--chi-general-a); --b: var(--chi-general-b);
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  border-radius: 12.5%;
+  color: var(--chi-fg);
+  background:
+    radial-gradient(120% 70% at 30% 0%, var(--chi-shine), transparent 60%),
+    linear-gradient(160deg, var(--a), var(--b));
+  box-shadow: inset 0 0 0 1px var(--chi-edge);
+}
+.chi svg { display: block; filter: drop-shadow(0 .5px .5px rgba(0, 0, 0, .25)); }
+.chi .chi-fill { fill: currentColor; stroke: none; }
+.chi-neuro { --a: var(--chi-neuro-a); --b: var(--chi-neuro-b); }
+.chi-senses { --a: var(--chi-senses-a); --b: var(--chi-senses-b); }
+.chi-oral { --a: var(--chi-oral-a); --b: var(--chi-oral-b); }
+.chi-digest { --a: var(--chi-digest-a); --b: var(--chi-digest-b); }
+.chi-urinary { --a: var(--chi-urinary-a); --b: var(--chi-urinary-b); }
+.chi-genital { --a: var(--chi-genital-a); --b: var(--chi-genital-b); }
+.chi-resp { --a: var(--chi-resp-a); --b: var(--chi-resp-b); }
+.chi-circ { --a: var(--chi-circ-a); --b: var(--chi-circ-b); }
+.chi-motor { --a: var(--chi-motor-a); --b: var(--chi-motor-b); }
+.chi-fever { --a: var(--chi-fever-a); --b: var(--chi-fever-b); }
+.chi-skin { --a: var(--chi-skin-a); --b: var(--chi-skin-b); }
+.chi-general { --a: var(--chi-general-a); --b: var(--chi-general-b); }
+
+/* ───── panel ─────
+   Measured on RadarOpus at a 1470 px window (CSS px from the panel's left edge): header 40 tall,
+   label at 10, field 149 wide at 154; document rows: checkbox 15..31, twist 45..51, star 61..73,
+   book 82..93 (62..73 without the star), flag 104..119, label 130; chapter tiles 32 px at a 54 px
+   column pitch from 33; footer rule, 27 px footer, then a permanent horizontal scrollbar. */
+.toc {
+  display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0;
+  background: var(--toc-bg); color: var(--toc-text);
+  font-family: Verdana, Geneva, "DejaVu Sans", sans-serif; font-size: 12px;
+  border-radius: 8px; overflow: hidden;
+  container: toc / inline-size;
+}
+/* RadarOpus rounds the panel by ~8 px: the shell's generic 5/6 px pane rounding is overridden for the
+   pane that holds the table of contents (its white background would otherwise show in the corners) */
+.pane-left > .toc.toc, .pane-left:has(> .toc:first-child) { border-radius: 8px; }
+.toc-head {
+  display: flex; align-items: center; flex: none;
+  height: 40px; padding: 0 12px 0 10px; box-sizing: border-box;
+  background: var(--toc-head-bg);
+}
+/* a narrow panel shortens the label first, so the field and both buttons stay inside the panel */
+.toc-search-label {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--toc-text); font-size: 12px;
+}
+.toc-search {
+  flex: 0 1 149px; width: 149px; min-width: 60px; height: 22px; margin-left: 4px; padding: 0 10px; box-sizing: border-box;
+  font: inherit; color: var(--toc-text);
+  background: var(--toc-field-bg); border: 0; border-radius: 11px; outline: none;
+}
+.toc-search:focus-visible { box-shadow: 0 0 0 2px var(--focus); }
+.toc-search::-webkit-search-cancel-button { cursor: pointer; }
+.toc-hbtns { display: inline-flex; gap: 7px; margin-left: auto; padding-left: 4px; flex: none; }
+.toc-hbtn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px;
+  background: transparent; color: var(--toc-hbtn); cursor: pointer;
+}
+.toc-hbtn.toc-help { color: var(--toc-help); }
+.toc-hglyph { display: block; }
+.toc-hglyph-arrows { fill: var(--toc-refresh); stroke: var(--toc-refresh); stroke-linejoin: round; }
+/* the placeholder names the field only once a narrow panel has no room left for the label */
+.toc-search::placeholder { color: transparent; }
+@container toc (max-width: 330px) {
+  .toc-search-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .toc-search { flex: 1 1 auto; width: auto; margin-left: 0; }
+  .toc-search::placeholder { color: var(--text-3, var(--toc-text-2)); }
+}
+.toc-hbtn:hover { background: var(--toc-hbtn-hover); }
+.toc-hbtn:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
+
+/* the tree scrolls vertically itself; its horizontal scroll is driven by the bar under the footer */
+.toc-tree {
+  flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; outline: none;
+  padding: 0 0 6px;
+  container: toctree / inline-size;
+}
+/* RadarOpus draws no focus rule on the tree: the cursor box shows where the keyboard is */
+.toc .toc-tree:focus-visible { outline: none; box-shadow: none; }
+.toc-row {
+  display: flex; align-items: center;
+  height: 18px; margin: 0 0 2px; padding-right: 8px;
+  white-space: nowrap; cursor: default; user-select: none;
+  border: 1px solid transparent; border-radius: 3px;
+  width: max-content; box-sizing: border-box;
+}
+/* section rows are a little shorter, as in RadarOpus */
+.toc-row.toc-section { height: 18px; margin-bottom: 1px; margin-left: 2px; min-width: calc(100% - 2px); }
+.toc-row.toc-doc { margin-left: 14px; min-width: calc(100% - 14px); }
+.toc-row.toc-group { margin-left: 14px; padding-left: 48px; min-width: calc(100% - 14px); }
+.toc-row.cursor { border-color: var(--toc-cursor); }
+.toc-row.menu-target { background: var(--bg-hover); }
+.toc-label { color: var(--toc-text); }
+.toc-section > .toc-label { margin-left: 6px; }
+.toc-doc > .toc-label { margin-left: 9px; }
+
+/* checkbox column (documents) */
+.toc-check {
+  flex: none; position: relative; width: 17px; height: 16px; margin-left: 1px; box-sizing: border-box;
+  border: 1.5px solid var(--toc-check-border); border-radius: 4px; background: var(--toc-check-bg); cursor: pointer;
+}
+.toc-check.on { border-color: var(--toc-check-on); background: var(--toc-check-on); }
+.toc-check.on::after {
+  content: ""; position: absolute; left: 4.5px; top: 1px; width: 4px; height: 8px;
+  border: solid var(--toc-bg); border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+
+/* grey disclosure triangle */
+.toc-twist { flex: none; width: 10px; height: 14px; position: relative; cursor: pointer; }
+.toc-twist::before {
+  content: ""; position: absolute; left: 2px; top: 3px;
+  border-style: solid; border-width: 4px 0 4px 6px; border-color: transparent transparent transparent var(--toc-twist);
+}
+.toc-twist.open::before { left: 1px; top: 5px; border-width: 6px 4px 0 4px; border-color: var(--toc-twist) transparent transparent transparent; }
+.toc-twist-gap { flex: none; width: 10px; }
+.toc-doc > .toc-twist { margin-left: 10px; }
+
+.toc-default { display: inline-flex; flex: none; margin-left: 8px; }
+.toc-star { fill: none; stroke: var(--toc-star); stroke-width: 1.2; stroke-linejoin: round; }
+.toc-book { flex: none; margin-left: 9px; }
+/* the tree glyph is 13 px wide (the book 12): 8 px in front keeps the labels of both kinds aligned */
+.toc-treeic { flex: none; margin-left: 8px; }
+.toc-default + .toc-book { margin-left: 7px; }
+.toc-book-cover { fill: var(--toc-book); }
+.toc-book-spine { fill: var(--toc-book-spine); }
+.toc-book-pages { fill: var(--toc-book-pages); }
+.toc-treeic-crown { fill: var(--toc-tree); }
+.toc-treeic-trunk { fill: var(--toc-tree-trunk); }
+.toc-flag { flex: none; margin-left: 10px; border-radius: 1px; box-shadow: 0 0 0 .5px var(--toc-flag-edge); }
+.toc-flag-code {
+  display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 13px;
+  font-size: 8px; font-weight: 700; color: var(--toc-text-2); background: var(--bg-sunken);
+}
+.toc-flag .f-blue { fill: var(--toc-flag-blue); }
+.toc-flag .f-red { fill: var(--toc-flag-red); }
+.toc-flag .f-gold { fill: var(--toc-flag-gold); }
+.toc-flag .f-black { fill: var(--toc-flag-black); }
+.toc-flag .s-white { stroke: var(--toc-flag-white); }
+.toc-flag .s-red { stroke: var(--toc-flag-red); }
+
+/* chapter grid: 32 px tiles at a 54 px column pitch (362 px block), whatever the panel width; a
+   narrower panel scrolls the tree sideways (HScrollBar) as RadarOpus does. The cursor outlines the block. */
+.toc-grid {
+  --tile: 32px;
+  display: grid; grid-template-columns: repeat(7, var(--tile)); justify-content: space-between; row-gap: 3px;
+  width: 362px; margin: 0 6px 0 30px; padding: 0 2px; box-sizing: border-box;
+  border: 1px solid transparent; border-radius: 3px;
+}
+.toc-grid.cursor { border-color: var(--toc-cursor); }
+.toc-tile {
+  /* a plain arrow and no hover change over a tile, as in RadarOpus */
+  width: var(--tile); height: var(--tile); border-radius: 4px; cursor: default;
+  outline: 2px solid transparent; outline-offset: 1px;
+}
+.toc-tile > .chi { width: 100% !important; height: 100% !important; }
+.toc-tile > .chi > svg { width: 84%; height: 84%; }
+.toc-tree:focus .toc-tile.cursor { outline-color: var(--toc-tile-ring); }
+.toc-tile.menu-target { outline-color: var(--toc-tile-ring); }
+
+.toc-note { padding: 2px 0 2px 62px; height: 20px; box-sizing: border-box; color: var(--toc-text-2); font-style: italic; }
+.toc-empty { padding: 8px 12px; color: var(--toc-text-2); }
+
+.toc-foot {
+  flex: none; height: 27px; line-height: 26px; padding: 0 6px; box-sizing: border-box;
+  border-top: 1px solid var(--toc-rule); color: var(--toc-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* permanent horizontal scrollbar with arrow buttons (HScrollBar) */
+.toc-hbar {
+  flex: none; display: flex; height: 15px; box-sizing: border-box;
+  background: var(--toc-bar-track); border-top: 1px solid var(--toc-bar-line); user-select: none;
+}
+.toc-hbar-btn { flex: none; width: 12px; position: relative; }
+.toc-hbar-btn:hover, .toc-hbar-btn:active { background: var(--toc-hbtn-hover); }
+.toc-hbar-btn::before {
+  content: ""; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  border-style: solid; border-width: 3.5px 0 3.5px 4px; border-color: transparent transparent transparent var(--toc-bar-arrow);
+}
+.toc-hbar-btn.left::before { border-width: 3.5px 4px 3.5px 0; border-color: transparent var(--toc-bar-arrow) transparent transparent; }
+.toc-hbar-track { flex: 1; min-width: 0; position: relative; border-left: 1px solid var(--toc-bar-line); border-right: 1px solid var(--toc-bar-line); }
+.toc-hbar-thumb {
+  position: absolute; top: 0; bottom: 0; left: 0;
+  background: var(--toc-bar-thumb); border-right: 1px solid var(--toc-bar-line);
+}
+.toc-hbar-thumb:hover { background: color-mix(in srgb, var(--toc-bar-thumb) 85%, var(--toc-bar-line)); }

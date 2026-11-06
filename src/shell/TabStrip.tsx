@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { BookOpen, Library, BarChart3, BookText, FlaskConical, Users, User, Search, Network, Pin, X, Plus, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react'
+import { Library, BookText, FlaskConical, Users, User, Search, Network, Pin, X, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react'
 import { useCatalog } from '../data/CatalogContext'
 import { actions, useApp } from '../state/store'
 import type { NewTab, Tab } from '../state/workspace'
@@ -11,8 +11,34 @@ import type { MenuItem } from '../ui/Menu'
 import { splitTabTitle, tabTitle } from './tabTitle'
 import { cancelDocumentFocus, focusActiveDocument, focusDocumentWhenReady } from './TabHost'
 
+/** A repertory window's icon: a solid book, cover and light spine (an original glyph; lucide's book is line art). */
+function SolidBook({ className }: { size?: number; className?: string; 'aria-hidden'?: boolean }) {
+  return (
+    <svg width="12" height="15" viewBox="0 0 12 15" className={`${className ?? ''} tab-book`} aria-hidden="true">
+      <rect className="tab-book-cover" x="0.5" y="0.5" width="11" height="14" rx="1.5" />
+      <rect className="tab-book-spine" x="1" y="1" width="2" height="13" rx="0.5" />
+      <rect className="tab-book-edge" x="0.5" y="0.5" width="11" height="14" rx="1.5" />
+    </svg>
+  )
+}
+
+/** The analysis window's icon: pale amber bars with blue caps on a grey base (an original glyph). */
+function AnalysisGlyph({ className }: { size?: number; className?: string; 'aria-hidden'?: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" className={`${className ?? ''} tab-chart`} aria-hidden="true">
+      {[[1.5, 4], [5, 1.5], [8.5, 6], [12, 8]].map(([x, y]) => (
+        <g key={x}>
+          <rect className="tab-chart-bar" x={x - 1.2} y={y} width="2.4" height={12.5 - y} />
+          <rect className="tab-chart-cap" x={x - 1.2} y={y} width="2.4" height="1.6" />
+        </g>
+      ))}
+      <rect className="tab-chart-base" x="0" y="12.5" width="14" height="1.5" />
+    </svg>
+  )
+}
+
 const ICONS = {
-  repertory: BookOpen, repertories: Library, analysis: BarChart3, 'materia-medica': BookText, remedy: FlaskConical,
+  repertory: SolidBook, repertories: Library, analysis: AnalysisGlyph, 'materia-medica': BookText, remedy: FlaskConical,
   patients: Users, patient: User, search: Search, families: Network,
 } as const
 
@@ -87,12 +113,27 @@ export const TabStrip = memo(function TabStrip() {
     return () => ro.disconnect()
   }, [measure])
 
+  // a switch made in the strip itself (a click, the arrow keys) handles focus on its own
+  const fromStrip = useRef(false)
+  const markFromStrip = () => { fromStrip.current = true; setTimeout(() => { fromStrip.current = false }, 0) }
   // keep the active tab in view when it changes (keyboard switching, a newly opened tab)
   useEffect(() => {
     if (!activeId) return
+    // another document became active (a toolbar button, a menu, a command) while focus sat on a tab that is
+    // now inactive (left there by a closed tab menu): the keyboard continues in the new document
+    const a = document.activeElement
+    const onTab = a instanceof HTMLElement ? a.closest<HTMLElement>('[data-tab-id]') : null
+    if (!fromStrip.current && onTab && listRef.current?.contains(onTab) && onTab.dataset.tabId !== activeId) focusDocumentWhenReady()
     const el = listRef.current?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(activeId)}"]`)
     el?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [activeId, tabs.length])
+  // the scroll arrows appearing (or going) narrow the list: bring the active tab back into view
+  const overflowing = overflow.left || overflow.right
+  useLayoutEffect(() => {
+    if (!overflowing || !activeId) return
+    listRef.current?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(activeId)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overflowing])
 
   const scrollBy = (dir: -1 | 1) => {
     const el = listRef.current
@@ -136,6 +177,8 @@ export const TabStrip = memo(function TabStrip() {
       )}
       <div className="tabstrip-list" role="tablist" aria-label="Open documents" ref={listRef}
         onScroll={measure}
+        onMouseDownCapture={markFromStrip}
+        onKeyDownCapture={markFromStrip}
         onWheel={e => { if (e.deltaY && !e.deltaX && listRef.current) listRef.current.scrollLeft += e.deltaY }}
         onKeyDown={e => {
           if (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'Home' || e.key === 'End') {
@@ -143,7 +186,7 @@ export const TabStrip = memo(function TabStrip() {
             cancelDocumentFocus()
             if (e.key === 'Home' || e.key === 'End') { const t = tabs[e.key === 'Home' ? 0 : tabs.length - 1]; if (t) actions.activateTab(t.id) }
             else actions.cycleTab(e.key === 'ArrowRight' ? 1 : -1)
-            requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus())
+            setTimeout(() => listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus(), 0)
           }
         }}
       >
@@ -161,10 +204,6 @@ export const TabStrip = memo(function TabStrip() {
           </button>
         </>
       )}
-      <button className="tab-new icon-btn" aria-label="New repertory tab" title="New repertory tab"
-        onClick={() => actions.openTab({ kind: 'repertory', repertory: useApp.getState().settings.defaultRepertory, rubric: 0, back: [], forward: [] }, { reuse: false })}>
-        <Plus size={14} aria-hidden />
-      </button>
       {cm.element}
       {all.element}
     </div>
@@ -191,7 +230,8 @@ const TabItem = memo(function TabItem({ tab, index: i, active, dropTarget, ctx }
   // a longer or shorter title can start or end the strip's overflow
   useLayoutEffect(() => { ctx.titleChanged() }, [key, ctx])
   const Icon = ICONS[t.kind]
-  const showSub = !!subtitle && subtitle !== title && t.kind !== 'repertory'
+  // a window's title strip shows its icon and title only (RadarOpus); the subtitle is for assistive technology and the tooltip
+  const showSub = !!subtitle && subtitle !== title
   return (
     <div
       data-tab-id={t.id}
@@ -218,19 +258,23 @@ const TabItem = memo(function TabItem({ tab, index: i, active, dropTarget, ctx }
         tabIndex={active ? 0 : -1}
         onKeyDown={e => {
           if (e.key === 'Delete') { e.preventDefault(); actions.closeTab(t.id) }
-          if (e.key === 'Enter' && active) { e.preventDefault(); focusActiveDocument() }
+          // Enter (or Space) activates the window and continues in its document
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            if (active) { if (!focusActiveDocument()) focusDocumentWhenReady() } else { actions.activateTab(t.id); focusDocumentWhenReady() }
+          }
           if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') { e.preventDefault(); ctx.openAt(e.currentTarget, ctx.menu(t)) }
         }}
       >
-        <Icon size={13} className="tab-icon" aria-hidden />
+        <Icon size={14} className="tab-icon" aria-hidden />
         <TabTitleText kind={t.kind} title={title} />
-        {showSub && <span className="tab-sub">{subtitle}</span>}
+        {showSub && <span className="tab-sub sr-only"> {subtitle}</span>}
         {t.pinned && <Pin size={11} className="tab-pin" aria-label="Pinned" />}
       </div>
       {/* mouse affordance only: the keyboard closes the focused tab with Delete or Alt+W */}
       {!t.pinned && (
         <button className="tab-close" tabIndex={-1} aria-hidden="true" title={`Close ${title}`} onMouseDown={e => e.stopPropagation()} onClick={() => actions.closeTab(t.id)}>
-          <X size={12} aria-hidden />
+          <X size={9} strokeWidth={2.5} aria-hidden />
         </button>
       )}
     </div>

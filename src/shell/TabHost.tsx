@@ -50,6 +50,9 @@ function DocumentSkeleton() {
 export const activeDocumentElement = (root: Document = document) =>
   root.querySelector<HTMLElement>(`#${TAB_PANEL_ID} > .tab-doc[data-active]`)
 
+/** Focus still sits in a document that was just hidden (the browser has not moved it to <body> yet). */
+const focusInHiddenDocument = () => !!document.activeElement?.closest(`#${TAB_PANEL_ID} > .tab-doc:not([data-active])`)
+
 const visible = (el: HTMLElement) => el.getClientRects().length > 0 && !el.closest('[inert]')
 
 /**
@@ -81,36 +84,56 @@ export function focusActiveDocument(): HTMLElement | null {
   return focusDocument()
 }
 
-let pending = 0
+/**
+ * The current focusDocumentWhenReady run: a newer run or cancelDocumentFocus ends the older one.
+ * It polls on a timer, not on animation frames: a browser draws no frames while nothing changes on
+ * screen (a headless or occluded window), and the wait must not depend on that.
+ */
+let run = 0
 /** Stop a pending focusDocumentWhenReady (keyboard navigation in the tab strip keeps focus on the tabs). */
-export function cancelDocumentFocus() { cancelAnimationFrame(pending) }
+export function cancelDocumentFocus() { run++ }
+
+/** The element a pending run should focus in its document (see focusDocumentWhenReady's `prefer`). */
+let preferred: { tabId: string | null; el: HTMLElement } | null = null
+
+const POLL_MS = 16
+/** How long a rendered document without its main list yet waits for it, and how long a run lasts. */
+const MAIN_WAIT_MS = 500, GIVE_UP_MS = 1500
 
 /**
  * Move focus into the visible document as soon as it has rendered (its code or its data may still be
  * loading): its main list when that appears within about half a second, else its best focus target.
- * Gives up when something else takes focus or another tab is activated meanwhile, or after about a second.
+ * Gives up when something else takes focus or another tab is activated meanwhile, or after 1.5 s.
+ * `prefer`: an element of that document to focus instead (where the keyboard was when it was left).
  */
-export function focusDocumentWhenReady() {
-  cancelAnimationFrame(pending)
+export function focusDocumentWhenReady(prefer: HTMLElement | null = null) {
+  const mine = ++run
   const start = document.activeElement
   const tabId = useApp.getState().activeTabId
-  let frames = 0
+  // a later run for the same document (the tab host's own, on activation) keeps the preferred element
+  if (prefer) preferred = { tabId, el: prefer }
+  else if (preferred?.tabId !== tabId) preferred = null
+  const t0 = performance.now()
   const tick = () => {
+    if (mine !== run) return
     const a = document.activeElement
-    if ((!focusIsLost() && a !== start) || useApp.getState().activeTabId !== tabId) return
-    frames++
+    if ((!focusIsLost() && !focusInHiddenDocument() && a !== start) || useApp.getState().activeTabId !== tabId) return
+    const waited = performance.now() - t0
     const el = activeDocumentElement()
     const ready = el && !el.querySelector('.doc-skeleton') && el.childElementCount > 0 && el.textContent !== ''
     if (ready) {
-      // results that load after the view (a search, an analysis) are worth a few frames' wait
+      const want = preferred?.tabId === tabId ? preferred.el : null
+      preferred = null
+      if (want && want.isConnected && el.contains(want) && visible(want)) { want.focus({ preventScroll: true }); return }
+      // results that load after the view (a search, an analysis) are worth a short wait
       const main = mainFocusTarget(el)
       if (main) { main.focus({ preventScroll: true }); return }
-      if (frames >= 30) { focusDocument(); return }
+      if (waited >= MAIN_WAIT_MS) { focusDocument(); return }
     }
-    if (frames < 60) pending = requestAnimationFrame(tick)
+    if (waited < GIVE_UP_MS) setTimeout(tick, POLL_MS)
     else if (focusIsLost()) focusDocument()
   }
-  pending = requestAnimationFrame(tick)
+  setTimeout(tick, 0)
 }
 
 /**
@@ -158,7 +181,7 @@ export function TabHost({ tabId }: { tabId: string }) {
 
   // runs on mount and each time <Activity> shows the document again
   useEffect(() => {
-    if (focusIsLost()) focusDocumentWhenReady()
+    if (focusIsLost() || focusInHiddenDocument()) focusDocumentWhenReady()
   }, [tabId])
 
   if (!tab) return null

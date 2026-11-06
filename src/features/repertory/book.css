@@ -1,0 +1,362 @@
+/* ───────── book view (rv-): the RadarOpus "Full repertory" document ─────────
+ * Colours are book tokens (--rb-*), light and dark; metrics follow estimate.ts BOOK
+ * (text starts 47px into a column and keeps 40px from its right edge, the selection band at 34px (28px in column 2),
+ * 10px per level, 68px chapter heading). */
+.rv {
+  --rb-paper: #fff;
+  --rb-ink: #000;
+  --rb-tools: #f4dfd8;
+  --rb-tools-line: #e2c4b9;
+  --rb-path-rule: #7c5c52;
+  --rb-scroll-track: #f4f4f4;
+  --rb-scroll-line: #dcdcdc;
+  --rb-scroll-thumb: #fff;
+  --rb-scroll-thumb-line: #c0b9b8;
+  --rb-scroll-arrow: #5a5a5a;
+  --rb-hand-cuff: #7d7a7b;
+  --rb-tools-ink: #5b4a44;
+  --rb-on: #f3a59b;
+  --rb-tools-quiet: #8a8483;
+  --rb-views-ink: #3a3a3a;
+  --rb-views-label: #3d2f2b;
+  --rb-views-caret: #111;
+  --rb-hover: #ecc9bd;
+  --rb-rule: #88584c;
+  --rb-crumb: #3632b4;
+  --rb-main: #0056bc;
+  --rb-chapter: #ae0000;
+  --rb-g1: #000;
+  --rb-g2: #4038d5;
+  --rb-g3: #cd0000;
+  --rb-g4: #cd0000;
+  --rb-count: #000;
+  --rb-band: #f7ebe8;
+  --rb-band-edge: #7a5d54;
+  --rb-hand: #eec3b4;
+  /* sub-toolbar glyph colours (original lucide icons, tinted) */
+  --rb-ic-blue: #2f78c4;
+  --rb-ic-gold: #e9b640;
+  --rb-ic-slate: #44505c;
+  --rb-ic-brown: #a0603e;
+  --rb-ic-rose: #c4566a;
+  --rb-muted: #73655f;
+  --rb-see: var(--rb-main);
+  /* a reference that cannot be followed: a greyed slate blue, still >= 4.4:1 on paper and band (light grey is the synonym marker's) */
+  --rb-see-dead: #4f6f99;
+  --rv-hl-bg: color-mix(in srgb, var(--warning) 35%, transparent);
+  --rv-hl-ring: color-mix(in srgb, var(--warning) 70%, transparent);
+  position: relative; display: flex; flex-direction: column; min-height: 0; height: 100%; background: var(--rb-paper); outline: none;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .rv {
+    --rb-paper: #1c1b1d; --rb-ink: #e6e2df; --rb-tools: #3a2c27; --rb-tools-line: #4e3b34; --rb-tools-ink: #e0d2cc;
+    --rb-on: #7a4637; --rb-tools-quiet: #a99d98; --rb-views-ink: #e0dad7; --rb-views-label: #eadcd6; --rb-views-caret: #e6e2df; --rb-hover: #4b3730; --rb-rule: #8d6a5f; --rb-crumb: #b3aeff; --rb-main: #7eaaf6;
+    --rb-chapter: #ff8a80; --rb-g1: #e6e2df; --rb-g2: #a7a2ff; --rb-g3: #ff7468; --rb-g4: #ff7468; --rb-count: #e6e2df;
+    --rb-band: #3a2b2a; --rb-band-edge: #9b7f76; --rb-hand: #b59a96; --rb-muted: #a69a95; --rb-see-dead: #8fa6c8;
+    --rb-ic-blue: #6fa6e8; --rb-ic-gold: #e2b44e; --rb-ic-slate: #b9c3cc; --rb-ic-brown: #d79a76; --rb-ic-rose: #e58a9a;
+    --rb-path-rule: #6d554d; --rb-scroll-track: #252326; --rb-scroll-line: #3a3638; --rb-scroll-thumb: #4a4446; --rb-scroll-thumb-line: #6a6062; --rb-scroll-arrow: #c9c2c0; --rb-hand-cuff: #8d8786;
+  }
+}
+:root[data-theme="dark"] .rv {
+  --rb-paper: #1c1b1d; --rb-ink: #e6e2df; --rb-tools: #3a2c27; --rb-tools-line: #4e3b34; --rb-tools-ink: #e0d2cc;
+  --rb-on: #7a4637; --rb-tools-quiet: #a99d98; --rb-views-ink: #e0dad7; --rb-views-label: #eadcd6; --rb-views-caret: #e6e2df; --rb-hover: #4b3730; --rb-rule: #8d6a5f; --rb-crumb: #b3aeff; --rb-main: #7eaaf6;
+  --rb-chapter: #ff8a80; --rb-g1: #e6e2df; --rb-g2: #a7a2ff; --rb-g3: #ff7468; --rb-g4: #ff7468; --rb-count: #e6e2df;
+  --rb-band: #3a2b2a; --rb-band-edge: #9b7f76; --rb-hand: #b59a96; --rb-muted: #a69a95; --rb-see-dead: #8fa6c8;
+    --rb-ic-blue: #6fa6e8; --rb-ic-gold: #e2b44e; --rb-ic-slate: #b9c3cc; --rb-ic-brown: #d79a76; --rb-ic-rose: #e58a9a;
+    --rb-path-rule: #6d554d; --rb-scroll-track: #252326; --rb-scroll-line: #3a3638; --rb-scroll-thumb: #4a4446; --rb-scroll-thumb-line: #6a6062; --rb-scroll-arrow: #c9c2c0; --rb-hand-cuff: #8d8786;
+}
+
+/* sub-toolbar: peach band of icon buttons, the Views dropdown, toggles on the right */
+.rv-tools {
+  flex: none; display: flex; align-items: center; gap: 0; height: 40px; padding: 0 8px 0 12px; min-width: 0; overflow: hidden;
+  /* no separator: the peach band fades straight into the white breadcrumb strip */
+  background: linear-gradient(to bottom, var(--rb-tools) 82%, color-mix(in srgb, var(--rb-tools) 55%, var(--rb-paper)));
+  color: var(--rb-tools-ink); font-size: 12px;
+}
+.rv-tb {
+  position: relative; flex: none; display: inline-grid; grid-auto-flow: column; align-items: center; justify-content: center; gap: 0;
+  height: 32px; min-width: 30px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--rb-tools-ink);
+}
+.rv-tb:hover { background: var(--rb-hover); }
+.rv-tb.on { background: var(--rb-on); }
+.rv-tb:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.rv-tools > .rv-tb + .rv-tb { margin-left: 7px; }
+/* the toggles: borderless rounded squares, salmon when pressed, nearly touching */
+.rv-toggles > .rv-tb { width: 34px; height: 34px; border: 0; border-radius: 6px; }
+.rv-toggles > .rv-tb + .rv-tb, .rv-toggles > * + .rv-tb, .rv-toggles > * + .rv-tb-split { margin-left: 3px; }
+/* a toggle with a menu caret at its right edge (two buttons in one salmon square) */
+.rv-tb-split { position: relative; flex: none; display: inline-flex; width: 34px; height: 34px; border-radius: 6px; }
+.rv-tb-split.on { background: var(--rb-on); }
+.rv-tb-split > .rv-tb { width: 34px; height: 34px; border: 0; border-radius: 6px; padding-right: 6px; background: transparent; }
+.rv-tb-split > .rv-tb:hover { background: var(--rb-hover); }
+.rv-tb-split-caret {
+  position: absolute; right: 0; top: 0; bottom: 0; width: 10px; display: grid; place-items: center; padding: 10px 1px 0 0;
+  border: 0; border-radius: 0 6px 6px 0; background: transparent; color: var(--rb-tools-ink);
+}
+.rv-tb-split-caret:hover { background: var(--rb-hover); }
+.rv-tb-split-caret:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.rv-tb-menu { padding-right: 1px; }
+.rv-tb-caret { margin-left: -3px; margin-top: 12px; }
+.rv-views-label { flex: none; margin: 0 6px 0 2px; color: var(--rb-views-label); }
+/* the Views dropdown: a white pill with a small solid triangle at its right end */
+.rv-views-wrap { position: relative; flex: 0 1 277px; min-width: 120px; width: 277px; display: flex; }
+.rv-views-wrap::after {
+  content: ""; position: absolute; right: 10px; top: 50%; margin-top: -2px; pointer-events: none;
+  border: 4px solid transparent; border-bottom: 0; border-top: 5px solid var(--rb-views-caret);
+}
+.rv-views {
+  flex: 1; min-width: 0; height: 21px; padding: 0 24px 0 8px; border: 0; border-radius: 10.5px; appearance: none; -webkit-appearance: none;
+  background: var(--rb-paper); color: var(--rb-views-ink); font: 12px Verdana, Geneva, sans-serif;
+}
+.rv-views:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+.rv-tsep { flex: none; width: 1px; height: 26px; margin: 0 6px; background: var(--rb-tools-line); }
+.rv-tfill { flex: 1; min-width: 4px; }
+.rv-toggles { flex: none; display: flex; margin-right: 14px; }
+.rv-help { margin-left: 2px; }
+/* gear and help recede: light grey glyphs next to the dark toggle icons */
+.rv-tb.rv-quiet { color: var(--rb-tools-quiet); }
+/* coloured glyphs: a stroke colour and a light fill of the closed shapes */
+.rv-ic { fill: none; }
+.rv-ic-find { color: var(--rb-ic-slate); fill: color-mix(in srgb, var(--rb-ic-blue) 40%, transparent); }
+.rv-ic-clip { color: var(--rb-ic-brown); fill: color-mix(in srgb, var(--rb-ic-gold) 45%, transparent); }
+.rv-ic-globe { color: var(--rb-ic-blue); }
+.rv-ic-globe > circle { fill: color-mix(in srgb, var(--rb-ic-gold) 75%, transparent); }
+.rv-ic-pie { color: var(--rb-ic-blue); }
+.rv-ic-pie > path:first-child { fill: var(--rb-ic-gold); }
+.rv-ic-pie > path:last-child { fill: color-mix(in srgb, var(--rb-ic-blue) 30%, transparent); }
+.rv-ic-rems { color: var(--rb-ic-brown); }
+.rv-ic-rems > path:first-child { fill: var(--rb-ic-gold); }
+.rv-ic-names { color: var(--rb-ic-blue); }
+.rv-ic-count { color: var(--rb-ic-slate); }
+.rv-ic-note { color: var(--rb-ic-brown); fill: color-mix(in srgb, var(--rb-paper) 70%, transparent); }
+.rv-ic-bm { color: var(--rb-ic-rose); fill: color-mix(in srgb, var(--rb-ic-rose) 25%, transparent); }
+.rv-loading-label { color: var(--rb-tools-ink); font-size: var(--fs-sm); }
+
+/* breadcrumb strip: chapter icon and the path */
+.rv-path {
+  flex: none; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px 0 5px; min-width: 0;
+  background: var(--rb-paper); border-bottom: 1px solid var(--rb-path-rule);
+}
+.rv-path-icon { flex: none; border-radius: 5px; }
+.rv-crumbs {
+  flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: nowrap; overflow: hidden;
+  font: 12px Verdana, Geneva, sans-serif; color: var(--rb-crumb);
+  /* RadarOpus's crumb reads a touch heavier than regular Verdana (there is no 600 cut) */
+  -webkit-text-stroke: 0.25px currentColor;
+}
+/* measuring pass: crumbs keep their natural width so an overflow means "fold one more" */
+.rv-crumb-wrap { display: inline-flex; align-items: center; min-width: 0; flex: none; white-space: pre; }
+.rv-crumbs-fit .rv-crumb-wrap { flex: 0 1 auto; }
+.rv-crumbs-fit .rv-crumb-wrap-last { flex: 0 0.2 auto; min-width: 60px; }
+.rv-crumb {
+  border: 0; background: transparent; padding: 1px 0; border-radius: 2px; color: inherit; font: inherit;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.rv-crumb:hover { text-decoration: underline; }
+.rv-crumb-caps { text-transform: uppercase; }
+.rv-crumb-more { display: inline-grid; place-items: center; padding: 1px 3px; }
+.rv-sep { color: inherit; }
+
+.rv-hlbar {
+  flex: none; display: flex; align-items: center; gap: 8px; min-height: 28px;
+  padding: 2px 6px 2px 10px; font-size: var(--fs-sm); border-bottom: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--warning) 12%, var(--bg-elev)); color: var(--text-2);
+}
+.rv-hlbar > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-hl-keys { flex: none; display: flex; align-items: center; gap: 4px; color: var(--text-3); font-size: var(--fs-xs); white-space: nowrap; }
+.rv-hl-keys .kbd + .kbd, .rv-hl-keys .kbd:not(:first-child) { margin-left: 6px; }
+.rv-hl-chip { padding: 0 6px; border-radius: 3px; background: color-mix(in srgb, var(--warning) 35%, transparent); color: var(--text); font-weight: 700; }
+
+/* the book: a native scroller holding the two sticky columns and a spacer for the scroll range */
+.rv-scroll {
+  flex: 1; min-height: 0; overflow-x: hidden; overflow-y: scroll; overflow-anchor: none; position: relative; outline: none; contain: strict;
+  background: var(--rb-paper);
+  /* the native scrollbar is an overlay on macOS: the book draws its own classic one beside it (.rv-sb) */
+  scrollbar-width: none;
+}
+.rv-scroll::-webkit-scrollbar { display: none; }
+.rv-body { flex: 1; min-height: 0; display: flex; }
+/* a classic vertical scrollbar along the right of the book: arrow buttons, a light track, a white box thumb */
+.rv-sb { flex: none; display: flex; flex-direction: column; width: 16px; box-sizing: border-box; border-left: 1px solid var(--rb-scroll-line); background: var(--rb-scroll-track); user-select: none; }
+.rv-sb[hidden] { display: none; }
+.rv-sb-btn { flex: none; position: relative; height: 15px; background: var(--rb-scroll-track); }
+.rv-sb-btn.up { border-bottom: 1px solid var(--rb-scroll-line); }
+.rv-sb-btn.down { border-top: 1px solid var(--rb-scroll-line); }
+.rv-sb-btn::before { content: ""; position: absolute; left: 50%; top: 50%; margin: -2px 0 0 -4px; border: 4px solid transparent; }
+.rv-sb-btn.up::before { border-top: 0; border-bottom: 4px solid var(--rb-scroll-arrow); }
+.rv-sb-btn.down::before { border-bottom: 0; border-top: 4px solid var(--rb-scroll-arrow); }
+.rv-sb-btn:active { background: var(--rb-scroll-line); }
+.rv-sb-track { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.rv-sb-thumb { position: absolute; left: 1px; right: 1px; top: 0; box-sizing: border-box; background: var(--rb-scroll-thumb); border: 1px solid var(--rb-scroll-thumb-line); }
+.rv-sb-thumb:hover { border-color: var(--rb-scroll-arrow); }
+.rv-book { font-family: Verdana, Geneva, "DejaVu Sans", sans-serif; font-size: var(--rb-fs, 12px); line-height: var(--rb-lh, 18px); color: var(--rb-ink); }
+.rv-cols { position: sticky; top: 0; z-index: 1; display: flex; overflow: clip; }
+/* overflow: clip, not hidden: a clipped box is no scroll container, so nothing (scrollIntoView, find
+ * in page, focus, assistive tech) can scroll one column on its own; only the book scroller moves */
+.rv-col { position: relative; flex: 1 1 0; min-width: 0; overflow: clip; }
+/* column 1 is clipped at its split line, but a selected chapter heading's band may run over the rule */
+.rv-col1 { overflow: visible; z-index: 1; }
+.rv-clip1 { position: relative; overflow: visible; clip-path: inset(0 -14px 0 0); }
+/* each column's window of rows is its own compositor layer: scrolling moves it (a transform) without
+ * re-rastering the text; only rows that mount are painted */
+.rv-colwin { position: absolute; left: 0; right: 0; top: 0; will-change: transform; }
+/* rows stand at their flow offsets (columns.ts place) */
+.rv-colwin > .rv-blk { position: absolute; left: 0; right: 0; }
+.rv-rule { flex: none; width: 1px; background: var(--rb-rule); }
+.rv-spacer { width: 1px; }
+
+/* a rubric block: whole lines; its own layout and paint island */
+.rv-blk { position: relative; isolation: isolate; cursor: default; contain: layout paint style; }
+/* lines on the line height, the first pulled up and the block closed before the last line box: a
+ * rubric starts 15px below the line before it, its wrapped lines are 18px apart (estimate.ts lineTrim) */
+.rv-line { padding: 0 40px 0 47px; overflow-wrap: anywhere; margin: calc(-1 * var(--rb-trim-t, 2px)) 0 calc(-1 * var(--rb-trim-b, 1px)); }
+.rv-gutter {
+  position: absolute; left: 0; top: calc(-1 * var(--rb-trim-t, 2px)); width: 36px; height: var(--rb-lh, 18px); display: flex; align-items: center; justify-content: flex-end;
+  gap: 1px; padding-right: 3px; color: var(--rb-muted);
+}
+.rv-chapter .rv-gutter { top: 0; height: 24px; }
+.rv-hand { position: absolute; left: 3px; top: 50%; margin-top: -7px; overflow: visible; }
+.rv-hand-cuff { fill: var(--rb-hand-cuff); stroke: color-mix(in srgb, var(--rb-hand-cuff) 88%, var(--rb-ink)); stroke-width: 1; }
+.rv-hand-palm { fill: var(--rb-paper); stroke: var(--rb-hand); stroke-width: 1; stroke-linejoin: round; }
+.rv-hand-fold { fill: none; stroke: var(--rb-hand); stroke-width: 0.9; stroke-linecap: round; }
+.rv-mark-bm { color: var(--warning); fill: currentColor; }
+.rv-mark-note { color: var(--rb-main); }
+/* selection: a pale band over the whole block from the gutter to the column rule */
+.rv-current::before {
+  content: ""; position: absolute; z-index: -1; left: 34px; right: 0; top: 0; bottom: 0;
+  /* the left edge is dashed 5px on, 1px off (a CSS dashed border cannot set its pattern) */
+  background: repeating-linear-gradient(to bottom, var(--rb-band-edge) 0 5px, transparent 5px 6px) left top / 1px 100% no-repeat, var(--rb-band);
+}
+.rv-col2 .rv-current::before { left: 35px; }
+/* in column 1 the band runs just past the column rule and covers it beside the selected block */
+.rv-col1 .rv-current { contain: layout style; }
+.rv-col1 .rv-current::before { right: -3px; }
+.rv-scroll:focus-visible { box-shadow: none; }
+/* keyboard focus in the book: the hand fills in */
+.rv-scroll:focus .rv-hand-palm { fill: color-mix(in srgb, var(--rb-hand) 14%, var(--rb-paper)); }
+
+/* chapter heading block: big icon, name in dark red bold capitals */
+.rv-chhead { display: flex; align-items: center; gap: 5px; height: var(--rb-head, 68px); padding-left: 38px; }
+/* the icon stands near the top of the band, the name centred on it */
+.rv-chhead > .rv-chicon { align-self: flex-start; margin-top: 10px; }
+.rv-chhead > .rv-text { align-self: flex-start; margin-top: calc(8px + 24px - 0.6em); }
+/* the heading's own remedies (OOREP data; RadarOpus has none at chapter level): a quiet "(n) ›" expander */
+.rv-chrems {
+  align-self: flex-start; margin-top: calc(8px + 24px - 0.6em); margin-left: 4px; display: inline-flex; align-items: center; gap: 1px;
+  padding: 0 3px; border: 0; border-radius: 3px; background: transparent; color: var(--rb-muted); font: inherit; cursor: pointer;
+}
+.rv-chrems:hover { color: var(--rb-ink); background: color-mix(in srgb, var(--rb-band-edge) 14%, transparent); }
+.rv-chrems-caret { transition: transform .12s; }
+.rv-chrems[aria-expanded="true"] .rv-chrems-caret { transform: rotate(90deg); }
+.rv-chicon { flex: none; border-radius: 9px; }
+.rv-chapter .rv-text { font-weight: 700; color: var(--rb-chapter); text-transform: uppercase; font-size: 1em; }
+.rv-chline { padding-left: 47px; }
+/* a selected chapter heading: the band runs a little past the column rule and covers it */
+.rv-chapter.rv-current { contain: layout style; }
+/* the band of a selected chapter covers its heading only: the chapter's own remedies (when the data
+ * has them) follow as an ordinary paragraph, as RadarOpus shows the heading band alone */
+.rv-chapter.rv-current::before { bottom: auto; height: var(--rb-head, 68px); }
+.rv-col1 .rv-chapter.rv-current::after {
+  content: ""; position: absolute; z-index: -1; top: 0; right: -12px; width: 12px; height: var(--rb-head, 68px); background: var(--rb-band);
+}
+
+/* rubric text: level 1 bold blue capitals, sub-levels bold black lower case with level marks */
+.rv-text, .rv-pre, .rv-colon { font-weight: 700; }
+.rv-main .rv-text, .rv-main .rv-colon { color: var(--rb-main); text-transform: uppercase; }
+.rv-count { color: var(--rb-count); white-space: nowrap; }
+.rv-rems { color: var(--rb-g1); }
+/* a remedy never splits across lines: lines break between remedies */
+.rv-rem { white-space: nowrap; cursor: pointer; border-radius: 2px; }
+/* hover marks follow a moving pointer only (data-pointer): the page scrolling under a still one marks nothing */
+.rv-book[data-pointer] .rv-rem:hover { text-decoration: underline; }
+.rv-book .g1 { color: var(--rb-g1); font-weight: 400; font-style: normal; }
+.rv-book .g2 { color: var(--rb-g2); font-style: italic; font-weight: 400; }
+.rv-book .g3 { color: var(--rb-g3); font-weight: 700; text-transform: uppercase; }
+.rv-book .g4 { color: var(--rb-g4); font-weight: 700; font-style: normal; text-transform: uppercase; letter-spacing: 0; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.rv-book[data-pointer] .g4:hover { text-decoration-thickness: 2px; }
+/* a "(see …)" reference after a rubric name: blue, normal weight and case */
+.rv-see { color: var(--rb-see); font-weight: 400; text-transform: none; }
+/* a reference whose target the data does not hold: muted blue, it cannot be followed */
+.rv-see.rv-see-dead { color: var(--rb-see-dead); cursor: help; }
+.rv-hidden { margin-left: 5px; color: var(--rb-muted); white-space: nowrap; }
+/* clipboard membership: a coloured square with the clipboard number before the rubric text */
+.rv-clip {
+  display: inline-grid; place-items: center; min-width: 13px; height: 13px; margin-right: 4px; padding: 0 2px; border-radius: 3px; text-indent: 0;
+  background: var(--chip); color: var(--on-accent); font: 700 9px/1 var(--font-ui); vertical-align: 1px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--chip) 60%, var(--rb-ink));
+}
+.rv-clip + .rv-clip { margin-left: -2px; }
+.rv-note { padding: 0 40px 0 47px; font-style: italic; color: var(--rb-muted); white-space: pre-wrap; }
+.rv-note::before { content: "\2192\00a0"; font-style: normal; }
+
+.rv-tip {
+  position: fixed; z-index: var(--z-tooltip); display: grid; gap: 1px; padding: 6px 9px; max-width: 320px; pointer-events: none;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow-2); font-size: var(--fs-sm);
+  animation: fade .1s ease-out;
+}
+.rv-tip-hint { color: var(--text-3); font-size: var(--fs-xs); }
+
+/* joined segmented control (take intensity in the take dialog): one bordered strip of buttons */
+.rseg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; background: var(--bg-elev); }
+.rseg > button, .rseg > label {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: 0; margin: 0; background: transparent;
+  height: 22px; padding: 0 8px; font-size: 12px; color: var(--text-2); cursor: default;
+}
+.rseg > button + button, .rseg > label + label { border-left: 1px solid var(--border); }
+.rseg > button:hover, .rseg > label:hover { background: var(--bg-hover); color: var(--text); }
+.rseg > .on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.rseg > button:focus-visible, .rseg > label:focus-within { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+.rv-takebar {
+  /* an overlay along the bottom of the book: opening it never resizes the book or reflows its columns */
+  position: absolute; left: 0; right: 16px; bottom: 0; z-index: 6; margin: 0; container: rvtake / inline-size;
+  /* one slim line (about a text line and a half), quiet book colours */
+  padding: 2px 8px; border-top: 1px solid var(--rb-tools-line, var(--border)); background: color-mix(in srgb, var(--rb-tools, var(--bg-hover)) 55%, var(--rb-paper, var(--bg-elev)));
+  /* (outside a book, e.g. under search results, the fallbacks are the app tokens) */
+  font-size: var(--fs-sm);
+}
+/* over the top of the book (below the path strip) when the rubric taken stands at the bottom */
+.rv-takebar-top { bottom: auto; border-top: 0; border-bottom: 1px solid var(--rb-tools-line, var(--border)); }
+.rv-takebar-in { display: flex; flex-wrap: nowrap; align-items: center; column-gap: 8px; height: 22px; }
+.rv-takebar-icon { color: var(--accent); flex: none; }
+.rv-takebar-input { flex: none; width: 124px; height: 20px; font-family: var(--font-mono); font-weight: 600; }
+.rv-takebar-rubric { flex: 1 1 160px; min-width: 160px; display: flex; align-items: baseline; white-space: nowrap; color: var(--text-2); overflow: hidden; }
+.rv-takebar-parents { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); }
+.rv-takebar-leaf { flex: 0 1 auto; min-width: 40px; overflow: hidden; text-overflow: ellipsis; color: var(--text); font-weight: 600; }
+.rv-takebar-status { flex: 0 1 auto; min-width: 70px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--success); font-weight: 600; }
+.rv-takebar-status.err { color: var(--danger); }
+.rv-takebar-help { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); font-size: var(--fs-xs); white-space: nowrap; }
+.rv-takebar-help b { font-family: var(--font-mono); color: var(--text-2); }
+/* the help is the first thing to give way: it shortens, then goes (the input's tooltip keeps it) */
+@container rvtake (max-width: 900px) { .rv-takebar-help { display: none; } }
+@container rvtake (max-width: 540px) { .rv-takebar-help { display: none; } .rv-takebar-rubric { min-width: 100px; } }
+
+.rv-chooser {
+  position: absolute; top: 76px; left: 50%; transform: translateX(-50%); z-index: 20; width: 320px;
+  padding: 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elev); box-shadow: var(--shadow-2);
+  animation: pop .1s ease-out;
+}
+.rv-chooser .input { width: 100%; }
+.rv-chooser-list { max-height: 320px; overflow: auto; margin-top: 4px; }
+.rv-chooser-item { display: flex; justify-content: space-between; align-items: center; height: 24px; padding: 0 8px; border-radius: 4px; font-size: var(--fs-sm); }
+.rv-chooser-item.active { background: var(--accent-fill); color: var(--on-accent); }
+.rv-chooser-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-chooser-recent { flex: none; margin: 0 6px; color: var(--text-3); }
+.rv-chooser-item.active .rv-chooser-recent { color: var(--on-accent-muted); }
+.rv-chooser-n { font-size: var(--fs-xs); color: var(--text-3); }
+.rv-chooser-item.active .rv-chooser-n { color: var(--on-accent-muted); }
+.rv-chooser-empty { padding: 8px; color: var(--text-3); font-size: var(--fs-sm); }
+
+.rv-error { align-content: start; }
+.rv-skel { padding: 16px 20px; display: grid; gap: 10px; }
+.rv-skel .skeleton { height: 12px; }
+
+/* print: the rendered rubrics in reading order (column 1, then column 2 without the continuation) */
+@media print {
+  .rv-cols, .rv-col, .rv-clip1, .rv-colwin { position: static !important; display: block !important; height: auto !important; transform: none !important; overflow: visible !important; }
+  .rv-rule, .rv-spacer, .rv-cont, .rv-path-icon, .rv-chicon { display: none !important; }
+  .rv-blk { contain: none; break-inside: avoid; }
+  .rv-colwin > .rv-blk { position: static !important; top: auto !important; }
+  .rv-current::before { display: none; }
+  .rv-book .g1, .rv-book .g2, .rv-book .g3, .rv-book .g4 { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

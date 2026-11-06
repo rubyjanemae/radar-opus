@@ -174,25 +174,50 @@ export interface EstimateParams {
 export const NEAR_ROWS = 1500
 
 /**
- * Estimated height of rubric i: text plus remedy list wrapped at the column width. O(1): exact
+ * Book metrics shared by the view and the estimates (px at font scale 1): where the text starts in
+ * a column (after the gutter with the selection hand), where the selection band starts, the right
+ * padding, the indent per level, and the chapter heading block above a chapter's own remedies.
+ */
+export const BOOK = { text: 47, band: 36, right: 40, indent: 10, head: 68 } as const
+
+/**
+ * Vertical rhythm of the book: wrapped lines are `lineH` apart, but a rubric's first line starts
+ * closer to the previous rubric (15px against 18px at zoom 1). Each block's lines are pulled up by
+ * `top` and the block ends `bottom` before its last line box, so a block of n lines is
+ * n * lineH - top - bottom tall. (RadarOpus sets a rubric's second line 17px below its first; a
+ * shorter first line box cannot be had in CSS: `::first-line` line-height does not shrink the
+ * block's strut in standards mode.)
+ */
+export function lineTrim(lineH: number): { top: number; bottom: number } {
+  return { top: Math.round(lineH / 9), bottom: Math.round(lineH / 18) }
+}
+
+/**
+ * Estimated height of rubric i in a book column of `p.width` px: its lines indented by level,
+ * text, count and remedies wrapping at that indent, whole lines of `lineH`. O(1): exact
  * character counts when built (or `near`, which builds them), else the chapter average.
  */
 export function estimateRow(rep: Repertory, rc: RemedyChars, i: number, p: EstimateParams, near: boolean, note: boolean): number {
   const depth = rep.depth(i)
+  const total = rep.remedyCount(i)
   let rem = 0
-  if (p.showRemedies && rep.remedyCount(i) > 0) {
-    rem = near || rc.has(i) ? rc.chars(i, p.names, p.minGrade) : rep.remedyCount(i) * rc.average(rep.chapterOf(i), p.names, p.minGrade)
+  if (p.showRemedies && total > 0) {
+    rem = near || rc.has(i) ? rc.chars(i, p.names, p.minGrade) : total * rc.average(rep.chapterOf(i), p.names, p.minGrade)
   }
-  const avail = Math.max(120, (p.width || 800) - 60 - Math.max(0, depth - 1) * 18)
-  const perLine = avail / (p.fs * 0.52)
+  const avail = Math.max(120, (p.width || 600) - BOOK.text - BOOK.right)
+  // Verdana: about half the font size per character of an abbreviation list (separators included)
+  const remW = rem * p.fs * 0.5
+  const noteH = note ? p.lineH : 0
+  const t = lineTrim(p.lineH)
+  const trim = t.top + t.bottom
   if (depth === 0) {
-    // chapter heading: a large title line, then its remedies at book size
-    const lines = rem > 0 ? Math.ceil(rem / perLine) : 0
-    return Math.round(p.lineH * 1.4 + 17 + lines * p.lineH)
+    const lines = total > 0 ? Math.ceil((remW + 6 * p.fs * 0.6) / avail) : 0
+    return BOOK.head + (lines ? lines * p.lineH - trim : 0) + noteH
   }
-  const chars = rep.text(i).length + 5 + rem
-  const lines = Math.max(1, Math.ceil(chars / perLine))
-  return lines * p.lineH + 2 + (depth === 1 ? 5 : 0) + (note ? p.lineH + 5 : 0)
+  // a sub-rubric's lines all hang at its level indent
+  const textW = (rep.text(i).length + (total > 0 ? 7 : 2)) * p.fs * (depth === 1 ? 0.72 : 0.62)
+  const lines = Math.max(1, Math.ceil((textW + remW) / Math.max(80, avail - (depth - 1) * BOOK.indent)))
+  return lines * p.lineH - trim + noteH
 }
 
 /** Row heights of one layout: measured (0 = not yet) and estimated (0 = not yet computed). */

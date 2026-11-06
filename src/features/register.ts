@@ -9,12 +9,13 @@ import * as mm from './mm/commands'
 import * as workspace from './workspace/commands'
 import * as families from './families/commands'
 import * as account from './account/commands'
+import * as shell from '../shell/commands'
 
 /**
  * Each feature exports `register(catalog)` from its commands.ts, which registers
  * its commands and dialogs. Add new features here.
  */
-const features: { register: (catalog: Catalog) => void }[] = [analysis, clipboard, repertory, search, command, patients, mm, workspace, families, account]
+const features: { register: (catalog: Catalog) => void }[] = [analysis, clipboard, repertory, search, command, patients, mm, workspace, families, account, shell]
 
 export function registerFeatureCommands(catalog: Catalog) {
   for (const f of features) f.register(catalog)

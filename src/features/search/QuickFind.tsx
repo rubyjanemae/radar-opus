@@ -17,6 +17,7 @@ import type { Catalog } from '../../data/catalog'
 import type { RepertoryTab } from '../../state/workspace'
 import { currentRepertory, openRemedySearch, openSearch, prepare, readyTargets, remedyResolver } from './ops'
 import { Highlight, RubricPath, titleIfTruncated } from './components'
+import { focusDocumentWhenReady } from '../../shell/TabHost'
 import './search.css'
 
 type Item =
@@ -162,7 +163,7 @@ export function QuickFind() {
 
   const close = (restore: boolean) => {
     setOpen(false)
-    if (restore) { const el = restoreRef.current; restoreRef.current = null; if (el && el !== inputRef.current && el.isConnected) el.focus(); else inputRef.current?.blur() }
+    if (restore) { const el = restoreRef.current; restoreRef.current = null; if (el && el !== inputRef.current && el.isConnected) el.focus(); else { inputRef.current?.blur(); focusDocumentWhenReady() } }
   }
 
   const focusBook = () => requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector<HTMLElement>('.rv-scroll')?.focus()))
@@ -231,7 +232,7 @@ export function QuickFind() {
         data-quickfind
         className="qf-input"
         type="text"
-        placeholder="Find rubric or remedy…"
+        placeholder="search in English"
         aria-label="Quick find"
         role="combobox"
         aria-expanded={showPop}
@@ -243,7 +244,8 @@ export function QuickFind() {
         value={query}
         onFocus={e => {
           const prev = e.relatedTarget as HTMLElement | null
-          if (prev && !e.currentTarget.parentElement?.contains(prev)) restoreRef.current = prev
+          // a menu that just closed (a toolbar ▾ opened over the field) is not a place to return to
+          if (prev && !e.currentTarget.parentElement?.contains(prev) && !prev.closest('.menu-portal, [role="menu"]')) restoreRef.current = prev
           setOpen(true)
         }}
         onMouseDown={() => setOpen(true)}

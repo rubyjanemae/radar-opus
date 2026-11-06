@@ -1,4 +1,4 @@
-:root { --statusbar-h: 24px; }
+:root { --statusbar-h: 25px; }
 .shell { display: flex; flex-direction: column; height: 100vh; min-width: 0; }
 .shell-header { flex: none; min-width: 0; }
 
@@ -7,187 +7,252 @@
 .boot-card { display: grid; justify-items: center; gap: 12px; color: var(--text-2); font-size: var(--fs-sm); text-align: center; }
 .boot-card h1 { margin: 0; font-size: 16px; color: var(--text); }
 .boot-err { color: var(--danger); max-width: 420px; }
-.boot-logo, .brand-mark, .empty-mark {
+.boot-logo {
   display: grid; place-items: center; width: 44px; height: 44px; border-radius: 11px;
-  background: linear-gradient(145deg, #2f6fdb, #1b3f91); color: #fff; font: 700 22px/1 var(--font-book); letter-spacing: -.02em;
-  box-shadow: 0 4px 14px rgba(36, 89, 201, .35);
+  background: var(--accent); color: var(--on-accent); font: 700 22px/1 var(--font-book); letter-spacing: -.02em;
 }
 .boot-bar { width: 180px; height: 3px; border-radius: 2px; background: var(--bg-sunken); overflow: hidden; }
 .boot-bar span { display: block; width: 40%; height: 100%; background: var(--accent); animation: slide 1s ease-in-out infinite; }
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 
-/* ───────── menubar ───────── */
+/* ───────── menubar (in place of the desktop app's title bar) ───────── */
 .menubar {
   flex: none; display: flex; align-items: center; gap: 1px; height: 32px; padding: 0 6px;
-  background: var(--chrome); border-bottom: 1px solid var(--border); font-size: var(--fs-sm);
+  background: var(--ro-title); border-bottom: 1px solid var(--ro-title-line); font: 13px/1 var(--font-chrome); color: var(--ro-tab-fg);
 }
-.brand { display: flex; align-items: center; gap: 7px; padding: 0 10px 0 2px; margin-right: 2px; }
-.brand-mark { width: 20px; height: 20px; border-radius: 5px; font-size: 12px; box-shadow: none; }
-.brand-name { font-weight: 650; letter-spacing: -.01em; }
 .menubar-nav, .menubar-menus { display: flex; align-items: center; gap: 1px; }
-/* the menus never shrink; the case chip and the search box give way first */
 .menubar-nav { flex: none; }
-.menubar-search { min-width: 0; flex: 0 1 auto; }
-.menubar-item { height: var(--ctl-h-sm); padding: 0 8px; border: 0; border-radius: 4px; background: transparent; color: var(--text); white-space: nowrap; }
-.menubar-item:hover, .menubar-item.open { background: var(--bg-hover); }
-.menubar-item.open { background: var(--bg-active); }
+.menubar-item { height: var(--ctl-h-sm); padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: inherit; white-space: nowrap; font: inherit; }
+.menubar-item:hover, .menubar-item.open { background: color-mix(in srgb, var(--ro-press) 30%, transparent); }
+.menubar-item.open { background: color-mix(in srgb, var(--ro-press) 50%, transparent); }
 /* keyboard focus is always visible, in both themes, even while the item's menu is open */
-.menubar-item:focus-visible { background: var(--bg-hover); outline: 2px solid var(--focus); outline-offset: -2px; }
+.menubar-item:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .menubar-spacer { flex: 1; }
-.menubar-case {
-  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; margin-right: 6px;
-  border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elev); font-size: var(--fs-xs); font-weight: 600; max-width: 280px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.menubar-case:hover { border-color: var(--border-strong); }
-.menubar-case-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); flex: none; }
-.menubar-case-sub { color: var(--text-3); font-weight: 500; }
-.menubar-search {
-  display: inline-flex; align-items: center; gap: 8px; width: 290px; height: var(--ctl-h-sm); padding: 0 4px 0 9px; margin-right: 8px;
-  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--bg-elev); color: var(--text-2); font-size: var(--fs-sm);
-}
-.menubar-search span:not(.kbd) { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.menubar-search:hover { border-color: var(--border-strong); }
-.save-ind { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; color: var(--text-2); font-size: var(--fs-xs); white-space: nowrap; }
-.save-err { color: var(--danger); }
 
-/* ───────── toolbar ───────── */
+/* ───────── main toolbar: large icons over their labels, grouped by separators ───────── */
 .toolbar {
-  flex: none; display: flex; align-items: center; gap: 4px; height: 38px; padding: 0 8px;
-  background: var(--bg-elev); border-bottom: 1px solid var(--border);
+  flex: none; display: flex; align-items: center; gap: 0; height: 75px; padding: 0 3px; overflow-x: clip; overflow-y: visible;
+  background: var(--ro-bar); border-bottom: 1px solid var(--ro-bar-line); font-family: var(--font-chrome);
 }
-.tool-group { display: flex; align-items: center; gap: 1px; padding-right: 6px; margin-right: 2px; border-right: 1px solid var(--border); }
-.tool-group:last-child { border-right: 0; }
-.tool-spacer { flex: 1; }
-.tool-btn {
-  display: inline-flex; align-items: center; gap: 5px; height: var(--ctl-h); min-width: var(--ctl-h); justify-content: center; padding: 0 6px;
-  border: 1px solid transparent; border-radius: var(--radius); background: transparent; color: var(--text-2); font-size: var(--fs-sm); font-weight: 500; white-space: nowrap;
+.tb-item { position: relative; flex: none; display: flex; }
+.tb-btn {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; height: 68px; min-width: 40px; padding: 0 7px 1px;
+  border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--ro-label); font: 12.5px/15px var(--font-chrome); white-space: nowrap;
 }
-.tool-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
-.tool-btn:active:not(:disabled) { background: var(--bg-active); }
-.tool-btn:disabled { opacity: .38; }
-.tool-btn[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
-.tool-btn.with-label { padding: 0 9px 0 7px; }
-.tool-select { height: var(--ctl-h); max-width: 190px; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--bg-elev); font-size: var(--fs-sm); }
-/* the toolbar's quick-find box shares the control height and radius */
-.toolbar .qf-input { height: var(--ctl-h); border-radius: var(--radius); font-size: var(--fs-sm); }
-.clip-switch { gap: 3px; }
-.clip-chip {
-  /* same box as the clipboard panel's .cbp-chip tabs: --row tall, 0 6px 0 3px padding, filled or outlined alike */
-  display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 28px; height: var(--row); padding: 0 6px 0 3px;
-  /* outlined in the clipboard's colour (mixed toward the border token); the active one is filled */
-  border: 1px solid color-mix(in srgb, var(--chip) 55%, var(--border)); border-radius: calc(var(--row) / 2); background: var(--bg-elev); line-height: 1;
-  font-size: var(--fs-xs); font-weight: 700; color: var(--text-2);
+.tb-icon { position: relative; top: -2px; display: grid; place-items: center; width: 38px; height: 38px; color: var(--tone); }
+/* lucide icons are line art: a heavier stroke and a wash of the tone fill them, closer to the desktop app's solid icons */
+.tb-icon svg { fill: color-mix(in srgb, var(--tone) 50%, transparent); }
+/* no hover box: RadarOpus keeps the plain toolbar under a resting pointer (ref 16); a press still shows */
+.tb-btn:active:not(:disabled, [aria-disabled="true"]), .tb-btn[aria-expanded="true"] { background: color-mix(in srgb, var(--ro-press) 40%, transparent); }
+/* a dimmed button is inert: a click on it falls through to the band, which leaves the keyboard in the document (focus.ts) */
+.tb-btn:disabled { opacity: .42; pointer-events: none; }
+.tb-btn:disabled .tb-icon { filter: grayscale(1); }
+/* the ▾ of a menu button sits at the icon's lower right, over the button's own padding */
+.tb-caret {
+  position: absolute; top: 29px; left: calc(50% + 19px); display: grid; place-items: center; width: 11px; height: 12px; padding: 0;
+  border: 0; border-radius: 2px; background: transparent; color: var(--ro-label);
 }
-/* a chip without a count pill is balanced on both sides */
-.clip-chip:has(sup:empty) { padding: 0 6px; }
-/* symptom count: a pill centred vertically beside the clipboard number, in the clipboard's colour
-   with its on-colour text (--chip-fg); inverted on the active (filled) chip */
-.clip-chip sup {
-  display: inline-grid; place-items: center; align-self: center; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
-  background: var(--chip); color: var(--chip-fg, var(--on-accent)); font-size: var(--fs-xs); font-weight: 700; line-height: 1;
-  vertical-align: middle; position: static; top: auto; font-variant-numeric: tabular-nums;
+.tb-caret:hover:not(:disabled) { background: color-mix(in srgb, var(--ro-press) 40%, transparent); }
+.tb-caret:disabled { opacity: .42; }
+/* a fine two-tone rule (RadarOpus): a darker left edge, a lighter core */
+.tb-sep { flex: none; align-self: center; width: 2px; height: 54px; margin: 0 5px; background: var(--ro-sep); box-shadow: inset 1px 0 var(--ro-sep-edge); }
+.tone-blue { --tone: var(--ro-icon-blue); }
+.tone-teal { --tone: var(--ro-icon-teal); }
+.tone-orange { --tone: var(--ro-icon-orange); }
+.tone-amber { --tone: var(--ro-icon-amber); }
+.tone-green { --tone: var(--ro-icon-green); }
+.tone-grey { --tone: var(--ro-icon-grey); }
+.tone-ink { --tone: var(--ro-icon-ink); }
+/* History: a slate arc around a blue clock (original two-tone glyph, Toolbar.tsx) */
+.tone-slate { --tone: var(--ro-icon-ink); }
+.tb-icon svg .tb-hist-face { fill: color-mix(in srgb, var(--ro-icon-blue) 45%, transparent); }
+.tb-icon svg .tb-hist-hands { stroke: var(--ro-icon-blue); }
+/* Zoom in / out: dark rim and handle, a light lens, the sign in the blue accent (Toolbar.tsx) */
+.tb-icon svg .tb-zoom-lens { fill: color-mix(in srgb, var(--ro-icon-blue) 16%, var(--bg-elev)); }
+.tb-icon svg .tb-zoom-sign { stroke: var(--ro-icon-blue); }
+/* the search field ("search in English"): a white rounded box between Search and Analysis */
+.tb-find { flex: none; display: flex; align-items: center; margin: 0 0 0 2px; }
+.toolbar .qf { width: 160px; margin: 0; }
+.toolbar .qf-icon { display: none; }
+.toolbar .qf-input {
+  height: 33px; padding: 0 8px; border: 1px solid transparent; border-radius: 9px; background: var(--ro-win);
+  font: 13px var(--font-chrome); color: var(--ro-tab-fg);
 }
-.clip-chip sup:empty { display: none; }
-.clip-chip:hover { border-color: var(--chip); }
-.clip-chip.active { background: var(--chip); color: var(--chip-fg, var(--on-accent)); border-color: var(--chip); }
-.clip-chip.active sup { background: var(--chip-fg, var(--on-accent)); color: var(--chip); }
+.toolbar .qf-input::placeholder { color: color-mix(in srgb, var(--ro-label) 22%, transparent); font-size: 12.5px; }
+.toolbar .qf-kbd { display: none; }
+/* the results open below the toolbar band, clear of its labels (the field ends 22px above its bottom line) */
+.toolbar .qf-pop { top: calc(100% + 23px); }
 
-/* ───────── main panes ───────── */
-.shell-main { flex: 1; display: flex; min-height: 0; }
+/* ───────── the desktop: terracotta behind the table of contents and the document window ───────── */
+.shell-main { flex: 1; display: flex; min-height: 0; padding: 17px 4px 2px 0; background: var(--desk); }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-elev); }
-.pane-left, .pane-right { flex: none; position: relative; background: var(--bg); }
-/* side-pane splitters live inside their pane (inside its landmark), drawn on its inner edge */
+/* side panes and the document window are windows on the desktop: white, a fine border, rounded */
+.pane-left, .pane-right {
+  background: var(--ro-win); border: 1px solid var(--ro-win-line); border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(60, 20, 10, .18);
+}
+/* the document window: light sides, a darker bottom edge; its top edge is the active tab's (RadarOpus) */
+.doc-window {
+  background: var(--ro-win); border: 1px solid var(--ro-win-side); border-top: 0; border-bottom-color: var(--ro-win-foot-in); border-radius: 6px 6px 3px 3px;
+  box-shadow: 0 1px var(--ro-win-foot);
+}
+.pane-left, .pane-right { flex: none; position: relative; }
+.pane-left { margin: 0 12px 0 6px; }
+/* the table of contents blends straight into the desktop (RadarOpus draws no outline around it) */
+.pane-left { border: 0; box-shadow: none; }
+.pane-right { margin-left: 8px; }
+/* the window's content keeps the rounded corners */
+.pane-left > :first-child, .pane-right > :last-child { border-radius: 5px; overflow: hidden; }
+/* side-pane splitters sit in the desktop gap beside their pane (inside its landmark) */
 .pane-left > .splitter-vertical, .pane-right > .splitter-vertical { position: absolute; top: 0; bottom: 0; z-index: 5; }
-.pane-left > .splitter-vertical { right: 0; }
-.pane-right > .splitter-vertical { left: 0; }
-.pane-left { padding-right: 1px; }
-.pane-right { padding-left: 1px; }
-.pane-center { flex: 1; }
+.pane-left > .splitter-vertical { right: -12px; width: 12px; }
+.pane-right > .splitter-vertical { left: -8px; width: 8px; }
+/* the second grip, beyond the clipboard strip (36px) between it and the document window */
+.pane-left > .splitter-vertical ~ .splitter-vertical { right: -61px; width: 13px; }
+/* in the gap the splitter is the desktop itself, with a small dotted grip half-way down */
+.pane-left > .splitter-vertical, .pane-right > .splitter-vertical { background: transparent; }
+.pane-left > .splitter-vertical::before, .pane-right > .splitter-vertical::before {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 2px; height: 14px; transform: translate(-50%, -50%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--desk-fg) 45%, transparent) 1px, transparent 1.3px) 0 0 / 2px 4px repeat-y;
+}
+.pane-left > .splitter-vertical:hover, .pane-right > .splitter-vertical:hover,
+.pane-left > .splitter-vertical:focus-visible, .pane-right > .splitter-vertical:focus-visible { background: color-mix(in srgb, var(--ro-win) 25%, transparent); box-shadow: none; }
+.doc-window { flex: 1; margin-left: 6px; overflow: hidden; }
+.pane-left + .doc-window { margin-left: 0; }
+.clipstrip + .doc-window { margin-left: 15px; }
+.pane-left + .clipstrip + .doc-window { margin-left: 13px; }
 .pane-center-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .tab-content { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .tab-content > * { flex: 1; min-height: 0; }
 .analysis-dock { flex: none; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+[data-bars="hidden"] .shell-main { padding-left: 0; }
 
-/* ───────── tabs ───────── */
-/* The strip never grows past the document pane: the tab list scrolls, tabs shrink to a minimum first. */
-.tabstrip { flex: none; display: flex; align-items: flex-end; min-width: 0; height: 32px; padding: 0 4px 0 0; background: var(--chrome); border-bottom: 1px solid var(--border); }
-.tabstrip-list { flex: 0 1 auto; display: flex; align-items: flex-end; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; height: 100%; }
+/* ───────── clipboard strip ───────── */
+.clipstrip { flex: none; display: flex; flex-direction: column; width: 36px; min-height: 0; }
+.clipstrip-slots { display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 0; padding: 7px 0; overflow-y: auto; scrollbar-width: none; }
+.clipstrip-slots::-webkit-scrollbar { display: none; }
+/* at the desktop's left edge (no table of contents) the slots sit a little in from the edge (RadarOpus) */
+.shell-main > .clipstrip:first-child .clipstrip-slots { padding-left: 4px; }
+.clip-slot {
+  flex: none; display: flex; flex-direction: column; align-items: center; gap: 5px; width: 34px; height: 56px; padding: 2px 0 0;
+  border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--ro-clip);
+}
+/* a slim light-amber board, a grey clip with its ring; the active clipboard is marked only by its two blue ticks */
+.clip-board { stroke: var(--ro-clip); fill: color-mix(in srgb, var(--ro-clip) 8%, transparent); }
+.clip-board-foot { stroke: var(--ro-clip); }
+.clip-ring { stroke: var(--ro-clip-ring); }
+.clip-clip { stroke: var(--ro-clip-ring); fill: color-mix(in srgb, var(--ro-clip-ring) 35%, var(--desk)); }
+.clip-tick { stroke: var(--ro-clip-check); }
+.clip-slot:hover .clip-board { fill: color-mix(in srgb, var(--ro-clip) 26%, transparent); }
+.clip-slot:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
+.clip-slot.drop { outline: 2px dashed var(--ro-win); outline-offset: -2px; }
+.clip-slot-count { min-height: 15px; font: 700 13px/15px var(--font-chrome); color: var(--desk-fg); font-variant-numeric: tabular-nums; }
+
+/* ───────── document tabs: the window's title strip ───────── */
+/* The strip never grows past the window: the tab list scrolls, tabs shrink to a minimum first. */
+.tabstrip { flex: none; display: flex; align-items: stretch; min-width: 0; height: 24px; background: var(--desk); font-family: var(--font-chrome); }
+.tabstrip-list { flex: 1 1 auto; display: flex; align-items: stretch; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; height: 100%; }
 .tabstrip-list::-webkit-scrollbar { display: none; }
 .tab {
-  position: relative; flex: 0 1 auto; display: flex; align-items: center; height: 31px; min-width: 90px; max-width: 260px; padding: 0 4px 0 0;
-  border-right: 1px solid var(--border); color: var(--text-2); font-size: var(--fs-sm); user-select: none; white-space: nowrap;
+  position: relative; flex: 0 1 591px; display: flex; align-items: center; min-width: 110px; padding: 0 11px 0 0; margin-top: 1px;
+  border-right: 1px solid color-mix(in srgb, var(--ro-win-line) 35%, transparent); background: var(--ro-tab-off);
+  /* an inactive tab has no dark edge: its top shades softly into the desktop */
+  box-shadow: inset 0 1px color-mix(in srgb, var(--desk) 55%, var(--ro-tab-off));
+  color: var(--ro-tab-fg); font-size: 12.5px; user-select: none; white-space: nowrap;
 }
-.tab-main { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; min-width: 0; height: 100%; padding: 0 4px 0 11px; }
-.tab-scroll, .tab-all { flex: none; margin: 0 0 4px 2px; }
+/* the last tab runs to the window's right edge, its close box in the corner: it takes the strip's
+   remaining width while the others keep their natural width, which they give up only once it is down to its minimum (RadarOpus) */
+.tabstrip-list > .tab:last-child { flex: 1 1 0; min-width: 160px; border-right: 0; }
+/* ...except when it is the active document: its full title stays readable (ref 10), the inactive tabs give way */
+.tabstrip-list > .tab.active:last-child:not(:first-child) { flex: 1 0 auto; max-width: 70%; }
+.tab-main { flex: 1 1 auto; display: flex; align-items: center; gap: 13px; min-width: 0; height: 100%; padding: 0 6px 0 10px; }
+.tab-scroll, .tab-all { flex: none; align-self: center; width: 20px; height: 20px; min-width: 0; margin: 0 1px; }
 .tab-scroll:disabled { opacity: .35; }
 .tabstrip.overflowing .tabstrip-list { box-shadow: inset -8px 0 6px -6px rgba(0, 0, 0, .12); }
-.tab:hover { background: var(--bg-hover); color: var(--text); }
-.tab.active { background: var(--bg-elev); color: var(--text); height: 32px; margin-bottom: -1px; }
-.tab.active::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--accent); }
+.tab:hover { background: color-mix(in srgb, var(--ro-tab-on) 45%, var(--ro-tab-off)); }
+.tab.active {
+  margin-top: 0; background: var(--ro-tab-on); border-radius: 6px 6px 0 0; border-right-color: transparent;
+  /* the window's dark top edge (2px, softened above and below) and a light left highlight */
+  box-shadow: inset 0 1px var(--ro-win-top-soft), inset 0 2px var(--ro-win-top), inset 0 3px var(--ro-win-top-under), inset 1px 0 var(--ro-tab-edge);
+}
+/* no rule between a tab and the active tab beside it */
+.tab:has(+ .tab.active) { border-right-color: transparent; }
+/* inactive tabs fade their close box (RadarOpus) */
+.tab:not(.active) .tab-close { opacity: .45; }
+.tab:not(.active):hover .tab-close { opacity: .8; }
 .tab.drop-target { box-shadow: inset 2px 0 0 var(--accent); }
-.tab-icon { flex: none; color: var(--text-3); }
-.tab.active .tab-icon { color: var(--accent); }
-.tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
-.tab-sub { min-width: 0; color: var(--text-2); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; flex: 0 100 auto; }
+.tab-icon { flex: none; color: var(--ro-icon-blue); fill: color-mix(in srgb, var(--ro-icon-blue) 30%, transparent); }
+/* the solid book of a repertory window (original glyph, TabStrip.tsx) */
+.tab-icon.tab-book { fill: none; }
+.tab-book-cover { fill: var(--ro-icon-blue); }
+.tab-book-spine { fill: color-mix(in srgb, var(--ro-icon-blue) 70%, #fff); }
+.tab-book-edge { fill: none; stroke: color-mix(in srgb, var(--ro-icon-blue) 65%, #000); }
+/* the analysis window's bar chart (original glyph, TabStrip.tsx): pale amber bars, blue caps, grey base */
+.tab-icon.tab-chart { fill: none; }
+.tab-chart-bar { fill: color-mix(in srgb, var(--ro-icon-amber) 45%, #fff); stroke: color-mix(in srgb, var(--ro-icon-amber) 80%, #000); stroke-width: .5; }
+.tab-chart-cap { fill: var(--ro-icon-blue); }
+.tab-chart-base { fill: var(--ro-icon-grey); }
+.tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* case documents: middle truncation (patient name first), and the kind label ("Analysis") never gives way */
 .tab-title-split { display: inline-flex; flex: 0 1 auto; }
 .tab-title-head { flex: 0 100 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; }
 .tab-title-tail { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.tab-main[data-kind="analysis"] .tab-sub { flex: none; }
-.tab-close { flex: none; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--text-2); opacity: 0; }
-.tab:hover .tab-close, .tab.active .tab-close { opacity: 1; }
-.tab-close:hover { background: var(--bg-active); color: var(--text); }
-/* the active tab keeps its title readable however many tabs are open */
-.tab.active { flex-shrink: 0; min-width: 120px; }
-/* inactive tabs: the close button floats over the title end on hover, so a shrunk tab keeps its room for the title */
-.tab:not(.active) .tab-close { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: var(--bg-hover); }
-.tab:not(.active) .tab-close:hover { background: var(--bg-active); }
+/* the analysis tab shows its icon only (RadarOpus); the title stays for assistive technology and the tooltip */
+.tab-main[data-kind="analysis"] .tab-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* the small red close box at the tab's right end */
+.tab-close {
+  flex: none; display: grid; place-items: center; width: 10px; height: 10px; margin-left: auto; padding: 0;
+  /* RadarOpus: a filled pink square with a white cross */
+  border: 1px solid var(--ro-close-line); border-radius: 1px; background: color-mix(in srgb, var(--ro-close-x) 65%, var(--ro-close)); color: var(--on-accent);
+}
+.tab-close:hover { background: var(--ro-close-x); border-color: var(--ro-close-x); }
+/* every tab shrinks alike, so all open documents stay side by side; the active one keeps a readable title */
+.tab.active { min-width: 120px; }
 .tab-pin { color: var(--text-3); margin: 0 3px; }
-.tab-new { flex: none; margin: 0 0 4px 4px; }
 
-/* ───────── status bar ───────── */
+/* ───────── status strip: text links on the desktop's bottom edge ───────── */
 .statusbar {
-  flex: none; display: flex; align-items: center; gap: 14px; height: var(--statusbar-h); padding: 0 10px;
-  background: var(--chrome); border-top: 1px solid var(--border); color: var(--text-2); font-size: var(--fs-xs); white-space: nowrap;
+  flex: none; display: flex; align-items: center; gap: 0; height: var(--statusbar-h); padding: 0 6px 1px 0;
+  background: var(--desk); color: var(--desk-fg); font: 12.5px/1 var(--font-chrome); white-space: nowrap; min-width: 0; overflow: hidden;
 }
-.status-main { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.status-link { flex: none; height: 20px; padding: 0 10px; border: 0; border-radius: 3px; background: transparent; color: inherit; font: inherit; }
+.status-link:hover { text-decoration: underline; }
 .status-spacer { flex: 1; }
-.status-item { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); }
-.status-hint .kbd { color: var(--text-2); }
-.status-swatch { width: 8px; height: 8px; border-radius: 2px; }
-.status-hint .kbd { padding: 1px 4px; }
+/* RadarOpus's strip holds only its links: the save state is for assistive technology, shown only when saving fails */
+.statusbar .save-ind:not(.save-err) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.statusbar .save-err { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; color: inherit; font-weight: 700; }
 
-/* ───────── empty workspace ───────── */
-.empty-workspace { display: grid; place-content: center; justify-items: center; gap: 8px; text-align: center; color: var(--text-2); }
-.empty-workspace h2 { margin: 8px 0 0; font-size: 16px; color: var(--text); }
-.empty-workspace p { margin: 0; font-size: var(--fs-sm); }
-.empty-actions { display: flex; gap: 8px; margin-top: 10px; }
+/* ───────── empty workspace: the plain window, with text links to open a document ───────── */
+.empty-workspace { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 14px 16px; background: var(--ro-win); font-family: var(--font-chrome); }
+.empty-workspace h2 { margin: 0 0 6px; padding: 0 4px; font: 400 13px var(--font-chrome); color: color-mix(in srgb, var(--ro-tab-fg) 60%, transparent); }
+.empty-link { height: 22px; padding: 0 4px; border: 0; border-radius: 3px; background: transparent; color: var(--ro-tab-fg); font: 13px var(--font-chrome); text-align: left; }
+.empty-link:hover { text-decoration: underline; }
+.empty-link:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
 
-/* status bar: fixed items keep their size, the rubric path ellipsizes */
-.status-item { flex: none; }
-.status-main { flex: 0 1 auto; }
-
-@media (max-width: 900px) {
-  .menubar-search { width: auto; flex: none; }
-  .menubar-search span:not(.kbd) { display: none; }
-  .brand-name { display: none; }
+/* narrow windows: the toolbar keeps every button and drops its labels, then tightens */
+@media (max-width: 1300px) {
+  .toolbar { height: 52px; }
+  .tb-btn { height: 46px; padding: 0 6px; }
+  .tb-icon { top: 0; width: 34px; height: 34px; }
+  .tb-icon svg { width: 32px; height: 32px; }
+  .tb-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  /* without labels the buttons are only as wide as their icon: the ▾ gets room of its own */
+  .tb-item.has-menu .tb-btn { padding-right: 14px; }
+  .tb-caret { top: 29px; left: auto; right: 1px; }
+  .toolbar .qf-pop { top: calc(100% + 10px); }
+  .tb-sep { height: 36px; }
+  .tb-find { margin-bottom: 0; }
 }
-
-/* ~640px (a 1280px window at 200% zoom): everything stays reachable without horizontal scrolling.
-   The toolbar keeps navigation, quick find, Take, "More tools" and the pane toggles; the rest is in "More tools". */
 @media (max-width: 760px) {
-  .toolbar { gap: 2px; padding: 0 4px; }
-  .toolbar .tool-rep, .toolbar .clip-switch, .toolbar .tool-analyse { display: none; }
-  .toolbar .qf { flex: 1 1 auto; width: auto; min-width: 120px; }
-  .tool-group { padding-right: 3px; }
+  .toolbar .tb-low { display: none; }
+  .tb-btn { min-width: 30px; padding: 0 3px; }
+  .tb-icon { width: 24px; height: 24px; }
+  .tb-icon svg { width: 22px; height: 22px; }
+  .tb-item.has-menu .tb-btn { padding-right: 9px; }
+  .toolbar .qf { width: 110px; }
+  .tb-sep { margin: 0 2px; }
   .menubar { gap: 0; padding: 0 4px; }
   .menubar-item { padding: 0 6px; }
-  .menubar-case, .status-totals, .status-hint { display: none; }
-  /* icon only; the words stay in the accessibility tree */
-  .save-ind { padding: 0 4px; gap: 0; font-size: 0; }
-  .brand { padding: 0 6px 0 2px; }
-  .menubar-search { margin-right: 4px; }
 }
 
 /* ───────── menubar overflow ───────── */
@@ -196,20 +261,18 @@
 .menubar-measure > .menubar-item { display: inline-flex; align-items: center; flex: none; }
 .menubar { position: relative; min-width: 0; }
 
-/* phones (320-420px): the toolbar keeps every control by dropping button labels and narrowing quick find */
-@media (max-width: 420px) {
-  .toolbar .tool-btn.with-label > span { display: none; }
-  .toolbar .tool-btn.with-label { padding: 0 6px; }
-  .toolbar .qf { min-width: 64px; }
-  .toolbar .qf-kbd { display: none; }
-  .toolbar .tool-group { padding-right: 2px; margin-right: 0; }
-  .toolbar .tool-btn { min-width: 26px; padding: 0 4px; }
-}
-
 /* one wrapper per mounted document (TabHost.tsx); hidden ones are display:none via <Activity> */
 .tab-doc { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .tab-doc:not([data-active]) { display: none; }
 .tab-doc > * { flex: 1; min-height: 0; }
-/* outside a repertory the picker names the last repertory used, dimmed */
-.tool-select-dim { color: var(--text-3); }
-.tool-select-dim option { color: var(--text); }
+[data-narrow="true"] .pane-left > .splitter-vertical ~ .splitter-vertical { display: none; }
+
+/* ───────── toasts on the desktop ───────── */
+/* RadarOpus shows no pop-up feedback over its windows: the clone's notifications (take feedback with
+   Undo, errors) sit on the status strip's free right end, below the document window, never over the book */
+:root .toasts { right: 6px; bottom: 1px; gap: 3px; max-width: max(260px, min(640px, calc(100vw - 480px))); }
+.toasts .toast { min-height: calc(var(--statusbar-h, 24px) - 2px); padding: 1px 4px 1px 10px; border-radius: 4px; box-shadow: var(--shadow-1, none); animation: none; }
+.toasts .toast { max-width: 100%; }
+/* one line, so the toast stays on the strip; the full text is its title */
+.toasts .toast-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toasts .toast-action, .toasts .toast-x { flex: none; padding-block: 0; }

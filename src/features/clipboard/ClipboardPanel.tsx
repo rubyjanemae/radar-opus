@@ -181,7 +181,7 @@ function dragKind(e: DragEvent): 'symptoms' | 'rubrics' | null {
 }
 const copyModifier = (e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean }) => e.altKey || e.ctrlKey || e.metaKey
 
-const NOT_IN_ANALYSIS_TIP = 'Not included in the analysis (click it in the analysis toolbar to include)'
+const NOT_IN_ANALYSIS_TIP = 'Not included in the analysis (include it with the clipboard menu of the analysis toolbar)'
 
 /** Above this many clipboards the inactive chips show only number, colour and count (name in the tooltip). */
 const COMPACT_CHIPS = 4

@@ -34,6 +34,11 @@ export interface Clipboard {
 }
 
 export type StrategyId =
+  /**
+   * RadarOpus-style "Prominence" (the default): every remedy of a symptom scores i × V(g) with
+   * V = 100 / 120 / 160 / 240 for grades 1–4 (see PROMINENCE_POINTS in analysis.ts for what is verified).
+   */
+  | 'graded-prominence'
   | 'sum-symptoms-degrees'
   | 'sum-degrees'
   | 'sum-symptoms'
@@ -50,7 +55,7 @@ export type StrategyId =
   | 'sum-symptoms-plus-degrees'
   /** Small rubrics, continuous weight w(n) (spec `smallRubricsCont`). */
   | 'small-rubrics-cont'
-  /** Prominence / keynote: points only where the remedy holds the rubric's top grade (spec `prominence`, ANA-014). */
+  /** Keynotes (spec `prominence`, ANA-014; id kept for saved cases): points only where the remedy holds the rubric's top grade. */
   | 'prominence'
   /** Polarity analysis after Frei (spec `polarity`). */
   | 'polarity'
@@ -86,6 +91,11 @@ export interface AnalysisOptions {
   highlightGroups?: string[] | null
   /** Strategy parameters (scoring-spec §6); missing values use DEFAULT_PARAMS. */
   params?: StrategyParamsPatch
+  /**
+   * "Limit the analysis to a view" (RadarOpus): the minimum grade this analysis scores with, 1 = full
+   * repertory. Belongs to the analysis only; the repertory book's own view does not change it.
+   */
+  viewGrade?: 1 | 2 | 3
 }
 
 /** Strategy parameters, scoring-spec §6. */
@@ -128,10 +138,10 @@ export const DEFAULT_PARAMS: StrategyParams = {
 
 /** Every strategy id, in menu order. */
 export const STRATEGY_IDS: readonly StrategyId[] = [
-  'sum-symptoms-degrees', 'sum-symptoms', 'sum-degrees', 'sum-symptoms-plus-degrees', 'weighted', 'small-rubrics', 'small-rubrics-cont',
+  'graded-prominence', 'sum-symptoms-degrees', 'sum-symptoms', 'sum-degrees', 'sum-symptoms-plus-degrees', 'weighted', 'small-rubrics', 'small-rubrics-cont',
   'remedy-size', 'small-remedies', 'prominence', 'kent', 'boenninghausen', 'polarity', 'segments', 'composite', 'elimination',
 ]
-export const DEFAULT_STRATEGY: StrategyId = 'sum-symptoms-degrees'
+export const DEFAULT_STRATEGY: StrategyId = 'graded-prominence'
 
 /** A known strategy id, else the default strategy (unknown ids from old or damaged saves never score as something else). */
 export function normalizeStrategy(id: unknown): StrategyId {

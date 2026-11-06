@@ -79,7 +79,7 @@ describe('sanitizePersisted', () => {
     const out = state.consultations.c1
     expect(out.clipboards).toHaveLength(1)
     expect(out.clipboards[0].symptoms).toEqual([])
-    expect(out.analysis).toMatchObject({ strategy: 'kent', excludedRemedies: [], remedyFilter: null, minCoverage: 0, limit: 30, clipboardIds: [out.clipboards[0].id] })
+    expect(out.analysis).toMatchObject({ strategy: 'kent', excludedRemedies: [], remedyFilter: null, minCoverage: 0, limit: 100000, clipboardIds: [out.clipboards[0].id] })
     expect(state.activeClipboardId).toBe(out.clipboards[0].id)
   })
 
@@ -112,7 +112,7 @@ describe('sanitizePersisted', () => {
       consultations: { c1: consultation('c1', 'p1', { analysis: { strategy: 'magic', clipboardIds: ['c1-cb'], params: { smallRubrics: { threshold: '12', factor: 'x' }, kent: { weights: { mental: 5, srp: null }, mustCoverStrong: true }, bogus: 1, polarity: 'no' } } }) },
     }))
     const a = state.consultations.c1.analysis
-    expect(a.strategy).toBe('sum-symptoms-degrees')
+    expect(a.strategy).toBe('graded-prominence')
     expect(a.params).toEqual({ smallRubrics: { threshold: 12 }, kent: { weights: { mental: 5 }, mustCoverStrong: true } })
     expect(repairs.some(r => r.includes('unknown strategy "magic"'))).toBe(true)
     expect(repairs.some(r => r.includes('strategy parameters'))).toBe(true)

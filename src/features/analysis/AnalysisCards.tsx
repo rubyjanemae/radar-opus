@@ -20,6 +20,8 @@ interface Props {
   remedyMenu: (row: AnalysisRow) => MenuItem[]
   reveal?: { remedyId: number; nonce: number } | null
   pinned?: Set<number>
+  /** Expected size of the scroll box (the pane it mounts into): the first render already lays out the right columns. */
+  sizeHint?: () => { width: number; height: number } | null
 }
 
 /** First guess of a card row's height; the rendered cards correct it (it only grows for a given result and width). */
@@ -104,7 +106,10 @@ export const AnalysisCards = memo(function AnalysisCards(p: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const cm = useContextMenu()
   const scored = useMemo(() => result.symptoms.map((s, i) => ({ s, i })).filter(x => x.s.role === 'scored'), [result])
-  const [vp, setVp] = useState({ top: 0, height: 600, width: 0 })
+  const [vp, setVp] = useState(() => {
+    const s = p.sizeHint?.()
+    return s && s.width > 0 ? { top: 0, height: s.height, width: s.width } : { top: 0, height: 600, width: 0 }
+  })
   const [active, setActive] = useState(0)
   // a card row's height: grows to the tallest card rendered, starts again for a new result or width
   const [rowH, setRowH] = useState({ key: '', h: CARD_H0 })
@@ -193,7 +198,8 @@ export const AnalysisCards = memo(function AnalysisCards(p: Props) {
       onDoubleClick={e => { const k = cardAt(e.target); if (k != null) p.onOpenRemedy(rows[k].remedyId) }}
       onContextMenu={e => { const k = cardAt(e.target); if (k != null) { setActive(k); cm.open(e, p.remedyMenu(rows[k])) } }}
       onKeyDown={e => {
-        if (!rows.length) return
+        // keys typed in the context menu (a portal, but a React child) are the menu's, not the cards'
+        if (!rows.length || !e.currentTarget.contains(e.target as Node)) return
         const page = Math.max(1, Math.floor((ref.current?.clientHeight ?? 300) / pitch)) * cols
         const id = rows[a].remedyId
         let handled = true

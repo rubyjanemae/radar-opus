@@ -10,12 +10,13 @@ export const CLIPBOARD_COLORS = ['#2f6fdb', '#d9534f', '#2e9e5b', '#e0a100', '#8
 export const MAX_CLIPBOARDS = 12
 
 export const DEFAULT_ANALYSIS: AnalysisOptions = {
-  strategy: 'sum-symptoms-degrees',
+  strategy: 'graded-prominence',
   clipboardIds: [],
   remedyFilter: null,
   excludedRemedies: [],
   minCoverage: 0,
-  limit: 30,
+  // RadarOpus shows every remedy of the analysis (the grid scrolls sideways)
+  limit: 100000,
 }
 
 export function newClipboard(index: number): Clipboard {
@@ -44,7 +45,8 @@ export interface CaseData {
   consultations: Record<string, Consultation>
 }
 
-export interface Toast { id: string; text: string; tone: 'info' | 'success' | 'error'; action?: { label: string; run: () => void } }
+/** `quiet`: announced to assistive technology only, no card on screen (RadarOpus shows no notification for it). */
+export interface Toast { id: string; text: string; tone: 'info' | 'success' | 'error'; action?: { label: string; run: () => void }; quiet?: boolean }
 
 /** A tab closed by an undoable step, with its position, so undo can reopen it. */
 export interface ClosedTab { tab: Tab; index: number }
@@ -441,8 +443,8 @@ export const actions = {
   },
 
   // toasts
-  toast(text: string, tone: Toast['tone'] = 'info', action?: Toast['action'], durationMs?: number) {
-    const t: Toast = { id: uid('t'), text, tone, action }
+  toast(text: string, tone: Toast['tone'] = 'info', action?: Toast['action'], durationMs?: number, quiet?: boolean) {
+    const t: Toast = { id: uid('t'), text, tone, action, ...(quiet ? { quiet } : {}) }
     const dropped = get().toasts.slice(0, -3)
     set(s => ({ toasts: [...s.toasts.slice(-3), t] }))
     for (const d of dropped) { const tm = toastTimers.get(d.id); if (tm?.handle) clearTimeout(tm.handle); toastTimers.delete(d.id) }

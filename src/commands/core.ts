@@ -39,7 +39,7 @@ export function registerCoreCommands(catalog: Catalog) {
     },
 
     // View
-    { id: 'view.toggleTree', title: 'Navigator pane', category: 'View', keys: ['Mod+B'], checked: () => st().layout.showTree, run: () => actions.setLayout({ showTree: !st().layout.showTree }) },
+    // the table of contents is view.toc (Cmd+F2, with Cmd+B as its second key) in shell/commands.ts
     { id: 'view.toggleClipboard', title: 'Clipboard pane', category: 'View', keys: ['Mod+Shift+B'], checked: () => st().layout.showClipboard, run: () => actions.setLayout({ showClipboard: !st().layout.showClipboard }) },
     { id: 'view.toggleDock', title: 'Analysis preview dock', category: 'View', keys: ['Mod+J'], checked: () => st().layout.showAnalysisDock, run: () => actions.setLayout({ showAnalysisDock: !st().layout.showAnalysisDock }) },
     { id: 'view.theme.light', title: 'Light', category: 'View', checked: () => st().settings.theme === 'light', run: () => actions.setSettings({ theme: 'light' }), keywords: 'theme' },

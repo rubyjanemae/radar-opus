@@ -252,3 +252,52 @@ function take(text: string, tokens: string[], from: number): number {
   while (t < tokens.length && wordStarts(text, tokens[t])) t++
   return t
 }
+
+/** A rubric text split around its "(see …)" reference ("siehe" in the German Kent). */
+export interface SeeRef {
+  /** The rubric name without the reference. */
+  name: string
+  /** The reference as printed after the name: "(siehe brennend)", or "(siehe … )" when the data cut it off. */
+  see: string
+  /** The referred rubric's name, '' when the data does not give it. */
+  target: string
+}
+
+const SEE_RE = /\s*\((see|siehe)\b\s*([^()]*?)\s*(?:\)|$)/i
+
+/** The "(see …)" reference of a rubric text, or null when it has none. Pure. */
+export function splitSee(text: string): SeeRef | null {
+  const m = SEE_RE.exec(text)
+  if (!m) return null
+  const closed = m[0].trimEnd().endsWith(')')
+  const target = closed ? m[2].trim() : ''
+  const name = (text.slice(0, m.index) + text.slice(m.index + m[0].length)).trim()
+  if (!name) return null
+  // RadarOpus always prints the collapsed marker "(See … )"; the target is followed, never printed inline
+  return { name, see: `(${m[1]} … )`, target }
+}
+
+/** The name a rubric is shown by (path strip, labels): its text without a "(see …)" reference. */
+export function rubricName(text: string): string {
+  return splitSee(text)?.name ?? text
+}
+
+/**
+ * The rubric a "(see …)" reference of rubric i points to: the nearest rubric named so among its
+ * siblings, then among its parent's siblings and so on up to the chapter's main rubrics ("brennend"
+ * also matches "brennend, nachts" and "Trägheit des Mastdarms"). -1 when there is none.
+ */
+export function seeTarget(rep: Pick<Repertory, 'text' | 'parent' | 'children'>, i: number): number {
+  const ref = splitSee(rep.text(i))
+  if (!ref?.target) return -1
+  const t = ref.target.toLocaleLowerCase()
+  const named = (c: number) => {
+    const x = rubricName(rep.text(c)).toLocaleLowerCase()
+    return x === t || x.startsWith(`${t} `) || x.startsWith(`${t},`)
+  }
+  for (let a = rep.parent(i); a >= 0; a = rep.parent(a)) {
+    const hit = rep.children(a).find(c => c !== i && named(c))
+    if (hit != null) return hit
+  }
+  return -1
+}

@@ -1,13 +1,13 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
-import { openApp, SEEDED, waitForSaved, withinBudget } from './helpers'
+import { openApp, SEEDED, waitForSaved, withinBudget, showClipboardPane } from './helpers'
 
 const list = (page: Page) => page.getByTestId('patients-view')
 const rows = (page: Page) => list(page).locator('.pt-body .pt-row')
 
 async function openPatients(page: Page) {
-  await page.keyboard.press('Control+3')
+  await page.keyboard.press('ControlOrMeta+3')
   await expect(list(page)).toBeVisible()
 }
 
@@ -20,11 +20,15 @@ async function openActivePatient(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   await openApp(page, SEEDED)
+  await showClipboardPane(page)
 })
 
-test('first run seeds a practice, the repertory and the patients tab, with an active case', async ({ page }) => {
-  await expect(page.locator('.tab', { hasText: 'Patients' })).toBeVisible()
+test('first run seeds a practice and one repertory tab; the patients list opens as a tab on demand', async ({ page }) => {
+  // RadarOpus opens a single book window: no Patients document until the user asks for it
+  await expect(page.locator('.tab')).toHaveCount(1)
+  await expect(page.locator('.tab', { hasText: 'Patients' })).toHaveCount(0)
   await openPatients(page)
+  await expect(page.locator('.tab', { hasText: 'Patients' })).toBeVisible()
   await expect(list(page).locator('.pt-list-status')).toContainText('45 patients')
   // the clipboard panel shows the active case
   await expect(page.getByTestId('clipboard-panel')).not.toContainText('No active case')
@@ -69,7 +73,7 @@ test('keyboard navigation opens a patient; Shift+F10 opens the row menu', async 
 })
 
 test('new patient: validation, then a first consultation opens', async ({ page }) => {
-  await page.keyboard.press('Control+Alt+N')
+  await page.keyboard.press('ControlOrMeta+Alt+N')
   const dialog = page.getByRole('dialog', { name: 'New patient' })
   // surname first, focused on open, Tab moves to the first name ('Surname, First' order)
   await expect(dialog.getByLabel('Last name')).toBeFocused()
@@ -97,9 +101,9 @@ test('new patient: validation, then a first consultation opens', async ({ page }
   await expect(page.locator('.pt-ed-complaint-input')).toBeFocused()
   // patient and first consultation are one undo step
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect(page.locator('.toast').last()).toContainText('Undone: New patient')
-  await page.keyboard.press('Control+3')
+  await page.keyboard.press('ControlOrMeta+3')
   await expect(list(page).locator('.pt-list-status')).toContainText('45 patients')
 })
 
@@ -277,7 +281,7 @@ test('import with replace overwrites the record on file in one undo step', async
   await occupation.press('Enter')
   const chooser = page.waitForEvent('filechooser')
   await page.evaluate(() => document.querySelector<HTMLElement>('body')?.focus())
-  await page.keyboard.press('Control+3')
+  await page.keyboard.press('ControlOrMeta+3')
   await list(page).getByRole('button', { name: 'Import' }).click()
   await (await chooser).setFiles(file!)
   await page.getByRole('dialog', { name: 'Patient already on file' }).getByRole('button', { name: 'Replace' }).click()
@@ -285,7 +289,7 @@ test('import with replace overwrites the record on file in one undo step', async
   await page.getByRole('tab', { name: 'Details' }).click()
   await expect(page.getByTestId('patient-details').getByLabel('Occupation')).toHaveValue(before)
   await expect(page.locator('.pt-head-name')).toHaveText(name)
-  await page.keyboard.press('Control+3')
+  await page.keyboard.press('ControlOrMeta+3')
   await expect(list(page).locator('.pt-list-status')).toContainText('45 patients')
 })
 
@@ -297,7 +301,7 @@ test('deleting a patient from its own page lands on the table; Ctrl+Z restores i
   await page.getByRole('dialog', { name: 'Delete patient' }).getByRole('button', { name: 'Delete patient' }).click()
   await expect(list(page).locator('.pt-table')).toBeFocused()
   await expect(list(page).locator('.pt-list-status')).toContainText('44 patients')
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   // undo brings the patient back, with its page
   await expect(page.locator('.tab-doc[data-active]').getByTestId('patient-view').locator('.pt-head-name')).toHaveText(name)
   await openPatients(page)
@@ -313,13 +317,13 @@ test('Ctrl+Z in the empty or unchanged patients search field is the app undo', a
   await expect(list(page).locator('.pt-list-status')).toContainText('44 patients')
   const search = page.getByLabel('Search patients')
   await search.focus()
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect(list(page).locator('.pt-list-status')).toContainText('45 patients')
   await expect(rows(page).filter({ hasText: name })).toHaveCount(1)
   // once the query was edited, Ctrl+Z is the field's own undo (the app history is untouched)
   await search.focus()
   await page.keyboard.type('ab')
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect(list(page).locator('.pt-list-status')).toContainText(/of 45 patients|45 patients/)
   await expect(list(page).locator('.pt-list-status')).not.toContainText('44')
 })
@@ -367,9 +371,11 @@ test('?seed=empty starts without demo patients and shows the empty state', async
 })
 
 test('Ctrl+3 puts the caret in the search box; ↓ and Enter open a patient without the mouse', async ({ page }) => {
-  await page.keyboard.press('Control+3')
+  await page.keyboard.press('ControlOrMeta+3')
   await expect(page.getByLabel('Search patients')).toBeFocused()
-  await page.keyboard.type('thirstless') // rubric text of the clipboards is searchable
+  // one change (a freshly opened list filters as it mounts): rubric text of the clipboards is searchable
+  await page.getByLabel('Search patients').fill('thirstless')
+  await expect(page.getByLabel('Search patients')).toBeFocused()
   await expect(list(page).locator('.pt-list-status')).toContainText(/\d+ of 45 patients/)
   await page.keyboard.press('ArrowDown')
   await expect(list(page).locator('.pt-table')).toBeFocused()
@@ -419,7 +425,7 @@ test('timeline top remedies follow the minimum grade shown, like the analysis', 
     await expect(page.locator('.pt-tl-item.selected .pt-tl-top')).toContainText(abbrevs.join(' · '))
   }
   await agree()
-  await page.keyboard.press('Control+Comma')
+  await page.keyboard.press('ControlOrMeta+Comma')
   await page.getByRole('tab', { name: 'Repertory' }).click()
   await page.getByRole('radio', { name: 'Grade 3+' }).click()
   await page.getByRole('button', { name: 'Done' }).click()
@@ -475,7 +481,7 @@ test('case report: remedies table lays out as a table and the preview scrolls wi
 
 test('Ctrl+Alt+P brings the prescription form into view, prefilled with the analysis remedy', async ({ page }) => {
   await openActivePatient(page)
-  await page.keyboard.press('Control+Alt+p')
+  await page.keyboard.press('ControlOrMeta+Alt+p')
   const input = page.getByTestId('consultation-editor').getByRole('combobox', { name: 'Remedy' })
   await expect(input).toBeFocused()
   const top = (await page.locator('.pt-top li').first().locator('.pt-top-abbrev').innerText()).replace(/[^\w-]/g, '')
@@ -498,7 +504,7 @@ test('Ctrl+Alt+P brings the prescription form into view, prefilled with the anal
     return String(hit[1])
   })
   await expect(page.locator('.tab-doc[data-active]').getByTestId('patient-view')).toBeHidden()
-  await page.keyboard.press('Control+Alt+p')
+  await page.keyboard.press('ControlOrMeta+Alt+p')
   await expect(input).toHaveValue(sep)
   await expect(input).toBeFocused()
 })

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { openApp } from './helpers'
+import { openApp, showClipboardPane } from './helpers'
 
 const view = (page: Page) => page.getByTestId('families-view')
 const tree = (page: Page) => view(page).getByRole('tree', { name: 'Remedy families' })
@@ -25,7 +25,7 @@ async function newCase(page: Page) {
 }
 
 async function openFamilies(page: Page) {
-  await page.keyboard.press('Control+5')
+  await page.keyboard.press('ControlOrMeta+5')
   await expect(tree(page)).toBeVisible({ timeout: 20_000 })
 }
 
@@ -35,7 +35,7 @@ async function selectFamily(page: Page, name: string) {
   await expect(view(page).locator('.fam-title h1')).toHaveText(name)
 }
 
-test.beforeEach(async ({ page }) => { await openApp(page) })
+test.beforeEach(async ({ page }) => { await openApp(page); await showClipboardPane(page) })
 
 test('Ctrl+5 opens the families tree with kingdoms and an overview', async ({ page }) => {
   await openFamilies(page)
@@ -103,7 +103,9 @@ test('limit and highlight the analysis from the view, and clear them', async ({ 
   await expect(heads.first()).toBeVisible({ timeout: 20_000 })
   const abbrevs = await heads.allInnerTexts()
   expect(abbrevs.length).toBeGreaterThan(0)
-  for (const a of abbrevs) expect(solanaceae).toContain(a.trim())
+  // the columns print abbreviations as the book does ("bell."): compare without case and final dot
+  const plain = (x: string) => x.trim().toLowerCase().replace(/\.$/, '')
+  for (const a of abbrevs) expect(solanaceae.map(plain)).toContain(plain(a))
 
   await openFamilies(page)
   await view(page).getByRole('button', { name: 'Highlight in analysis', exact: true }).click()
@@ -120,7 +122,7 @@ test('family filter dialog applies several families as a highlight', async ({ pa
   await page.keyboard.press('F8')
   await expect(page.getByTestId('analysis-view')).toBeVisible()
   // the analysis filter command opens the families dialog
-  await page.getByTestId('analysis-view').getByRole('button', { name: 'Filter remedies' }).click()
+  await page.getByTestId('analysis-view').getByRole('button', { name: 'Remedy filters' }).click(); await page.getByRole('menuitem', { name: 'Family filter…' }).click()
   const dlg = page.getByRole('dialog', { name: 'Family filter' })
   await expect(dlg).toBeVisible()
   await dlg.getByRole('radio', { name: /Highlight/ }).click()
@@ -156,9 +158,9 @@ test('Ctrl+F and F2 focus the families search when focus is in the view', async 
   await expect(search(page)).toBeFocused()
   await expect(page.getByRole('dialog')).toHaveCount(0) // not the repertory type-ahead
   await tree(page).focus()
-  await page.keyboard.press('Control+F')
+  await page.keyboard.press('ControlOrMeta+F')
   await expect(search(page)).toBeFocused()
-  await expect(page.getByPlaceholder('Find rubric or remedy…')).not.toBeFocused()
+  await expect(page.getByPlaceholder('search in English')).not.toBeFocused()
 })
 
 test('search matches word starts and lists every matching remedy', async ({ page }) => {
@@ -232,7 +234,7 @@ test('family filter dialog: fast keyboard checking, Enter applies, remedy filter
   await view(page).getByRole('button', { name: 'Family filter…' }).click()
   await dlg.getByRole('radio', { name: /Highlight/ }).click()
   await dlg.getByLabel('Find family').focus()
-  await page.keyboard.press('Control+Enter')
+  await page.keyboard.press('ControlOrMeta+Enter')
   await expect(dlg).toBeHidden()
   await expect(view(page).locator('.fam-pill.hl')).toContainText('Highlighting Solanaceae')
   // the analysis's own remedy filter dialog (exclude, minimum coverage) is one click away
@@ -246,7 +248,7 @@ test('family filter dialog reopens with the current families in their mode', asy
   await page.keyboard.press('F8')
   await expect(page.getByTestId('analysis-view')).toBeVisible()
   const dlg = page.getByRole('dialog', { name: 'Family filter' })
-  const open = async () => { await page.getByTestId('analysis-view').getByRole('button', { name: 'Filter remedies' }).click(); await expect(dlg).toBeVisible() }
+  const open = async () => { await page.getByTestId('analysis-view').getByRole('button', { name: 'Remedy filters' }).click(); await page.getByRole('menuitem', { name: 'Family filter…' }).click(); await expect(dlg).toBeVisible() }
   const selected = () => dlg.getByRole('list', { name: 'Selected families' }).locator('li .fam-ellipsis')
   const apply = dlg.getByTestId('fam-apply')
   const find = dlg.getByLabel('Find family')
@@ -258,7 +260,7 @@ test('family filter dialog reopens with the current families in their mode', asy
   await checkFamily('Liliales')
   await checkFamily('Anacardiaceae')
   await expect(apply).toHaveText('Highlight')
-  await page.keyboard.press('Control+Enter')
+  await page.keyboard.press('ControlOrMeta+Enter')
   await expect(dlg).toBeHidden()
 
   // reopens in Highlight with both families checked; nothing changed yet
@@ -336,7 +338,7 @@ test('a load error shows a compact retry block', async ({ page }) => {
   let fail = true
   await page.route('**/data/families.json', r => (fail ? r.fulfill({ status: 500, body: 'error' }) : r.continue()))
   await openApp(page) // reload so the families load goes through the route
-  await page.keyboard.press('Control+5')
+  await page.keyboard.press('ControlOrMeta+5')
   const alert = view(page).getByRole('alert')
   await expect(alert).toContainText('Families could not be loaded')
   const box = await alert.boundingBox()
@@ -347,15 +349,15 @@ test('a load error shows a compact retry block', async ({ page }) => {
 })
 
 test('Ctrl+5 puts focus in the view, so Ctrl+F finds in families', async ({ page }) => {
-  await page.keyboard.press('Control+5')
+  await page.keyboard.press('ControlOrMeta+5')
   await expect(view(page)).toBeVisible()
   await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('.fam-view'))).toBe(true)
-  await page.keyboard.press('Control+f')
+  await page.keyboard.press('ControlOrMeta+f')
   await expect(view(page).getByRole('textbox', { name: 'Find families and remedies' })).toBeFocused()
 })
 
 test('search goes to the best hit: the family before its order, with the level shown', async ({ page }) => {
-  await page.keyboard.press('Control+5')
+  await page.keyboard.press('ControlOrMeta+5')
   const find = view(page).getByRole('textbox', { name: 'Find families and remedies' })
   await find.fill('solan')
   await expect(view(page).locator('.fam-row.match .fam-level')).toHaveText(['Order', 'Family'])

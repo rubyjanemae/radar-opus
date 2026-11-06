@@ -1,9 +1,27 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { openApp, settle, waitForSaved } from './helpers'
+import { openApp, settle, waitForSaved, showClipboardPane } from './helpers'
 
 const view = (page: Page) => page.getByTestId('analysis-view')
 const headers = (page: Page) => view(page).locator('.an-hcell')
+/** Symptom lines of the grid's symptom pane (the clipboard header bars are `.an-cbrow`). */
+const symRows = (page: Page) => view(page).locator('.an-row:not(.an-cbrow)')
+const symLabels = (page: Page) => symRows(page).locator('.an-label')
+/** The footer's "N symptom(s) / M remedies" box. */
+const countBox = (page: Page) => view(page).locator('.an-footer .an-count')
+const remedyTotal = async (page: Page) => Number(((await countBox(page).locator('strong').nth(1).textContent()) ?? '').replace(/\D/g, ''))
+/** Run a command by its title through the command palette. */
+async function runPalette(page: Page, title: string) {
+  await page.keyboard.press('ControlOrMeta+k')
+  await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible()
+  await page.keyboard.type(title)
+  await page.keyboard.press('Enter')
+}
+/** Pick an entry of a toolbar menu button. */
+async function toolbarMenu(page: Page, button: string | RegExp, item: string | RegExp) {
+  await view(page).getByRole('button', { name: button }).click()
+  await page.getByRole('menu').getByRole('menuitem').or(page.getByRole('menu').getByRole('menuitemcheckbox')).filter({ hasText: item }).first().click()
+}
 const RUBRICS = [191, 3746, 7862, 28493, 4529, 72742, 70571, 5699, 25192].map(i => `publicum:${i}`)
 
 async function newCase(page: Page) {
@@ -34,7 +52,7 @@ async function analysedCase(page: Page, refs = RUBRICS) {
   await expect(headers(page).first()).toBeVisible({ timeout: 20_000 })
 }
 
-test.beforeEach(async ({ page }) => { await openApp(page) })
+test.beforeEach(async ({ page }) => { await openApp(page); await showClipboardPane(page) })
 
 test('F8 without a case explains instead of opening an empty tab', async ({ page }) => {
   // the app seeds a demo case: close it first
@@ -50,34 +68,73 @@ test('empty clipboard shows guidance, then updates live as rubrics arrive', asyn
   await page.keyboard.press('F8')
   await expect(view(page)).toContainText('Nothing to analyse yet')
   await dropRubrics(page, RUBRICS.slice(0, 2))
-  await expect(view(page).locator('.an-row')).toHaveCount(2, { timeout: 20_000 })
+  await expect(symRows(page)).toHaveCount(2, { timeout: 20_000 })
+  // one salmon header bar for the clipboard, symptoms numbered within it
+  await expect(view(page).locator('.an-cbrow')).toHaveText('1. Clipboard 1')
+  await expect(symLabels(page).first().locator('.an-sym-n')).toHaveText('1.')
+  // RadarOpus form: chapter and first level in capitals, " - " between levels
+  await expect(symLabels(page).first().locator('.an-label-text')).toHaveText('MIND - ANXIETY - night')
+  // the grey triangle opens the symptom's detail line (its repertory; size and intensity are on the line itself) and closes it again
+  await symLabels(page).first().locator('.an-sdisc').click()
+  await expect(view(page).locator('.an-inforow')).toHaveText('Repertorium Publicum')
+  await expect(symLabels(page).first()).toHaveAttribute('aria-expanded', 'true')
+  await symLabels(page).first().locator('.an-sdisc').click()
+  await expect(view(page).locator('.an-inforow')).toHaveCount(0)
   await dropRubrics(page, RUBRICS.slice(2, 3))
-  await expect(view(page).locator('.an-row')).toHaveCount(3)
-  await expect(view(page).locator('.an-corner')).toContainText('3 symptoms')
+  await expect(symRows(page)).toHaveCount(3)
+  await expect(countBox(page)).toHaveText(/^3 symptom\(s\) \/ [\d,]+ remedies$/)
 })
 
 test('grid ranks remedies, strategy menu re-ranks and is checked', async ({ page }) => {
   await analysedCase(page)
-  await expect(view(page).getByRole('grid')).toHaveAttribute('aria-rowcount', '10')
+  // header row + clipboard bar + 9 symptoms
+  await expect(view(page).getByRole('grid')).toHaveAttribute('aria-rowcount', '11')
   const first = headers(page).first()
   await expect(first.locator('.an-rank')).toHaveText('1')
-  await expect(first.locator('.an-score')).toHaveText(/^\d+\/\d+$/)
-  // header scores are sorted descending by symptoms then degrees
-  const scores = await headers(page).locator('.an-score').allTextContents()
-  const keyed = scores.slice(0, 10).map(s => s.split('/').map(Number))
+  // the default method, Prominence, prints one score row (100 / 120 / 160 points per grade 1 / 2 / 3), sorted descending
+  await expect(view(page).locator('.an-fstrategy')).toHaveText('Prominence')
+  await expect(first.locator('.an-score')).toHaveText(/^\d+$/)
+  await expect(first.locator('.an-score2')).toHaveCount(0)
+  const scores = (await headers(page).locator('.an-score').allTextContents()).slice(0, 10).map(Number)
+  for (let i = 1; i < scores.length; i++) expect(scores[i - 1]).toBeGreaterThanOrEqual(scores[i])
+  expect(scores[0] % 20).toBe(0)
+  // Sum of symptoms (sort degrees) prints two score rows: symptoms, then degrees
+  await toolbarMenu(page, /Analysis method/, /Sum of symptoms \(sort degrees\)/)
+  await expect(first.locator('.an-score2')).toHaveText(/^\d+$/)
+  const sym = await headers(page).locator('.an-score').allTextContents()
+  const deg = await headers(page).locator('.an-score2').allTextContents()
+  const keyed = sym.slice(0, 10).map((x, k) => [Number(x), Number(deg[k])])
   for (let i = 1; i < keyed.length; i++) expect(keyed[i - 1][0] * 1000 + keyed[i - 1][1]).toBeGreaterThanOrEqual(keyed[i][0] * 1000 + keyed[i][1])
 
   await view(page).getByRole('button', { name: /Analysis method/ }).click()
   await page.getByRole('menuitemcheckbox', { name: /Small rubrics \(Organon/ }).click()
   await expect(view(page).getByRole('button', { name: /Analysis method: Small rubrics \(Organon/ })).toBeVisible()
-  await expect(first.locator('.an-score')).not.toHaveText(/\//)
+  await expect(first.locator('.an-score2')).toHaveCount(0)
+  await expect(view(page).locator('.an-fstrategy')).toContainText('Small rubrics (Organon §153)')
   await view(page).getByRole('button', { name: /Analysis method/ }).click()
   await expect(page.getByRole('menuitemcheckbox', { name: /Small rubrics \(Organon/ })).toHaveAttribute('aria-checked', 'true')
   await page.keyboard.press('Escape')
 
   // undo restores the previous strategy (options are case data)
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect(view(page).getByRole('button', { name: /Analysis method: Sum of symptoms \(sort degrees\)/ })).toBeVisible()
+})
+
+test('Analysis › Select your default analysis method sets the default for new analyses', async ({ page }) => {
+  await analysedCase(page, RUBRICS.slice(0, 2))
+  await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'Analysis' }).click()
+  await page.getByRole('menuitem', { name: 'Select your default analysis method' }).click()
+  await page.getByRole('menuitemcheckbox', { name: /^Kent \(hierarchy\)/ }).click()
+  // the current analysis switches too
+  await expect(view(page).locator('.an-fstrategy')).toHaveText('Kent (hierarchy)')
+  // a new case starts with it (its analysis opens in a tab of its own)
+  await newCase(page)
+  await dropRubrics(page, RUBRICS.slice(0, 1))
+  await page.keyboard.press('F8')
+  await expect(page.locator('[data-testid="analysis-view"]:visible .an-fstrategy')).toHaveText('Kent (hierarchy)')
+  await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'Analysis' }).click()
+  await page.getByRole('menuitem', { name: 'Select your default analysis method' }).click()
+  await expect(page.getByRole('menuitemcheckbox', { name: /^Kent \(hierarchy\)/ })).toHaveAttribute('aria-checked', 'true')
 })
 
 test('keyboard grid navigation and drill-down panel', async ({ page }) => {
@@ -87,7 +144,8 @@ test('keyboard grid navigation and drill-down panel', async ({ page }) => {
   await page.keyboard.press('ArrowRight')
   await expect(page.locator('[data-cell="-1:1"]')).toBeFocused()
   // cells name their remedy and symptom for screen readers
-  await expect(page.locator('[data-cell="0:0"]')).toHaveAttribute('aria-label', /^\S+, MIND - anxiety, night: (grade \d|absent)$/)
+  // line 0 is the clipboard's header bar, line 1 the first symptom
+  await expect(page.locator('[data-cell="1:0"]')).toHaveAttribute('aria-label', /^\S+, MIND - ANXIETY - night: (grade \d|absent)$/)
   await page.keyboard.press('Enter')
   const panel = page.getByTestId('remedy-panel')
   await expect(panel).toBeVisible()
@@ -98,30 +156,121 @@ test('keyboard grid navigation and drill-down panel', async ({ page }) => {
   const pts = await panel.locator('tbody .an-term-pts').allTextContents()
   const total = await panel.locator('tfoot .an-term-pts').textContent()
   expect(pts.reduce((s, x) => s + Number(x), 0)).toBeCloseTo(Number(total), 5)
+  // down from the header: the clipboard bar (it has no remedy cells), then the first symptom in the same column
   await page.keyboard.press('ArrowDown')
-  await expect(page.locator('[data-cell="0:1"]')).toBeFocused()
+  await expect(page.locator('[data-cell="0:-1"]')).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(page.locator('[data-cell="1:1"]')).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
 })
 
-test('symptom row highlights remedies in it; remedy box jumps to a remedy', async ({ page }) => {
-  await analysedCase(page)
-  await view(page).locator('.an-label').nth(2).click()
-  await expect(view(page).locator('.an-symbar')).toContainText('HEAD - pain, morning')
-  await expect(view(page).locator('.an-row.selected')).toHaveCount(1)
-  await view(page).getByRole('button', { name: 'Clear symptom highlight' }).click()
-  await expect(view(page).locator('.an-symbar')).toHaveCount(0)
+test('symptom pane keys: 0–4 set the intensity, Delete removes (undoable); the drill-down keeps the pane width', async ({ page }) => {
+  await analysedCase(page, RUBRICS.slice(0, 2))
+  const weight = symLabels(page).first().locator('.an-weight')
+  await expect(weight).toHaveText('1')
+  const score = headers(page).first().locator('.an-score')
+  const before = Number(await score.textContent())
+  await symLabels(page).first().focus()
+  await page.keyboard.press('3')
+  await expect(weight).toHaveText('3')
+  await expect.poll(async () => Number(await headers(page).first().locator('.an-score').textContent())).toBeGreaterThan(before)
+  // 0 ignores the symptom; the pane stays, so another digit brings it back
+  await page.keyboard.press('0')
+  await expect(weight).toHaveText('0')
+  await expect(symLabels(page).first()).toBeFocused()
+  await page.keyboard.press('1')
+  await expect(weight).toHaveText('1')
+  // the context menu offers the same edits
+  await page.keyboard.press('Shift+F10')
+  await expect(page.getByRole('menu').getByRole('menuitem', { name: /Remove symptom/ })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await symLabels(page).first().focus()
+  await page.keyboard.press('Delete')
+  await expect(symRows(page)).toHaveCount(1)
+  await expect(countBox(page)).toContainText(/^1 symptom\(s\)/)
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(symRows(page)).toHaveCount(2)
+  // the remedy drill-down takes its room from the remedy columns, not from the symptom pane
+  const label = () => view(page).getByRole('grid').evaluate(el => parseFloat(getComputedStyle(el).getPropertyValue('--an-label')))
+  const w0 = await label()
+  await headers(page).first().click()
+  await expect(page.getByTestId('remedy-panel')).toBeVisible()
+  expect(await label()).toBe(w0)
+})
 
-  const box = view(page).getByRole('combobox', { name: 'Jump to remedy in analysis' })
+test('an open context menu keeps its keys from the grid; Escape returns to the cell with its ring', async ({ page }) => {
+  await analysedCase(page, RUBRICS.slice(0, 2))
+  const first = symLabels(page).first()
+  await first.focus()
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('ArrowLeft')
+  await expect(first).toBeFocused()
+  const grid = view(page).getByRole('grid')
+  await expect(grid).toHaveClass(/an-keyed/)
+  await page.keyboard.press('Shift+F10')
+  const menu = page.getByRole('menu', { name: 'Context menu' })
+  await expect(menu).toBeFocused()
+  // arrows, digits and Delete belong to the menu: the grid cursor and the case do not change
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('3')
+  await page.keyboard.press('Delete')
+  await expect(menu).toBeFocused()
+  await expect(symRows(page)).toHaveCount(2)
+  await expect(first.locator('.an-weight')).toHaveText('1')
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(first).toBeFocused()
+  await expect(grid).toHaveClass(/an-keyed/)
+})
+
+test('symptoms only (F7 without the clipboard pane) hides the remedy columns, F8 brings them back; the toolbar moves with arrow keys', async ({ page }) => {
+  await analysedCase(page, RUBRICS.slice(0, 2))
+  await expect(headers(page).first()).toBeVisible()
+  // the clipboard pane is open in these tests, where F7 focuses it: the command F7 runs without it
+  await runPalette(page, 'Show analysis with symptoms only')
+  await expect(headers(page)).toHaveCount(0)
+  await expect(symRows(page)).toHaveCount(2)
+  await page.keyboard.press('F8')
+  await expect(headers(page).first()).toBeVisible()
+  const tb = view(page).getByRole('toolbar', { name: 'Analysis toolbar' })
+  await tb.getByRole('button', { name: 'Display and remedies shown' }).focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(tb.getByRole('button', { name: /^Analysis method/ })).toBeFocused()
+  await page.keyboard.press('ArrowLeft')
+  await expect(tb.getByRole('button', { name: 'Display and remedies shown' })).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(page.getByRole('menu')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(tb.getByRole('button', { name: 'Display and remedies shown' })).toBeFocused()
+})
+
+test('symptom row highlights remedies in it; Search remedy marks columns and jumps to a remedy', async ({ page }) => {
+  await analysedCase(page)
+  // the highlight is shown in place: the grid does not move under the pointer (no banner above it)
+  const y0 = (await symLabels(page).nth(2).boundingBox())!.y
+  await symLabels(page).nth(2).click()
+  await expect(view(page).locator('.an-row.selected')).toHaveCount(1)
+  await expect(view(page).locator('.an-row.selected .an-label-text')).toHaveText('HEAD - PAIN - morning')
+  expect((await symLabels(page).nth(2).boundingBox())!.y).toBe(y0)
+  await expect(view(page).locator('.an-hcell.hit').first()).toBeAttached()
+  // a second click (or Escape) clears it
+  await symLabels(page).nth(2).click()
+  await expect(view(page).locator('.an-row.selected')).toHaveCount(0)
+
+  const box = view(page).getByRole('combobox', { name: 'Search remedy' })
   await box.fill('lyc')
-  await expect(view(page).getByRole('option').first()).toContainText('Lyc')
+  await expect(view(page).locator('#an-rbox-list').getByRole('option').first()).toContainText('Lyc')
+  // typing marks the matching columns
+  await expect(view(page).locator('.an-hcell.found .an-abbrev').first()).toHaveText('lyc.')
   await box.press('Enter')
   await expect(page.getByTestId('remedy-panel').locator('h3')).toHaveText('Lyc')
-  await expect(view(page).locator('.an-hcell.selected .an-abbrev')).toHaveText('Lyc')
+  await expect(view(page).locator('.an-hcell.selected .an-abbrev')).toHaveText('lyc.')
 })
 
 test('exclude, show in position, intensity toggle and filters', async ({ page }) => {
   await analysedCase(page)
+  await expect(view(page).locator('.an-toolbar [aria-pressed="true"]')).toHaveCount(0)
   const top = await headers(page).first().locator('.an-abbrev').textContent()
   await headers(page).first().click()
   await page.getByTestId('remedy-panel').getByRole('button', { name: 'Exclude' }).click()
@@ -134,14 +283,16 @@ test('exclude, show in position, intensity toggle and filters', async ({ page })
   await view(page).getByRole('button', { name: 'Include all excluded remedies' }).click()
   await expect(view(page).locator('.an-pill')).toHaveCount(0)
 
-  // intensity toggle
-  const intensity = view(page).getByRole('button', { name: 'Use symptom intensity' })
-  await expect(intensity).toHaveAttribute('aria-pressed', 'true')
-  await intensity.click()
-  await expect(intensity).toHaveAttribute('aria-pressed', 'false')
+  // intensity toggle: in the method menu (the toolbar shows no pressed button by default, RadarOpus)
+  await view(page).getByRole('button', { name: /Analysis method/ }).click()
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Use symptom intensity' })).toHaveAttribute('aria-checked', 'true')
+  await page.getByRole('menuitemcheckbox', { name: 'Use symptom intensity' }).click()
+  await view(page).getByRole('button', { name: /Analysis method/ }).click()
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Use symptom intensity' })).toHaveAttribute('aria-checked', 'false')
+  await page.keyboard.press('Escape')
 
   // family filter (the Filter button defers to the families feature): limit to Plants
-  await view(page).getByRole('button', { name: 'Filter remedies' }).click()
+  await toolbarMenu(page, 'Remedy filters', 'Family filter…')
   const fam = page.getByRole('dialog', { name: 'Family filter' })
   const find = fam.getByLabel('Find family')
   await find.fill('plants')
@@ -153,8 +304,7 @@ test('exclude, show in position, intensity toggle and filters', async ({ page })
   const toolbarHeight = await view(page).locator('.an-toolbar').evaluate(e => e.getBoundingClientRect().height)
 
   // the analysis's own picker: exclude a remedy and require a minimum coverage
-  await view(page).getByRole('button', { name: 'Filter options' }).click()
-  await page.getByRole('menuitem', { name: 'Include / exclude remedies…' }).click()
+  await toolbarMenu(page, 'Remedy filters', 'Include / exclude remedies…')
   const pick = page.getByRole('dialog', { name: 'Filter remedies' })
   await pick.getByRole('tab', { name: 'Exclude' }).click()
   // checkbox 0 is "In this analysis only"; 1 is the first remedy
@@ -163,24 +313,24 @@ test('exclude, show in position, intensity toggle and filters', async ({ page })
   await pick.getByRole('button', { name: 'Apply' }).click()
   await expect(view(page).locator('.an-pillbar')).toContainText('1 excluded')
   await expect(view(page).locator('.an-pillbar')).toContainText('≥ 3 symptoms')
-  // pills live below the toolbar, so the toolbar keeps its height
+  // pills live in the footer's remedy-filter box, so the toolbar keeps its height
   expect(await view(page).locator('.an-toolbar').evaluate(e => e.getBoundingClientRect().height)).toBe(toolbarHeight)
 
-  await page.keyboard.press('Control+k')
+  await page.keyboard.press('ControlOrMeta+k')
   await page.keyboard.type('Remove all remedy filters')
   await page.keyboard.press('Enter')
-  await expect(view(page).locator('.an-pillbar')).toHaveCount(0)
+  await expect(view(page).locator('.an-pillbar')).toHaveText('All remedies')
 })
 
-test('remedy box pins a remedy beyond the limit as an extra column', async ({ page }) => {
+test('Search remedy pins a remedy beyond the limit as an extra column', async ({ page }) => {
   await analysedCase(page)
-  await view(page).getByRole('combobox', { name: 'Remedies shown' }).selectOption('10')
+  await toolbarMenu(page, 'Display and remedies shown', 'Top 10')
   await expect(headers(page)).toHaveCount(10)
   const lastRanked = await headers(page).nth(9).locator('.an-abbrev').textContent()
-  // pick a remedy ranked beyond the top 10 from the remedy box
-  const box = view(page).getByRole('combobox', { name: 'Jump to remedy in analysis' })
+  // pick a remedy ranked beyond the top 10 from the Search remedy field
+  const box = view(page).getByRole('combobox', { name: 'Search remedy' })
   await box.fill('a')
-  const options = view(page).getByRole('option')
+  const options = view(page).locator('#an-rbox-list').getByRole('option')
   await expect(options.first()).toBeVisible()
   const ranks = (await options.locator('.an-rbox-rank').allTextContents()).map(Number)
   const k = ranks.findIndex(r => r > 10)
@@ -192,7 +342,8 @@ test('remedy box pins a remedy beyond the limit as an extra column', async ({ pa
   await expect(view(page).locator('.an-hcell[aria-colindex="11"] .an-abbrev')).toHaveText(lastRanked!)
   const pinned = view(page).locator('.an-hcell[aria-colindex="12"]')
   await expect(pinned).toHaveClass(/pinned/)
-  await expect(pinned.locator('.an-abbrev')).toHaveText(target)
+  // columns print the abbreviation as the book does: lower case with a final dot
+  await expect(pinned.locator('.an-abbrev')).toHaveText(`${target.toLowerCase().replace(/\.$/, '')}.`)
   await expect(pinned.locator('.an-rank')).toHaveText(rank)
   await expect(pinned).toBeFocused()
   await expect(page.getByTestId('remedy-panel').locator('h3')).toHaveText(target)
@@ -207,7 +358,6 @@ test('bars and cards views, keyboard view switching', async ({ page }) => {
   await analysedCase(page)
   await view(page).locator('.an-corner').click()
   await page.keyboard.press('b')
-  await expect(view(page).getByRole('radio', { name: 'Bars' })).toHaveAttribute('aria-checked', 'true')
   const bars = view(page).locator('.an-bar-row')
   await expect(bars.first()).toBeVisible()
   expect(await bars.first().locator('.an-bseg').count()).toBeGreaterThan(5)
@@ -224,7 +374,10 @@ test('bars and cards views, keyboard view switching', async ({ page }) => {
   await expect(bars.nth(1)).toBeFocused()
   await bars.first().locator('.an-bar-abbrev').click()
   await expect(page.getByTestId('remedy-panel')).toBeVisible()
-  await view(page).getByRole('radio', { name: 'Cards' }).click()
+  // the display menu shows the current display checked and switches it
+  await view(page).getByRole('button', { name: 'Display and remedies shown' }).click()
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Bars' })).toHaveAttribute('aria-checked', 'true')
+  await page.getByRole('menuitemcheckbox', { name: 'Remedy cards' }).click()
   await expect(view(page).locator('.an-card').first()).toContainText('#1')
   await view(page).locator('.an-card').first().focus()
   await page.keyboard.press('g')
@@ -234,7 +387,7 @@ test('bars and cards views, keyboard view switching', async ({ page }) => {
 test('export CSV and print', async ({ page }) => {
   await analysedCase(page)
   const dl = page.waitForEvent('download')
-  await view(page).getByRole('button', { name: /^More/ }).click()
+  await view(page).getByRole('button', { name: 'Export and print' }).click()
   await page.getByRole('menuitem', { name: 'Export analysis as CSV' }).click()
   const file = await dl
   expect(file.suggestedFilename()).toMatch(/^Keller-Anna-.*\.csv$/)
@@ -247,7 +400,7 @@ test('export CSV and print', async ({ page }) => {
     window.print = () => { (window as unknown as { __printed: string }).__printed = document.querySelector('.an-print-root')?.textContent ?? '' }
   })
   await view(page).locator('.an-corner').click()
-  await page.keyboard.press('Control+p')
+  await page.keyboard.press('ControlOrMeta+p')
   await expect.poll(() => page.evaluate(() => (window as unknown as { __printed: string }).__printed)).toContain('MIND - anxiety, night')
   // outside a print command the app is not hidden, so a browser-menu print is not blank
   await expect(page.locator('.an-print-root')).toHaveCount(0)
@@ -259,9 +412,7 @@ test('export CSV and print', async ({ page }) => {
 
 test('compare remedies and the analysis dock', async ({ page }) => {
   await analysedCase(page)
-  // below ~1200px the toolbar folds compare, export and print into "More"
-  await view(page).getByRole('button', { name: /^More/ }).click()
-  await page.getByRole('menuitem', { name: /Compare remedies/ }).click()
+  await view(page).getByRole('button', { name: 'Compare remedies' }).click()
   const dialog = page.getByRole('dialog', { name: 'Compare remedies' })
   await expect(dialog.locator('.an-pill')).toHaveCount(4)
   await expect(dialog.locator('tbody tr')).toHaveCount(9)
@@ -276,17 +427,17 @@ test('compare remedies and the analysis dock', async ({ page }) => {
   await expect(dialog.locator('tfoot')).toContainText('Rubrics')
   await dialog.getByRole('button', { name: 'Done' }).click()
 
-  await page.keyboard.press('Control+j')
+  await runPalette(page, 'Analysis preview dock')
   const dock = page.getByTestId('analysis-dock')
   // the dock steps aside while the analysis tab is visible, and returns on another tab
   await expect(dock).toHaveCount(0)
-  await page.keyboard.press('Control+5')
+  await page.keyboard.press('ControlOrMeta+5')
   await expect(page.getByTestId('families-view')).toBeVisible()
   await expect(dock.locator('.an-dock-bar')).toHaveCount(15)
-  await expect(dock.locator('.an-hcell')).toHaveCount(15)
+  await expect(dock.locator('.an-hcell').first()).toBeVisible()
   // bars are stacked by grade, carry the score and select the remedy in the analysis tab
   const bar = dock.locator('.an-dock-bar').nth(4)
-  await expect(bar).toHaveAttribute('title', /\d+\/\d+\ngrade/)
+  await expect(bar).toHaveAttribute('title', /: \d+(\/\d+)?\ngrade/)
   expect(await bar.locator('.an-dock-stack > span').count()).toBeGreaterThan(0)
   const abbrev = (await bar.getAttribute('aria-label'))!.split(', ')[1]
   await bar.click()
@@ -295,18 +446,40 @@ test('compare remedies and the analysis dock', async ({ page }) => {
 
 test('F8 focuses the grid; panel and highlighted symptom survive a tab switch', async ({ page }) => {
   await analysedCase(page)
-  await expect(page.locator('[data-cell="0:0"]')).toBeFocused()
+  // the first symptom's first cell (line 0 is the clipboard bar)
+  const cell = page.locator('[data-cell="1:0"]')
+  await expect(cell).toBeFocused()
+  // no focus ring on opening (RadarOpus): it shows only once a key moves inside the grid
+  const ring = (sel: string) => page.locator(sel).evaluate(e => getComputedStyle(e).outlineStyle)
+  expect(await ring('[data-cell="1:0"]')).toBe('none')
+  await page.keyboard.press('ArrowRight')
+  await expect(page.locator('[data-cell="1:1"]')).toBeFocused()
+  expect(await ring('[data-cell="1:1"]')).not.toBe('none')
+  // PageUp from a symptom line stops at the first line, not on the column headers
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('PageUp')
+  await expect(page.locator('[data-cell="0:-1"]')).toBeFocused()
+  await page.keyboard.press('PageUp')
+  await expect(page.locator('[data-cell="-1:1"]')).toBeFocused()
   await headers(page).nth(2).click()
-  await view(page).locator('.an-label').nth(1).click()
+  await symLabels(page).nth(1).click()
   const panel = page.getByTestId('remedy-panel')
   await expect(panel).toBeVisible()
   const abbrev = await panel.locator('h3').textContent()
-  await page.keyboard.press('Control+5')
+  await page.keyboard.press('ControlOrMeta+5')
   await expect(page.getByTestId('families-view')).toBeVisible()
   await page.keyboard.press('F8')
   await expect(panel.locator('h3')).toHaveText(abbrev!)
-  await expect(view(page).locator('.an-symbar')).toContainText('MIND - irritability')
+  await expect(view(page).locator('.an-row.selected .an-label-text')).toHaveText('MIND - IRRITABILITY')
   await expect(view(page).locator('.an-grid [data-cell][tabindex="0"]')).toBeFocused()
+  // hiding the tab fires no blur: coming back with F8 after a key showed the ring still opens without one
+  await page.keyboard.press('ArrowRight')
+  expect(await ring('.an-grid [data-cell][tabindex="0"]')).not.toBe('none')
+  await page.keyboard.press('ControlOrMeta+5')
+  await expect(page.getByTestId('families-view')).toBeVisible()
+  await page.keyboard.press('F8')
+  await expect(view(page).locator('.an-grid [data-cell][tabindex="0"]')).toBeFocused()
+  expect(await ring('.an-grid [data-cell][tabindex="0"]')).toBe('none')
 })
 
 test('an analysis tab of another case says so; F8 opens the active case', async ({ page }) => {
@@ -331,66 +504,96 @@ test('an analysis tab of another case says so; F8 opens the active case', async 
   await banner.getByRole('button', { name: 'Switch to active case' }).click()
   await expect(view(page).getByTestId('analysis-other-case')).toHaveCount(0)
   await expect(view(page)).toContainText('Nothing to analyse yet')
-  await expect(view(page).getByRole('button', { name: /Analysis method: Sum of symptoms/ })).toBeVisible()
+  await expect(view(page).getByRole('button', { name: /Analysis method: Prominence/ })).toBeVisible()
   await expect(page.getByRole('tab', { name: /Analysis/ })).toHaveCount(1)
 })
 
-test('a dozen clipboards stay inside the toolbar; All stays reachable', async ({ page }) => {
+test('many clipboards: one menu lists them, the toolbar keeps one 40px row', async ({ page }) => {
   await analysedCase(page, RUBRICS.slice(0, 3))
-  const chips = view(page).locator('.an-chips .an-chip')
   for (let i = 0; i < 11; i++) {
-    await page.keyboard.press('Control+k')
-    await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible()
-    await page.keyboard.type('New clipboard')
-    await page.keyboard.press('Enter')
-    await expect(chips).toHaveCount(i + 2)
+    await runPalette(page, 'New clipboard')
     // a new clipboard opens its name for editing: commit it
     const input = page.getByTestId('clipboard-panel').locator('input:focus')
     if (await input.count()) await input.press('Enter')
   }
   const toolbar = view(page).locator('.an-toolbar')
-  await expect(chips).toHaveCount(12)
-  const tb = (await toolbar.boundingBox())!
-  expect(tb.height).toBeLessThanOrEqual(64)
-  const all = view(page).getByRole('button', { name: 'All', exact: true })
-  const box = (await all.boundingBox())!
-  expect(box.x + box.width).toBeLessThanOrEqual(tb.x + tb.width)
-  // the strip scrolls; every chip is inside the toolbar horizontally
-  const strip = (await view(page).locator('.an-chips').boundingBox())!
-  expect(strip.x + strip.width).toBeLessThanOrEqual(tb.x + tb.width)
-  await all.click()
-  await expect(all).toHaveAttribute('aria-pressed', 'true')
-  // every toolbar control shares the 24px height
+  expect((await toolbar.boundingBox())!.height).toBeLessThanOrEqual(41)
+  const button = view(page).getByRole('button', { name: /^Analysed clipboards/ })
+  await button.click()
+  const menu = page.getByRole('menu', { name: 'Analysed clipboards' })
+  await expect(menu.getByRole('menuitemcheckbox')).toHaveCount(13)
+  await expect(menu.getByRole('menuitemcheckbox', { name: /^1\. Clipboard 1 \(3\)/ })).toHaveAttribute('aria-checked', 'true')
+  await menu.getByRole('menuitemcheckbox', { name: 'All clipboards' }).click()
+  await expect(button).toHaveAttribute('aria-label', /Clipboard 1/)
+  // every toolbar button shares one height
   const shown = (els: Element[]) => els.filter(e => e.getClientRects().length).map(e => Math.round(e.getBoundingClientRect().height))
-  for (const h of await toolbar.locator('.an-tb-btn, .an-chip, .icon-btn, .an-select, .an-seg, .an-rbox').evaluateAll(shown)) expect(h).toBe(24)
+  for (const h of await toolbar.locator('.an-tb-btn:not(.an-round)').evaluateAll(shown)) expect(h).toBe(34)
+})
+
+test('clipboard header bar: disclosure folds its symptoms, the close box takes it out of the analysis', async ({ page }) => {
+  await page.keyboard.press('F8')
+  await expect(headers(page).first()).toBeVisible({ timeout: 20_000 })
+  const bars = view(page).locator('.an-cbrow')
+  await expect(bars).toHaveCount(2)
+  await expect(bars.first()).toHaveText('1. Mentals & generals')
+  const before = await symRows(page).count()
+  const head = bars.first().locator('[role="rowheader"]')
+  await expect(head).toHaveAttribute('aria-expanded', 'true')
+  await head.click()
+  await expect(head).toHaveAttribute('aria-expanded', 'false')
+  await expect.poll(() => symRows(page).count()).toBeLessThan(before)
+  // the keyboard toggles it back
+  await head.focus()
+  await page.keyboard.press('Space')
+  await expect(head).toHaveAttribute('aria-expanded', 'true')
+  await expect(symRows(page)).toHaveCount(before)
+  // the close box removes the second clipboard from the analysis (Undo brings it back)
+  await bars.nth(1).getByRole('button', { name: 'Remove Particulars from the analysis' }).click()
+  await expect(bars).toHaveCount(1)
+  // keyboard focus stays in the analysis, on the grid
+  await expect.poll(() => view(page).evaluate(v => v.contains(document.activeElement) && document.activeElement !== document.body)).toBe(true)
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(bars).toHaveCount(2)
+  // removing every analysed clipboard: focus lands on the empty state's button
+  await bars.nth(1).getByRole('button', { name: 'Remove Particulars from the analysis' }).click()
+  await bars.first().getByRole('button', { name: 'Remove Mentals & generals from the analysis' }).click()
+  const all = view(page).getByRole('button', { name: 'Analyse all clipboards' })
+  await expect(all).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(bars).toHaveCount(2)
 })
 
 test('grid virtualises rows and columns', async ({ page }) => {
   const many = Array.from({ length: 60 }, (_, i) => `publicum:${191 + i * 1117}`)
   await analysedCase(page, many)
-  await view(page).getByRole('combobox', { name: 'Remedies shown' }).selectOption('100000')
-  await expect(view(page).getByRole('grid')).toHaveAttribute('aria-rowcount', '61')
+  await toolbarMenu(page, 'Display and remedies shown', 'All remedies')
+  // header row + clipboard bar + 60 symptoms
+  await expect(view(page).getByRole('grid')).toHaveAttribute('aria-rowcount', '62')
   const rendered = await view(page).locator('.an-row').count()
   expect(rendered).toBeLessThan(60)
   const cols = await view(page).locator('.an-hcell').count()
   expect(cols).toBeLessThan(100)
+  // the remedy columns scroll sideways
+  const grid = view(page).getByRole('grid')
+  expect(await grid.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
   // keyboard focus reaches rows and columns that were not rendered
   await view(page).locator('.an-corner').click()
-  await expect(view(page).locator('.an-grid-fade')).toHaveCount(1)
   await page.keyboard.press('Control+End')
-  const last = Number(await view(page).getByRole('grid').getAttribute('aria-colcount')) - 2
-  await expect(page.locator(`[data-cell="59:${last}"]`)).toBeFocused()
-  // scrolled to the last column: no more columns to the right, so no edge shadow
-  await expect(view(page).locator('.an-grid-fade')).toHaveCount(0)
+  const last = Number(await grid.getAttribute('aria-colcount')) - 2
+  await expect(page.locator(`[data-cell="60:${last}"]`)).toBeFocused()
+  expect(await grid.evaluate(el => el.scrollLeft)).toBeGreaterThan(0)
   await page.keyboard.press('Home')
-  await expect(page.locator('[data-cell="59:-1"]')).toBeFocused()
+  await expect(page.locator('[data-cell="60:-1"]')).toBeFocused()
 })
 
 test('dock scores are never clipped; its bars are list items', async ({ page }) => {
-  await page.keyboard.press('Control+j')
+  await runPalette(page, 'Analysis preview dock')
   const dock = page.getByTestId('analysis-dock')
-  await expect(dock.locator('.an-hcell')).toHaveCount(15, { timeout: 20_000 })
-  for (const f of await dock.locator('.an-score').evaluateAll(els => els.map(e => ({ t: e.textContent, over: e.scrollWidth - e.clientWidth, w: e.getBoundingClientRect().width })))) {
+  // the dock shows the top 15 as bars; its grid renders the columns that fit the pane
+  await expect(dock.locator('.an-dock-bar')).toHaveCount(15, { timeout: 20_000 })
+  await expect(dock.locator('.an-hcell').first()).toBeVisible()
+  // each score fits its column, which leaves room for five characters
+  for (const f of await dock.locator('.an-score').evaluateAll(els => els.map(e => ({ t: e.textContent, over: e.scrollWidth - e.clientWidth, w: e.parentElement!.getBoundingClientRect().width })))) {
     expect(f.over, `score ${f.t}`).toBeLessThanOrEqual(0)
     expect(f.w).toBeGreaterThanOrEqual(30)
   }
@@ -420,8 +623,8 @@ test('toolbar menus return focus: Esc to the button, a choice to the grid; aria-
   await strategy.click()
   await page.getByRole('menuitemcheckbox', { name: /Weighted/ }).click()
   await expect(view(page).locator('.an-grid [data-cell][tabindex="0"]')).toBeFocused()
-  // the filter split button: a full 24px target, same focus rules
-  const more = view(page).getByRole('button', { name: 'Filter options' })
+  // the filter menu button: a full 24px target, same focus rules
+  const more = view(page).getByRole('button', { name: 'Remedy filters' })
   const box = (await more.boundingBox())!
   expect(box.width).toBeGreaterThanOrEqual(24)
   expect(box.height).toBeGreaterThanOrEqual(24)
@@ -429,13 +632,13 @@ test('toolbar menus return focus: Esc to the button, a choice to the grid; aria-
   await expect(more).toHaveAttribute('aria-expanded', 'true')
   await page.keyboard.press('Escape')
   await expect(more).toBeFocused()
-  const moreActions = view(page).getByRole('button', { name: /^More/ })
-  await moreActions.click()
+  const exportBtn = view(page).getByRole('button', { name: 'Export and print' })
+  await exportBtn.click()
   await page.keyboard.press('Escape')
-  await expect(moreActions).toBeFocused()
+  await expect(exportBtn).toBeFocused()
 })
 
-test('at 1152px the toolbar keeps one row, the clipboard pane folds away and the grid ends on whole columns', async ({ page }) => {
+test('at 1152px the toolbar keeps one row, the clipboard pane folds away; the symptom pane keeps its width', async ({ page }) => {
   await page.setViewportSize({ width: 1152, height: 720 })
   await expect(page.getByTestId('clipboard-panel')).toBeVisible()
   await analysedCase(page)
@@ -443,56 +646,51 @@ test('at 1152px the toolbar keeps one row, the clipboard pane folds away and the
   await expect(page.getByTestId('clipboard-panel')).toHaveCount(0)
   const toolbar = view(page).locator('.an-toolbar')
   const tops = await toolbar.locator(':scope > *').evaluateAll(els => [...new Set(els.filter(e => e.getClientRects().length && e.getBoundingClientRect().width > 0).map(e => Math.round(e.getBoundingClientRect().top)))])
-  expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(4)
-  expect((await toolbar.boundingBox())!.height).toBeLessThanOrEqual(36)
-  await expect(view(page).getByRole('button', { name: 'Compare remedies' })).toBeHidden()
-  // the method name is never truncated
-  const name = view(page).locator('.an-strategy-name')
-  await expect(name).toHaveText('Sympt + Deg')
-  expect(await name.evaluate(e => e.scrollWidth <= e.clientWidth)).toBe(true)
-  expect((await view(page).locator('.an-strategy').boundingBox())!.width).toBeGreaterThanOrEqual(120)
-  // symptom column >= 260px; the visible remedy columns are whole 36px cells; a fade marks more columns
+  expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(6)
+  expect((await toolbar.boundingBox())!.height).toBeLessThanOrEqual(41)
+  // the footer names the method in full
+  await expect(view(page).locator('.an-fstrategy')).toHaveText('Prominence')
+  // symptom pane >= 200px; the remedy columns scroll sideways
   const g = await view(page).getByRole('grid').evaluate(el => ({ w: el.clientWidth, label: parseFloat(getComputedStyle(el).getPropertyValue('--an-label')), sw: el.scrollWidth }))
-  expect(g.label).toBeGreaterThanOrEqual(260)
+  expect(g.label).toBeGreaterThanOrEqual(200)
+  expect(g.label).toBeLessThanOrEqual(334)
   expect(g.sw).toBeGreaterThan(g.w)
-  expect((g.w - g.label) % 36).toBe(0)
-  await expect(view(page).locator('.an-grid-fade')).toBeVisible()
-  // the status bar describes the analysis
-  await expect(page.locator('.status-main')).toHaveText(/^Sympt \+ Deg · 9 symptoms · [\d,]+ remedies · Top 30$/)
-  // the tab keeps its kind visible
-  const tab = page.locator('.tab-main[data-kind="analysis"]')
-  await expect(tab.locator('.tab-sub')).toHaveText('Analysis')
-  expect(await tab.locator('.tab-sub').evaluate(e => e.scrollWidth <= e.clientWidth && e.getBoundingClientRect().width > 0)).toBe(true)
-  // leaving the analysis reopens the pane it folded; the status bar returns to the repertory context
-  await page.getByRole('tab', { name: /^Mind/ }).click()
+  // the analysis describes itself in its own footer; the desktop's status strip holds only its links (RadarOpus)
+  await expect(page.locator('.statusbar')).not.toContainText('Sympt + Deg')
+  // leaving the analysis reopens the pane it folded
+  await page.getByRole('tab', { name: /^Repertorium Publicum/ }).click()
   await expect(page.getByTestId('clipboard-panel')).toBeVisible()
-  await expect(page.locator('.status-main')).not.toHaveText(/Sympt \+ Deg/)
   // reopening it by hand on the analysis is respected
-  await tab.click()
+  await page.locator('.tab-main[data-kind="analysis"]').click()
   await expect(page.getByTestId('clipboard-panel')).toHaveCount(0)
-  await page.keyboard.press('Control+Shift+B')
+  await page.keyboard.press('ControlOrMeta+Shift+B')
   await expect(page.getByTestId('clipboard-panel')).toBeVisible()
 })
 
-test('narrow analysis toolbars fold the scoring toggles into More; sideways scrolling rests on whole columns', async ({ page }) => {
+test('narrow analysis toolbars keep the scoring toggles in the method menu; sideways scrolling rests on whole columns', async ({ page }) => {
   await analysedCase(page, RUBRICS.slice(0, 3))
   // a narrow window: the side panes become overlays and the analysis has under 760px
   await page.setViewportSize({ width: 740, height: 720 })
-  await expect(view(page).locator('.an-strategy-name')).toHaveText('Sympt + Deg')
-  await expect(view(page).getByRole('button', { name: 'Use symptom intensity' })).toBeHidden()
-  await view(page).getByRole('button', { name: /^More/ }).click()
+  await view(page).getByRole('button', { name: /Analysis method/ }).click()
   const item = page.getByRole('menuitemcheckbox', { name: 'Use symptom intensity' })
   await expect(item).toHaveAttribute('aria-checked', 'true')
   await item.click()
-  await view(page).getByRole('button', { name: /^More/ }).click()
+  await view(page).getByRole('button', { name: /Analysis method/ }).click()
   await expect(page.getByRole('menuitemcheckbox', { name: 'Use symptom intensity' })).toHaveAttribute('aria-checked', 'false')
   await page.keyboard.press('Escape')
   const grid = view(page).getByRole('grid')
-  await grid.evaluate(el => el.scrollTo({ left: 50, behavior: 'instant' }))
-  await expect.poll(() => grid.evaluate(el => el.scrollLeft % 36)).toBe(0)
+  await grid.evaluate(el => el.scrollTo({ left: 40, behavior: 'instant' }))
+  await expect.poll(() => grid.evaluate(el => el.scrollLeft % 25)).toBe(0)
+  // End scrolls to the very end (room for the last leaning abbreviation), which is a whole column too
+  await symLabels(page).first().focus()
+  await page.keyboard.press('End')
+  await expect.poll(() => grid.evaluate(el => el.scrollWidth - el.clientWidth - el.scrollLeft)).toBe(0)
+  expect(await grid.evaluate(el => el.scrollLeft % 25)).toBe(0)
 })
 
 test('remedy panel: resizable, fixed number columns, short labels; Prescribe opens the prefilled form', async ({ page }) => {
+  // wide enough that the panel sits beside the grid (narrow analysis tabs show it as an overlay)
+  await page.setViewportSize({ width: 1800, height: 900 })
   await analysedCase(page)
   await headers(page).first().click()
   const panel = page.getByTestId('remedy-panel')
@@ -526,15 +724,15 @@ test('Advanced strategy parameters: Kent must-cover-strong excludes with a reaso
   await page.keyboard.press('3')
   await view(page).getByRole('button', { name: /Analysis method/ }).click()
   await page.getByRole('menuitemcheckbox', { name: /Kent/ }).click()
-  await view(page).getByRole('button', { name: /Analysis method/ }).click()
-  await page.getByRole('menuitemcheckbox', { name: /Strategy parameters/ }).click()
+  // the gear opens the parameters too
+  await view(page).getByRole('button', { name: 'Strategy parameters' }).click()
   const drawer = view(page).getByTestId('analysis-params')
   await expect(drawer).toBeVisible()
   await expect(drawer.locator('.an-params-group.used legend')).toHaveText(/Kent hierarchy/)
-  const total = Number(await view(page).locator('.an-count strong').textContent())
+  const total = await remedyTotal(page)
   await drawer.getByLabel('Must cover strong symptoms').check()
-  await expect.poll(async () => Number(await view(page).locator('.an-count strong').textContent())).toBeLessThan(total)
-  await expect(view(page).locator('.an-row').nth(1).locator('.an-flag.f-e')).toHaveAttribute('title', /Kent: must cover intensity/)
+  await expect.poll(() => remedyTotal(page)).toBeLessThan(total)
+  await expect(symRows(page).nth(1).locator('.an-flag.f-e')).toHaveAttribute('title', /Kent: must cover intensity/)
   // κ mental is editable and re-ranks
   const mental = drawer.getByLabel('κ mental')
   await mental.fill('10')
@@ -552,23 +750,27 @@ test('Advanced strategy parameters: Kent must-cover-strong excludes with a reaso
   await expect(drawer.getByLabel('κ mental')).toHaveValue('3')
   await expect(drawer.getByLabel('Must cover strong symptoms')).not.toBeChecked()
   await expect(view(page).locator('.an-pill.params')).toHaveCount(0)
-  await expect.poll(async () => Number(await view(page).locator('.an-count strong').textContent())).toBe(total)
+  await expect.poll(() => remedyTotal(page)).toBe(total)
 })
 
-test('the repertory view (minimum grade) applies before scoring', async ({ page }) => {
+test('"Limit the analysis to a view" applies before scoring, to the analysis only', async ({ page }) => {
   await analysedCase(page, RUBRICS.slice(0, 3))
-  const size = Number(await view(page).locator('.an-row').first().locator('.an-size').textContent())
-  await page.keyboard.press('Control+k')
-  await page.keyboard.type('Grade 3 and higher')
-  await page.keyboard.press('Enter')
-  await expect(view(page).locator('.an-pill.view')).toContainText('Grades ≥ 3')
+  const size = Number(await symRows(page).first().locator('.an-size').textContent())
+  await expect(view(page).locator('.an-flimit')).toHaveText('No limitation')
+  await view(page).getByRole('combobox', { name: 'Limit the analysis to a view' }).selectOption({ label: 'Grades 3 and 4' })
+  await expect(view(page).locator('.an-pill.view')).toContainText('Grades 3 and 4')
   await expect(view(page).locator('.an-cell.k1, .an-cell.k2')).toHaveCount(0)
   expect(await view(page).locator('.an-cell.k3, .an-cell.k4').count()).toBeGreaterThan(0)
-  const viewSize = Number(await view(page).locator('.an-row').first().locator('.an-size').textContent())
+  const viewSize = Number(await symRows(page).first().locator('.an-size').textContent())
   expect(viewSize).toBeLessThan(size)
-  await view(page).getByRole('button', { name: 'Show all grades' }).click()
+  // the repertory book keeps showing every grade: the limit belongs to the analysis
+  await page.getByRole('tab', { name: /^Repertorium Publicum/ }).click()
+  await expect.poll(() => page.locator('#document-panel .g1').count()).toBeGreaterThan(0)
+  await page.locator('.tab-main[data-kind="analysis"]').click()
+  await view(page).getByRole('button', { name: 'Remove the view limitation' }).click()
   await expect(view(page).locator('.an-pill.view')).toHaveCount(0)
-  await expect(view(page).locator('.an-row').first().locator('.an-size')).toHaveText(String(size))
+  await expect(view(page).getByRole('combobox', { name: 'Limit the analysis to a view' })).toHaveValue('1')
+  await expect(symRows(page).first().locator('.an-size')).toHaveText(String(size))
 })
 
 test('first F8 renders the grid fast and autosave settles to Saved', async ({ page }) => {
@@ -585,34 +787,84 @@ test('first F8 renders the grid fast and autosave settles to Saved', async ({ pa
   await expect(page.locator('.save-ind .spin')).toHaveCount(0)
 })
 
-test('overflowing remedy columns show a right-edge cue that scrolls to them', async ({ page }) => {
+test('Search remedy scrolls a marked column beyond the right edge into view', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.keyboard.press('F8')
   await expect(headers(page).first()).toBeVisible({ timeout: 20_000 })
   const grid = view(page).locator('.an-grid')
-  await expect(view(page).locator('.an-grid-fade')).toBeVisible()
-  const more = view(page).locator('.an-more-cols')
-  await expect(more).toHaveText(/^\d+ more remedies ›$/)
-  const hidden = Number((await more.textContent())!.match(/\d+/)![0])
-  // the last visible column is whole: it ends at the scroll box's edge
-  const box = (await grid.boundingBox())!
-  const edges = await headers(page).evaluateAll(els => els.map(e => e.getBoundingClientRect().right))
-  const inside = edges.filter(r => r <= box.x + box.width + 0.5)
-  expect(Math.abs(Math.max(...inside) - (box.x + (await grid.evaluate(e => e.clientWidth))))).toBeLessThanOrEqual(1)
-  await more.click()
+  expect(await grid.evaluate(e => e.scrollWidth > e.clientWidth)).toBe(true)
+  // the last ranked column lies beyond the right edge: searching for it scrolls it into view
+  await toolbarMenu(page, 'Display and remedies shown', 'Top 50')
+  await expect(view(page).getByRole('grid')).toHaveAttribute('aria-colcount', '51')
+  await grid.evaluate(e => e.scrollTo({ left: e.scrollWidth, behavior: 'instant' }))
+  const lastCol = view(page).locator('.an-hcell[aria-colindex="51"]')
+  await expect(lastCol).toHaveCount(1)
+  const lastAbbrev = (await lastCol.locator('.an-abbrev').textContent())!
+  await grid.evaluate(e => e.scrollTo({ left: 0, behavior: 'instant' }))
+  await view(page).getByRole('combobox', { name: 'Search remedy' }).fill(lastAbbrev)
+  await expect(view(page).locator('.an-hcell.found').first()).toBeVisible()
   await expect.poll(() => grid.evaluate(e => e.scrollLeft)).toBeGreaterThan(0)
-  await expect.poll(async () => Number(((await more.textContent()) ?? '0').match(/\d+/)?.[0] ?? 0)).toBeLessThan(hidden)
+  // Escape clears the field and the marks, and the keyboard goes back to the grid
+  await page.keyboard.press('Escape')
+  await expect(view(page).locator('.an-hcell.found')).toHaveCount(0)
+  await expect(view(page).locator('.an-grid [data-cell][tabindex="0"]')).toBeFocused()
 })
 
-test('clipboard chips in the analysis toolbar look like the clipboard pane tabs', async ({ page }) => {
+test('RadarOpus layout: rank and score rows, grade badges with their number, four footer boxes', async ({ page }) => {
   await page.keyboard.press('F8')
   await expect(headers(page).first()).toBeVisible({ timeout: 20_000 })
-  const chip = view(page).locator('.an-chips .an-chip').first()
-  const tab = page.getByTestId('clipboard-panel').locator('.cbp-chip').first()
-  const style = (el: Element) => { const s = getComputedStyle(el); return [s.borderRadius, s.height, s.fontSize] }
-  expect(await chip.evaluate(style)).toEqual(await tab.evaluate(style))
-  await expect(chip.locator('.cbp-chip-num')).toHaveText('1')
-  await expect(chip.locator('.cbp-chip-count')).toBeVisible()
+  // 25px remedy columns
+  const lefts = await headers(page).evaluateAll(els => els.slice(0, 3).map(e => e.getBoundingClientRect().left))
+  expect(lefts[1] - lefts[0]).toBe(25)
+  // every badge prints its grade
+  const badge = view(page).locator('.an-cell.k3').first()
+  expect(await badge.evaluate(e => getComputedStyle(e, '::before').content)).toBe('"3"')
+  // symptom lines read "n. LABEL … (size) intensity"
+  const first = symLabels(page).first()
+  await expect(first.locator('.an-sym-n')).toHaveText('1.')
+  expect(await first.locator('.an-size').evaluate(e => getComputedStyle(e, '::before').content)).toBe('"("')
+  const boxes = view(page).locator('.an-footer .an-fbox')
+  await expect(boxes).toHaveCount(4)
+  await expect(boxes.nth(0)).toHaveText(/^\d+ symptom\(s\) \/ [\d,]+ remedies$/)
+  await expect(boxes.nth(1)).toHaveText('Prominence')
+  // four boxes of one width
+  const bw = await boxes.evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().width)))
+  expect(Math.max(...bw) - Math.min(...bw)).toBeLessThanOrEqual(1)
+  // abbreviations as the book prints them: lower case, final dot
+  await expect(headers(page).first().locator('.an-abbrev')).toHaveText(/^[a-z][a-z0-9-]*\.$/)
+  // the horizontal scrollbar runs under the remedy pane only, from the divider to the right edge
+  const label = await view(page).getByRole('grid').evaluate(el => el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).getPropertyValue('--an-label')))
+  const bar = (await view(page).getByTestId('analysis-hscroll').boundingBox())!
+  expect(Math.abs(bar.x - label)).toBeLessThanOrEqual(1)
+  // its arrow steps one remedy column
+  await view(page).locator('.an-hbar-btn.right').click()
+  await expect.poll(() => view(page).getByRole('grid').evaluate(el => el.scrollLeft)).toBe(25)
+  await expect(boxes.nth(2)).toHaveText('No limitation')
+  await expect(boxes.nth(3)).toHaveText('All remedies')
+  // a small fixed thumb, as in RadarOpus
+  expect(Math.round((await view(page).locator('.an-hbar-thumb').boundingBox())!.width)).toBe(27)
+  // the symptom line has a spoken name with its parts separated
+  await expect(first).toHaveAttribute('aria-label', /^1\. MIND - .+, \d+ remedies, intensity \d/)
+  // Prominence has no parameters: the gear opens the analysis settings instead
+  await expect(view(page).getByRole('button', { name: 'Strategy parameters' })).toHaveCount(0)
+  await view(page).getByRole('button', { name: 'Analysis settings' }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await expect(settings.getByRole('tab', { name: 'Analysis' })).toHaveAttribute('aria-selected', 'true')
+  await page.keyboard.press('Escape')
+  await expect(settings).toHaveCount(0)
+  // Edit › Copy analysis puts the table on the system clipboard
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await runPalette(page, 'Copy analysis')
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toMatch(/^Analysis\t/)
+  // double click on a symptom shows its rubric in the book's open tab (no second tab for the same book)
+  const bookTabs = page.locator('.tab-main[data-kind="repertory"]')
+  await first.dblclick({ position: { x: 120, y: 8 } })
+  await expect(page.locator('.tab-main[aria-selected="true"]')).toHaveAttribute('data-kind', 'repertory')
+  const n = await bookTabs.count()
+  await page.locator('.tab-main[data-kind="analysis"]').click()
+  await symLabels(page).first().dblclick({ position: { x: 120, y: 8 } })
+  await expect(page.locator('.tab-main[aria-selected="true"]')).toHaveAttribute('data-kind', 'repertory')
+  expect(await bookTabs.count()).toBe(n)
 })
 
 test('first F8 at 1920×1080 in dark mode shows the grid fast, every visible column in the first commit', async ({ page }) => {
@@ -624,53 +876,49 @@ test('first F8 at 1920×1080 in dark mode shows the grid fast, every visible col
   await page.keyboard.press('F8')
   await expect(headers(page).first()).toBeVisible({ timeout: 10_000 })
   expect(Date.now() - t0).toBeLessThan(4000)
-  // the grid fills the pane at once: no column is missing on the right of the visible area
+  // the grid fills the pane at once: every one of the top 30 columns, or every column up to the right edge
   const box = await view(page).locator('.an-grid').boundingBox()
   const last = await headers(page).evaluateAll(els => Math.max(...els.map(e => e.getBoundingClientRect().right)))
-  expect(last).toBeGreaterThanOrEqual(box!.x + box!.width - 40)
+  const count = await headers(page).count()
+  expect(count === 30 || last >= box!.x + box!.width - 40).toBe(true)
   await expect(page.locator('.save-ind')).toHaveAttribute('data-state', 'saved', { timeout: 5000 })
 })
 
-test('analysis toolbar: no orphan ellipsis, controls 24px high', async ({ page }) => {
+test('analysis toolbar: count in the footer, controls share their heights', async ({ page }) => {
   await page.keyboard.press('F8')
   await expect(headers(page).first()).toBeVisible()
+  // the remedy count reads "N symptom(s) / 125 remedies" once there is a result, never a bare "…"
+  await expect(countBox(page)).toHaveText(/^\d+ symptom\(s\) \/ \d[\d,]* remedies$/)
   const tb = view(page).getByRole('toolbar', { name: 'Analysis toolbar' })
-  // the remedy count reads "125 remedies" once there is a result, never a bare "…"
-  await expect(tb.locator('.an-count')).toHaveText(/^\d[\d,]* remedies$/)
-  for (const sel of ['.an-select', '.an-seg', '.an-tb-btn', '.an-rbox']) {
-    const h = await tb.locator(sel).first().evaluate(e => e.getBoundingClientRect().height)
-    expect(h, sel).toBe(24)
+  for (const [sel, h] of [['.an-select', 22], ['.an-menu-btn', 34], ['.an-rbox-input', 22]] as const) {
+    expect(await tb.locator(sel).first().evaluate(e => e.getBoundingClientRect().height), sel).toBe(h)
   }
 })
 
-test('switching displays answers within 100 ms; cards are virtualised', async ({ page }) => {
+test('switching displays answers fast; cards are virtualised', async ({ page }) => {
   await page.keyboard.press('F8')
   await expect(headers(page).first()).toBeVisible()
-  // the bars and cards code is prefetched in idle time after the grid shows
+  // the bars and cards code is prefetched in idle time after the grid shows (fetched and evaluated, with its imports)
   await settle(page)
-  await view(page).getByRole('radio', { name: 'Grid' }).focus()
-  // [ms until the segmented control shows the choice, ms until the display is on screen]
-  const timeSwitch = (key: string, sel: string) => page.evaluate(([key, sel]) => new Promise<[number, number]>(done => {
+  await expect.poll(() => page.evaluate(() => ['AnalysisBars', 'AnalysisCards'].every(m => performance.getEntriesByType('resource').some(e => e.name.includes(m))))).toBe(true)
+  await expect(view(page)).toHaveAttribute('data-views', 'ready', { timeout: 20_000 })
+  await view(page).locator('.an-grid [data-cell][tabindex="0"]').focus()
+  // ms until the display is on screen
+  const timeSwitch = (key: string, sel: string) => page.evaluate(([key, sel]) => new Promise<number>(done => {
     const t0 = performance.now()
-    let pressed = 0
     document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
-    const tick = () => {
-      if (!pressed && document.querySelector('.an-seg [aria-checked="true"]')?.getAttribute('title')?.endsWith(`(${key.toUpperCase()})`)) pressed = performance.now() - t0
-      if (pressed && document.querySelector(sel)) done([pressed, performance.now() - t0])
-      else requestAnimationFrame(tick)
-    }
+    const tick = () => { if (document.querySelector(sel)) done(performance.now() - t0); else requestAnimationFrame(tick) }
     tick()
   }), [key, sel] as const)
   // a production build shows each display within 100 ms (about 30-70 ms); the dev server's React runs several times slower
   const dev = await page.evaluate(() => !!document.querySelector('script[src*="@vite/client"]'))
   for (const [key, sel] of [['b', '.an-keep.on .an-bar-row'], ['c', '.an-keep.on .an-card'], ['g', '.an-keep.on .an-hcell'], ['c', '.an-keep.on .an-card']] as const) {
-    const [pressed, shown] = await timeSwitch(key, sel)
-    expect(pressed, `${key} pressed`).toBeLessThan(100)
+    const shown = await timeSwitch(key, sel)
     expect(shown, `${key} shown`).toBeLessThan(dev ? 400 : 100)
   }
-  // Top All: thousands of remedies, only the visible card rows are in the DOM
-  await view(page).getByLabel('Remedies shown').selectOption({ label: 'Top All' })
-  await expect(view(page).locator('.an-count strong')).not.toHaveText('')
+  // All remedies: thousands of remedies, only the visible card rows are in the DOM
+  await toolbarMenu(page, 'Display and remedies shown', 'All remedies')
+  await expect(countBox(page)).not.toHaveText('Loading…')
   const cards = view(page).locator('.an-keep.on .an-card')
   await expect(cards.first()).toBeVisible()
   expect(await cards.count()).toBeLessThan(120)

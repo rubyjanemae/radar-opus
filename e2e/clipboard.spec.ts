@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { openApp, waitForSaved } from './helpers'
+import { openApp, waitForSaved, showClipboardPane } from './helpers'
 
 const panel = (page: Page) => page.getByTestId('clipboard-panel')
 const rows = (page: Page) => panel(page).locator('.cbp-row')
@@ -41,6 +41,7 @@ async function closeCase(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   await openApp(page)
+  await showClipboardPane(page)
 })
 
 test('empty states guide to a new case, then to taking rubrics', async ({ page }) => {
@@ -125,9 +126,9 @@ test('keyboard editing: intensity, qualifications, group, scoping', async ({ pag
 
   // Ctrl+A in the panel selects all, Ctrl+Down moves
   await rows(page).nth(0).click()
-  await page.keyboard.press('Control+ArrowDown')
+  await page.keyboard.press('ControlOrMeta+ArrowDown')
   await expect.poll(() => weights(page)).toEqual([0, 3, 1])
-  await page.keyboard.press('Control+a')
+  await page.keyboard.press('ControlOrMeta+a')
   await expect(panel(page)).toContainText('3 selected')
 })
 
@@ -250,7 +251,7 @@ test('focus stays in the list after Delete, Backspace and context-menu commands'
   await page.locator('.toast-action', { hasText: 'Undo' }).last().click()
   await expect(rows(page)).toHaveCount(1)
   await panel(page).getByRole('tab').first().focus()
-  await page.keyboard.press('Control+a')
+  await page.keyboard.press('ControlOrMeta+a')
   await expect(panel(page)).toContainText('1 selected')
   expect(await page.evaluate(() => String(window.getSelection()))).toBe('')
 })
@@ -371,7 +372,7 @@ test('rubric drops are standard takes: one undo step, recents, toast; the drop p
   await newCase(page)
   await dropRubrics(page, ['publicum:120', 'publicum:5000'])
   await expect(rows(page)).toHaveCount(2)
-  await expect(page.locator('.toast').last()).toContainText(/Taken 2 rubrics/)
+  await expect(page.locator('.toasts [role=status]')).toContainText(/Taken 2 rubrics/)
   const first = await rows(page).evaluateAll(els => els.map(e => (e as HTMLElement).dataset.sid))
   // drop two more onto the top half of the first row: they land before it
   await page.evaluate(() => {
@@ -385,7 +386,7 @@ test('rubric drops are standard takes: one undo step, recents, toast; the drop p
   await expect.poll(() => rows(page).evaluateAll(els => els.map(e => (e as HTMLElement).dataset.sid).slice(2))).toEqual(first)
   // take + reorder is a single undo step
   await rows(page).nth(0).click()
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect(rows(page)).toHaveCount(2)
   await expect.poll(() => rows(page).evaluateAll(els => els.map(e => (e as HTMLElement).dataset.sid))).toEqual(first)
   // a chip drop takes through the same path, into that clipboard
@@ -393,9 +394,10 @@ test('rubric drops are standard takes: one undo step, recents, toast; the drop p
   await page.keyboard.press('Enter')
   await page.keyboard.press('Alt+1')
   await dropRubrics(page, ['publicum:45000'], '.cbp-chip:nth-child(2)')
-  await expect(page.locator('.toast').last()).toContainText(/Clipboard 2/)
+  await expect(page.locator('.toasts [role=status]')).toContainText(/Clipboard 2/)
   await expect(panel(page).getByRole('tab').nth(1).locator('.cbp-chip-count')).toHaveText('1')
-  await page.locator('.toast').last().locator('.toast-action', { hasText: /Undo/ }).click()
+  // a take shows no card (RadarOpus): Edit › Undo takes it back
+  await page.keyboard.press('ControlOrMeta+z')
   await expect(panel(page).getByRole('tab').nth(1).locator('.cbp-chip-count')).toHaveText('0')
 })
 
@@ -416,8 +418,8 @@ test('group marker, live prompt region, excluded chip tooltip, wrapping rows', a
   expect(Math.abs(box.width - box.height)).toBeLessThan(4)
   // Ctrl+click takes the clipboard out of the analysis: the chip says how to bring it back
   const chip = panel(page).getByRole('tab').first()
-  await chip.click({ modifiers: ['Control'] })
-  await expect(chip).toHaveAttribute('title', /Not included in the analysis \(click it in the analysis toolbar to include\)/)
+  await chip.click({ modifiers: ['ControlOrMeta'] })
+  await expect(chip).toHaveAttribute('title', /Not included in the analysis \(include it with the clipboard menu of the analysis toolbar\)/)
   // long rubric paths stay on one line with an ellipsis; the tooltip has the full path
   await page.setViewportSize({ width: 1152, height: 720 })
   await dropRubrics(page, ['publicum:30000'])
@@ -466,7 +468,7 @@ test('taking a whole chapter warns with Undo; toasts clear on a tab switch', asy
   await toast.getByRole('button', { name: 'Undo' }).click()
   await expect(rows(page)).toHaveCount(0)
   await dropRubrics(page, ['publicum:120'])
-  await expect(page.locator('.toast').last()).toContainText('Taken')
+  await expect(page.locator('.toasts [role=status]')).toContainText('Taken')
   // the pointer left on a toast keeps it (hover pauses toasts); move it away as a user would
   await page.mouse.move(10, 300)
   await page.keyboard.press('F8')
