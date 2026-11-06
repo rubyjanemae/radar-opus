@@ -40,7 +40,10 @@ export function AuthScreen({ initialMode = 'signin', onPasswordSet }: { initialM
       } else if (mode === 'signup') {
         const { data, error } = await auth.signUp({ email, password, options: { emailRedirectTo: redirectTo } })
         if (error) throw error
-        if (!data.session) { setInfo(`We sent a confirmation link to ${email}. Open it, then sign in.`); setMode('signin') }
+        // An email that is already registered gets a look-alike reply with no identities and no email sent
+        if (data.user && !data.session && data.user.identities?.length === 0) {
+          setInfo(`${email} already has an account. Sign in with its password, or use Forgot password.`); setMode('signin')
+        } else if (!data.session) { setInfo(`We sent a confirmation link to ${email}. Open it, then sign in.`); setMode('signin') }
       } else if (mode === 'reset') {
         const { error } = await auth.resetPasswordForEmail(email, { redirectTo })
         if (error) throw error
