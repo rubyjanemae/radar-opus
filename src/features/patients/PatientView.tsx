@@ -7,7 +7,7 @@ import type { Consultation } from '../../state/patients'
 import type { PatientTab } from '../../state/workspace'
 import { useContextMenu } from '../../ui/Menu'
 import type { MenuItem } from '../../ui/Menu'
-import { repertoriesOf, useRepertoriesLoaded } from '../analysis/useAnalysis'
+import { analysisViewGrade, repertoriesOf, useRepertoriesLoaded } from '../analysis/useAnalysis'
 import { sourceFor } from '../analysis/source'
 import { ConsultationEditor } from './ConsultationEditor'
 import { analysisFilterNotes, consultationsOf, formatAge, formatDate, formatScoreSigned, ghhosLabel, initials, KIND_LABEL, patientName, relativeDate, SEX_LABEL, symptomCount } from './logic'
@@ -109,7 +109,6 @@ function Timeline({ tab, list, selectedId, onMenu, onMenuAt }: {
 }) {
   const catalog = useCatalog()
   const activeId = useApp(s => s.activeConsultationId)
-  const minGrade = useApp(s => s.settings.minGradeShown ?? 1)
   const ref = useRef<HTMLDivElement>(null)
   const reps = useMemo(() => repertoriesOf(list.flatMap(c => c.clipboards)), [list])
   const load = useRepertoriesLoaded(catalog, reps)
@@ -118,11 +117,11 @@ function Timeline({ tab, list, selectedId, onMenu, onMenuAt }: {
     const m = new Map<string, string[]>()
     for (const c of list) {
       if (!symptomCount(c)) continue
-      const res = analyze(src, c.clipboards, { ...c.analysis, limit: 3 }, { minGrade })
+      const res = analyze(src, c.clipboards, { ...c.analysis, limit: 3 }, { minGrade: analysisViewGrade(c.analysis) })
       m.set(c.id, res.rows.filter(r => !r.excluded).slice(0, 3).map(r => catalog.remedy(r.remedyId).abbrev))
     }
     return m
-  }, [list, catalog, minGrade, load.version]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [list, catalog, load.version]) // eslint-disable-line react-hooks/exhaustive-deps
   const filterNote = (c: Consultation) => { const n = analysisFilterNotes(c.analysis, id => catalog.remedy(id).abbrev); return n.length ? `: ${n.join(', ')}` : '' }
   // narrow panes lay the timeline out as a horizontal strip: show where more cards are hidden
   const [more, setMore] = useState({ left: false, right: false })

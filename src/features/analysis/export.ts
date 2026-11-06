@@ -14,6 +14,15 @@ function cell(v: string | number): string {
 
 /** The grid as CSV: symptoms as rows, remedies (in rank order) as columns. */
 export function analysisCsv(result: AnalysisResult, rows: AnalysisRow[], meta: ExportMeta): string {
+  return analysisTable(result, rows, meta).map(l => l.map(cell).join(',')).join('\r\n') + '\r\n'
+}
+
+/** The same table as tab-separated text, for Edit › Copy analysis (pastes into a spreadsheet or a document's table). */
+export function analysisText(result: AnalysisResult, rows: AnalysisRow[], meta: ExportMeta): string {
+  return analysisTable(result, rows, meta).map(l => l.map(v => String(v).replace(/[\t\r\n]+/g, ' ')).join('\t')).join('\n') + '\n'
+}
+
+function analysisTable(result: AnalysisResult, rows: AnalysisRow[], meta: ExportMeta): (string | number)[][] {
   const info = strategyInfo(result.strategy)
   const lines: (string | number)[][] = []
   lines.push(['Analysis', meta.title, 'Strategy', info.name, 'Intensity', result.useIntensity ? 'on' : 'off'])
@@ -28,7 +37,7 @@ export function analysisCsv(result: AnalysisResult, rows: AnalysisRow[], meta: E
   result.symptoms.forEach((s, i) => {
     lines.push([s.label, meta.clipboardName(s.clipboardId), s.symptom.weight, symptomFlags(s), s.size, ...rows.map(r => r.grades[i] || '')])
   })
-  return lines.map(l => l.map(cell).join(',')).join('\r\n') + '\r\n'
+  return lines
 }
 
 export function safeFileName(s: string): string {

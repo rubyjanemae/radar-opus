@@ -3,13 +3,24 @@ import type { AppState } from '../state/store'
 import type { Tab } from '../state/workspace'
 import { patientName } from '../features/patients/logic'
 
+/** "Vladimir Polony" -> "POLONY V.", "J. T. Kent" -> "KENT J. T." (surname in capitals, then initials). */
+export function authorShort(author: string): string {
+  const parts = author.trim().split(/\s+/).filter(Boolean)
+  if (parts.length < 2) return author.trim().toUpperCase()
+  const last = parts[parts.length - 1]
+  const initials = parts.slice(0, -1).map(p => (p.endsWith('.') ? p : `${p[0]}.`)).join(' ')
+  return `${last.toUpperCase()} ${initials}`
+}
+
 export function tabTitle(tab: Tab, catalog: Catalog, s: Pick<AppState, 'patients' | 'consultations'>): { title: string; subtitle?: string } {
   switch (tab.kind) {
     case 'repertory': {
+      // the book, as RadarOpus titles a document window ("Title (AUTHOR I.)"); the chapter follows
       const rep = catalog.repertory(tab.repertory)
       const info = catalog.repertoryInfos.find(r => r.abbrev === tab.repertory)
-      if (!rep) return { title: info?.title ?? tab.repertory }
-      return { title: rep.text(rep.chapterRoot(tab.rubric)), subtitle: info?.title }
+      const book = info ? `${info.title}${info.author ? ` (${authorShort(info.author)})` : ''}` : tab.repertory
+      if (!rep) return { title: book }
+      return { title: book, subtitle: rep.text(rep.chapterRoot(tab.rubric)) }
     }
     case 'repertories':
       return { title: 'Repertories', subtitle: 'Table of contents' }
@@ -18,7 +29,9 @@ export function tabTitle(tab: Tab, catalog: Catalog, s: Pick<AppState, 'patients
       const p = c ? s.patients[c.patientId] : null
       // the case is what tells two analysis tabs apart: it leads, the kind follows (the icon shows it too)
       if (!c || !p) return { title: 'Missing case', subtitle: 'Analysis' }
-      return { title: `${p.lastName.trim() || p.firstName.trim() || 'Unnamed patient'} · ${c.title}`, subtitle: 'Analysis' }
+      const who = p.lastName.trim() || p.firstName.trim() || 'Unnamed patient'
+      // an unsaved case's patient and consultation share one name: say it once
+      return { title: c.title && c.title !== who ? `${who} · ${c.title}` : who, subtitle: 'Analysis' }
     }
     case 'materia-medica':
       // short: the open remedy's abbreviation, not its full name (which is in the reader header and the tooltip)

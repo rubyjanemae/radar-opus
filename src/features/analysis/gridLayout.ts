@@ -66,3 +66,58 @@ export function computeViewport(g: Geom, w: number, h: number, x = 0, y = 0, scr
     sbw, sbh,
   }
 }
+
+/**
+ * One line of the analysis grid's symptom pane: a clipboard header bar ("1. Clipboard 1", with a
+ * disclosure triangle), a symptom (`i` indexes result.symptoms, `n` numbers it within its clipboard), or
+ * the detail line an expanded symptom shows under itself (its repertory and qualifiers).
+ */
+export type GridLine =
+  | { kind: 'clip'; clipboardId: string; collapsed: boolean; count: number }
+  | { kind: 'sym'; i: number; n: number }
+  | { kind: 'info'; i: number }
+
+/**
+ * The lines of the grid: with `headers`, each run of symptoms from one clipboard is preceded by a header
+ * line and hidden while that clipboard is collapsed; without, one line per symptom (the compact dock).
+ * A symptom whose id is in `expanded` is followed by its detail line (main grid only).
+ */
+export function gridLines(
+  symptoms: readonly { clipboardId: string; symptom?: { id: string } }[], headers: boolean,
+  collapsed: ReadonlySet<string> = new Set(), expanded: ReadonlySet<string> = new Set(),
+): GridLine[] {
+  const out: GridLine[] = []
+  let cur: string | null = null
+  let n = 0
+  let head: Extract<GridLine, { kind: 'clip' }> | null = null
+  symptoms.forEach((s, i) => {
+    if (headers && s.clipboardId !== cur) {
+      cur = s.clipboardId
+      n = 0
+      head = { kind: 'clip', clipboardId: cur, collapsed: collapsed.has(cur), count: 0 }
+      out.push(head)
+    }
+    n++
+    if (head) head.count++
+    if (!headers || !head?.collapsed) {
+      out.push({ kind: 'sym', i, n })
+      if (headers && s.symptom && expanded.has(s.symptom.id)) out.push({ kind: 'info', i })
+    }
+  })
+  return out
+}
+
+/**
+ * A score as printed in a 25px remedy column (RadarOpus prints at most four characters): short values as
+ * they are, larger numbers rounded or in thousands ("1.2k", "45k"); the column title keeps the full value.
+ */
+export function fitScore(text: string): string {
+  if (text.length <= 4) return text
+  const v = Number(text)
+  if (!Number.isFinite(v)) return text.startsWith('CI') ? 'CI' : text.slice(0, 4)
+  const a = Math.abs(v)
+  if (a < 1000) return String(Math.round(v))
+  if (a < 9950) return `${(Math.round(v / 100) / 10).toString()}k`
+  if (a < 999500) return `${Math.round(v / 1000)}k`
+  return `${Math.round(v / 1e6)}M`
+}

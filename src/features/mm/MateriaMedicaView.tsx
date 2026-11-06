@@ -111,11 +111,14 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
   const [hitSel, setHitSel] = useState(-1)
   const [markSection, setMarkSection] = useState<number | null>(null)
   const [markCount, setMarkCount] = useState(0)
+  const [marksGen, setMarksGen] = useState(0)
   const [activeSection, setActiveSection] = useState(-1)
   const [sectionsMenu, setSectionsMenu] = useState<{ x: number; y: number } | null>(null)
   const pendingMark = useRef<PendingMark>(null)
   /** Enter pressed before the debounced query caught up: step once the new results are in. */
   const pendingStep = useRef<1 | -1 | null>(null)
+  /** Steps (Enter / Shift+Enter) taken while the next page is still rendering: applied once its marks are in. */
+  const queuedSteps = useRef(0)
 
   useEffect(() => { try { localStorage.setItem(SIDE_KEY, String(sideWidth)) } catch { /* private mode */ } }, [sideWidth])
 
@@ -212,6 +215,8 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
       }
     }
     setMarkIndex(idx)
+    // a new page can have the same count and index as the last one: still re-mark its (new) elements
+    setMarksGen(g => g + 1)
   }, [shownId, dq, collectMarks])
 
   useLayoutEffect(() => {
@@ -225,10 +230,12 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
       const r = m.getBoundingClientRect(), box = el.getBoundingClientRect()
       if (r.top < box.top + 40 || r.bottom > box.bottom - 40) el.scrollTop += r.top - box.top - el.clientHeight / 3
     }
-  }, [markIndex, markCount, collectMarks])
+  }, [markIndex, markCount, marksGen, collectMarks])
 
   const step = useCallback((dir: 1 | -1) => {
     if (!terms.length) { searchRef.current?.focus(); return }
+    // the page is deferred: until it shows, its marks are unknown (the old page's would skip results)
+    if (shownId !== tab.remedyId) { queuedSteps.current += dir; return }
     const marks = collectMarks()
     const ni = markIndex + dir
     if (marks.length && ni >= 0 && ni < marks.length) { setMarkIndex(ni); return }
@@ -242,7 +249,17 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
     go(target)
     const hi = dir > 0 ? results.hits.findIndex(h => h.remedyId === target) : results.hits.findLastIndex(h => h.remedyId === target)
     if (hi >= 0) { hitsV.scrollToIndex(hi); setHitSel(hi) }
-  }, [terms, collectMarks, markIndex, hitRemedies, dq, tab.remedyId, bookOrder, go, results, hitsV])
+  }, [terms, collectMarks, markIndex, hitRemedies, dq, tab.remedyId, shownId, bookOrder, go, results, hitsV])
+
+  // apply queued steps one at a time once the page is shown (each step re-renders: marksGen or markIndex)
+  useEffect(() => {
+    const q = queuedSteps.current
+    if (!q || shownId !== tab.remedyId) return
+    const d = q > 0 ? 1 : -1
+    queuedSteps.current = q - d
+    step(d)
+  }, [marksGen, markIndex]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { queuedSteps.current = 0 }, [dq])
 
   useEffect(() => {
     const d = pendingStep.current
@@ -253,7 +270,10 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
 
   const openHit = useCallback((h: MMHit, index: number) => {
     setHitSel(index)
+    queuedSteps.current = 0
     pendingMark.current = { kind: 'section', section: h.section }
+    // its page is still rendering: the marks effect applies the pending mark when it shows
+    if (h.remedyId === tab.remedyId && shownId !== tab.remedyId) return
     if (h.remedyId === tab.remedyId) {
       // same page: marks are already rendered
       const marks = collectMarks()
@@ -265,7 +285,7 @@ function Reader({ tab, book }: { tab: MateriaMedicaTab; book: MMBook }) {
       return
     }
     go(h.remedyId, h.section)
-  }, [tab.remedyId, collectMarks, go])
+  }, [tab.remedyId, shownId, collectMarks, go])
 
   // scroll spy for the outline
   const onReaderScroll = useCallback(() => {

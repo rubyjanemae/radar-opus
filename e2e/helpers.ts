@@ -3,10 +3,12 @@ import type { Page } from '@playwright/test'
 
 /**
  * Load the app and wait until the shell is ready. Every test gets a fresh browser context (empty
- * IndexedDB), so a single navigation is a clean first run: the demo practice is seeded with an
- * active case. Pass `EMPTY` for a first run without the demo practice.
+ * IndexedDB), so a single navigation is a clean first run. `SEEDED` seeds the demo practice with the
+ * Pulsatilla case active (`?seed=case`); `FRESH` is a plain first run (demo patients, no case open, empty
+ * clipboards, like a new RadarOpus profile); `EMPTY` a first run without the demo practice.
  */
-export const SEEDED = '/'
+export const SEEDED = '/?seed=case'
+export const FRESH = '/'
 export const EMPTY = '/?seed=empty'
 export async function openApp(page: Page, path = SEEDED) {
   await page.goto(path)
@@ -69,11 +71,11 @@ export async function settle(page: Page, timeout = 3000) {
 }
 
 /**
- * Open a remedy through the remedy picker (Ctrl+4): waits for the picker, for the query's results
+ * Open a remedy through the remedy picker (Mod+4): waits for the picker, for the query's results
  * and for the remedy window, so a loaded machine does not type into a picker that is still opening.
  */
 export async function openRemedy(page: Page, query: string, first?: RegExp | string) {
-  await page.keyboard.press('Control+4')
+  await page.keyboard.press('ControlOrMeta+4')
   const dlg = page.getByRole('dialog', { name: 'Remedies' })
   await expect(dlg).toBeVisible()
   await dlg.getByLabel('Search remedies').fill(query)
@@ -95,4 +97,21 @@ export async function withinBudget<T>(measure: () => Promise<T>, check: (v: T) =
     try { check(v); return v } catch (e) { lastErr = e }
   }
   throw lastErr
+}
+
+/**
+ * The clipboard pane is opt-in (RadarOpus shows clipboards as the left strip and in the analysis
+ * window): show it the way a user does (View › Clipboard pane, Ctrl+Shift+B).
+ */
+export async function showClipboardPane(page: Page) {
+  if (await page.getByTestId('clipboard-panel').count()) return
+  await page.keyboard.press('ControlOrMeta+Shift+B')
+  await expect(page.getByTestId('clipboard-panel')).toBeVisible()
+}
+
+/** The table of contents is hidden on a fresh start (RadarOpus): open it from the status strip. */
+export async function showToc(page: Page) {
+  if (await page.locator('.pane-left').count()) return
+  await page.getByLabel('Status').getByRole('button', { name: /^Show table of contents/ }).click()
+  await expect(page.locator('.pane-left')).toBeVisible()
 }

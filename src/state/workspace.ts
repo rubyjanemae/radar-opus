@@ -24,6 +24,8 @@ export interface AnalysisTab extends TabBase {
   symptom?: number | null
   /** Remedies appended as extra columns because they rank beyond the display limit (remedy box jumps). */
   pinnedRemedies?: number[] | null
+  /** Analysis › Show current analysis with symptoms only (F7): the symptom pane without remedy columns. */
+  symptomsOnly?: boolean
 }
 export interface MateriaMedicaTab extends TabBase { kind: 'materia-medica'; remedyId: number | null; query: string }
 export interface RemedyTab extends TabBase { kind: 'remedy'; remedyId: number }
@@ -78,6 +80,8 @@ export interface Settings {
   minGradeShown: 1 | 2 | 3
   defaultRepertory: string
   showRemedyCounts: boolean
+  /** Print rubric notes under their rubric in the book (the gutter mark shows either way). */
+  showRubricNotes: boolean
   analysisLimit: number
   /** Strategy for new consultations. */
   defaultStrategy: StrategyId
@@ -92,6 +96,10 @@ export interface Layout {
   showTree: boolean
   showClipboard: boolean
   showAnalysisDock: boolean
+  /** Table of contents: keys of the expanded tree rows (sections, documents). */
+  tocOpen: string[]
+  /** Table of contents: keys of the checked documents. */
+  tocChecked: string[]
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -102,18 +110,23 @@ export const DEFAULT_SETTINGS: Settings = {
   minGradeShown: 1,
   defaultRepertory: 'publicum',
   showRemedyCounts: true,
-  analysisLimit: 30,
-  defaultStrategy: 'sum-symptoms-degrees',
+  showRubricNotes: true,
+  analysisLimit: 100000,
+  defaultStrategy: 'graded-prominence',
   reduceMotion: false,
 }
 
 export const DEFAULT_LAYOUT: Layout = {
-  treeWidth: 280,
+  treeWidth: 400,
   clipboardWidth: 340,
   analysisHeight: 300,
-  showTree: true,
-  showClipboard: true,
+  // RadarOpus starts with the table of contents hidden (status strip: "Show table of contents")
+  showTree: false,
+  // RadarOpus shows clipboards as the left strip and in the analysis window: the clipboard pane is opt-in (F7, View menu)
+  showClipboard: false,
   showAnalysisDock: false,
+  tocOpen: ['sec:reps', 'sec:fams'],
+  tocChecked: [],
 }
 
 /** A tab description before it has an id (distributes over the Tab union). */

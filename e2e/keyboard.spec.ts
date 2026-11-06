@@ -21,8 +21,10 @@ test('bare + then ArrowDown takes the rubric at intensity 1 and moves on', async
   await expect(takeBar(page)).toBeVisible()
   await page.keyboard.press('ArrowDown')
   await expect(takeBar(page)).toHaveCount(0)
-  const toast = page.locator('.toast').filter({ hasText: 'Taken Mind - morning' })
-  await expect(toast).toBeVisible()
+  // announced only: RadarOpus shows no notification after a take
+  const toast = page.locator('.toasts [role=status] > div').filter({ hasText: 'Taken MIND - MORNING' })
+  await expect(toast).toBeAttached()
+  await expect(page.locator('.toast').filter({ hasText: 'Taken' })).toHaveCount(0)
   await expect(toast).toContainText(/· ×1 → \S/)
   await expect(toast).not.toContainText('(')
   await expect(crumbs(page)).not.toHaveText('morning')
@@ -34,8 +36,12 @@ test('F8 from the take bar commits the take, then opens the analysis', async ({ 
   await page.keyboard.press('ArrowDown')
   await page.keyboard.type('+2')
   await page.keyboard.press('F8')
-  await expect(page.locator('.toast').filter({ hasText: /Taken Mind - morning · ×2/ })).toBeVisible()
+  // the take is committed: the analysis lists it at intensity 2 (its "Taken" notification is cleared when the
+  // analysis opens, so nothing covers the grid; Edit › Undo still undoes the take)
   await expect(page.getByTestId('analysis-view')).toBeVisible()
+  const sym = page.getByTestId('analysis-view').locator('.an-row:not(.an-cbrow) .an-label').filter({ hasText: 'MIND - MORNING' })
+  await expect(sym.locator('.an-weight')).toHaveText('2')
+  await expect(page.locator('.toast').filter({ hasText: 'Taken' })).toHaveCount(0)
 })
 
 test('an invalid command is dropped by F2, which still opens Find', async ({ page }) => {
@@ -43,18 +49,18 @@ test('an invalid command is dropped by F2, which still opens Find', async ({ pag
   await page.keyboard.type('+9')
   await page.keyboard.press('F2')
   await expect(takeBar(page)).toHaveCount(0)
-  await expect(page.locator('.toast').filter({ hasText: 'Taken' })).toHaveCount(0)
+  await expect(page.locator('.toasts [role=status]')).not.toContainText('Taken')
   await expect(page.getByRole('dialog').first()).toBeVisible()
 })
 
 test('Ctrl+1..5 open documents and Ctrl+6..9 switch tabs from inside a text field', async ({ page }) => {
   await openBook(page)
-  await page.keyboard.press('Control+f')
+  await page.keyboard.press('ControlOrMeta+f')
   await expect(page.locator(':focus')).toHaveAttribute('type', /text|search/)
   await page.keyboard.press('Escape')
   // documents from a text field
-  for (const [key, name] of [['Control+2', /Materia medica|Boericke/], ['Control+3', /Patients/], ['Control+1', /Repertories/]] as const) {
-    await page.keyboard.press('Control+f')
+  for (const [key, name] of [['ControlOrMeta+2', /Materia medica|Boericke/], ['ControlOrMeta+3', /Patients/], ['ControlOrMeta+1', /Repertories/]] as const) {
+    await page.keyboard.press('ControlOrMeta+f')
     await page.keyboard.type('fear')
     await page.keyboard.press(key)
     await expect(selectedTab(page)).toHaveAccessibleName(name)
@@ -62,14 +68,14 @@ test('Ctrl+1..5 open documents and Ctrl+6..9 switch tabs from inside a text fiel
   }
   const count = await page.locator('.tab-main').count()
   expect(count).toBeGreaterThanOrEqual(3)
-  await page.keyboard.press('Control+f')
-  await page.keyboard.press('Control+9')
+  await page.keyboard.press('ControlOrMeta+f')
+  await page.keyboard.press('ControlOrMeta+9')
   await expect(page.locator('.tab-main').nth(count - 1)).toHaveAttribute('aria-selected', 'true')
 })
 
 test('Escape in a form field returns focus to the document list', async ({ page }) => {
   await openApp(page)
-  await page.keyboard.press('Control+3')
+  await page.keyboard.press('ControlOrMeta+3')
   const search = page.locator('.tab-doc[data-active] .pt-search-input')
   await search.focus()
   await page.keyboard.press('Escape')
@@ -83,6 +89,6 @@ test('copy rubric text is on Ctrl+Shift+Y', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await openBook(page)
   await page.keyboard.press('ArrowDown')
-  await page.keyboard.press('Control+Shift+Y')
+  await page.keyboard.press('ControlOrMeta+Shift+Y')
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('morning')
 })

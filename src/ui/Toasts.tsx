@@ -88,10 +88,10 @@ export function Toasts() {
       <div className="sr-only" role="alert" aria-live="assertive" aria-atomic="false">
         {errors.map(t => <div key={t.id}>{t.text}</div>)}
       </div>
-      {toasts.map(t => (
+      {toasts.filter(t => !t.quiet).map(t => (
         <div key={t.id} className={`toast toast-${t.tone}`} data-toast-id={t.id}>
           {/* announced through the live regions above; read here when browsing */}
-          <span className="toast-text">{t.text}</span>
+          <span className="toast-text" title={t.text}>{t.text}</span>
           {t.action && (
             <button className="toast-action" aria-keyshortcuts="Alt+N" title="Alt+N focuses this button" onClick={() => { const run = t.action!.run; actions.dismissToast(t.id); run() }}>
               {t.action.label}

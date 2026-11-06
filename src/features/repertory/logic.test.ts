@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { tinyRepertory } from './fixtures'
+import { rubricName, seeTarget, splitSee } from './logic'
 import { followExpanded, selectNavigatorTabId, bookmarkFolders, crumbCollapseOrder, crumbFoldCount, findInitial, flattenTree, hiddenRuns, crumbSegments, levelItems, rubricLabel, treeRows } from './logic'
 import { indexAt, pinnedScrollTop, prefixSums, rebuildPrefix, targetScroll } from './virtual'
 import { Catalog } from '../../data/catalog'
-import { NEAR_ROWS, estimateRow, layoutSizes, remedyChars } from './estimate'
+import { BOOK, NEAR_ROWS, estimateRow, layoutSizes, lineTrim, remedyChars } from './estimate'
 import { remedyMarkup } from './remedies'
 import { pushRecent } from './ops'
 import { matchChapters } from './take'
@@ -140,7 +141,12 @@ describe('row estimates', () => {
     const p = { showRemedies: true, names: false, minGrade: 1, fs: 13, lineH: 20, width: 140 }
     const plain = estimateRow(rep, rc, 1, p, true, false)
     expect(estimateRow(rep, rc, 1, { ...p, names: true }, true, false)).toBeGreaterThanOrEqual(plain)
-    expect(estimateRow(rep, rc, 1, p, true, true)).toBe(plain + 25)
+    expect(estimateRow(rep, rc, 1, p, true, true)).toBe(plain + 20)
+    // whole lines of the book line height, less the trim that pulls a rubric's first line up (15 of 18)
+    const t = lineTrim(20)
+    expect((plain + t.top + t.bottom) % 20).toBe(0)
+    expect(lineTrim(18)).toEqual({ top: 2, bottom: 1 })
+    expect(estimateRow(rep, rc, 0, p, true, false)).toBeGreaterThanOrEqual(BOOK.head)
     expect(estimateRow(rep, rc, 1, { ...p, showRemedies: false }, true, false)).toBeLessThanOrEqual(plain)
     expect(NEAR_ROWS).toBeGreaterThan(0)
   })
@@ -219,5 +225,29 @@ describe('crumbSegments', () => {
       { kind: 'fold', x: 2, items: [{ x: 2, label: 'Anxiety', ref: 'r:2' }, { x: 3, label: 'night', ref: 'r:3' }] },
       { kind: 'item', x: 4, label: 'waking', ref: 'r:4', last: true },
     ])
+  })
+})
+
+describe('see references', () => {
+  it('splits the reference off the rubric name', () => {
+    expect(splitSee('wund beißend (siehe brennend)')).toEqual({ name: 'wund beißend', see: '(siehe … )', target: 'brennend' })
+    // cut off by the data: the reference has no target
+    expect(splitSee('Grobheit (siehe')).toEqual({ name: 'Grobheit', see: '(siehe … )', target: '' })
+    // in the middle of the text: the rest stays with the name
+    expect(splitSee('Wassersucht (siehe Anschwellung), Aszites')).toEqual({ name: 'Wassersucht, Aszites', see: '(siehe … )', target: 'Anschwellung' })
+    expect(splitSee('see, he can')).toBeNull()
+    expect(splitSee('auf See')).toBeNull()
+    expect(rubricName('Grobheit (siehe')).toBe('Grobheit')
+    expect(rubricName('fear')).toBe('fear')
+  })
+  it('finds the referred rubric among the siblings, then up the path', () => {
+    const text = ['Face', 'eruptions', 'burning', 'sore (see burning)', 'Inertia of rectum', 'stool', 'difficult (see inertia)', 'lost (see nothing)']
+    const parent = [-1, 0, 1, 1, 0, 0, 5, 5]
+    const children = (i: number) => parent.flatMap((p, k) => (p === i ? [k] : []))
+    const rep = { text: (i: number) => text[i], parent: (i: number) => parent[i], children }
+    expect(seeTarget(rep, 3)).toBe(2)
+    expect(seeTarget(rep, 6)).toBe(4)
+    expect(seeTarget(rep, 7)).toBe(-1)
+    expect(seeTarget(rep, 2)).toBe(-1)
   })
 })

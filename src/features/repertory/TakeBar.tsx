@@ -45,8 +45,10 @@ export function replayKey(e: KeyboardEvent, target: EventTarget) {
   }))
 }
 
-export function TakeBar({ initial, path, onClose, onTake, onPass }: {
+export function TakeBar({ initial, top, path, onClose, onTake, onPass }: {
   initial: string
+  /** Overlay the top of the book, this far down the view, instead of its bottom (the rubric taken stands at the bottom). */
+  top?: number | null
   path: string[]
   /** Close the bar; focus goes back to the rubric list. */
   onClose: () => void
@@ -65,13 +67,14 @@ export function TakeBar({ initial, path, onClose, onTake, onPass }: {
   const parents = path.slice(0, -1)
   const status = parsed.ok ? describeTake(parsed.options) : parsed.error
   return (
-    <div className="rv-takebar" role="dialog" aria-label="Take rubric">
+    <div className={`rv-takebar${top != null ? ' rv-takebar-top' : ''}`} style={top != null ? { top } : undefined} role="dialog" aria-label="Take rubric">
       <div className="rv-takebar-in">
       <ClipboardPlus size={14} className="rv-takebar-icon" />
       <input
         ref={inputRef}
         className="input rv-takebar-input"
         aria-label="Take command"
+        title="+2 intensity, >3 clipboard, ! eliminatory, x exclude, a group, /s sub-rubrics; Return takes, Esc cancels"
         value={value}
         spellCheck={false}
         autoComplete="off"

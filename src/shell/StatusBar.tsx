@@ -1,46 +1,37 @@
 import { memo } from 'react'
-import { useCatalog } from '../data/CatalogContext'
-import { useApp, selectActiveTab, selectActiveConsultation, selectActiveClipboard } from '../state/store'
-import { formatKeys } from '../commands/registry'
-import { useStatusContext } from './statusContext'
-import { useSyncExternalStore } from 'react'
-import { accountStatus } from '../features/account/status'
+import { useApp } from '../state/store'
+import { isMac, runCommand } from '../commands/registry'
+import { useChrome } from './chrome'
+import { SaveIndicator } from './SaveIndicator'
+import { chromeBackgroundMouseDown, keepFocus, returnFocusFromChrome } from './focus'
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`
+const TOC_KEY = `(${isMac ? 'cmd' : 'ctrl'}+F2)`
 
-export const StatusBar = memo(function StatusBar() {
-  const catalog = useCatalog()
-  // narrow selections: the status bar re-renders only when what it shows changes
-  const rubric = useApp(s => { const t = selectActiveTab(s); return t?.kind === 'repertory' ? `${t.repertory}:${t.rubric}` : null })
-  const clipboard = useApp(selectActiveClipboard)
-  const total = useApp(s => selectActiveConsultation(s)?.clipboards.reduce((n, cb) => n + cb.symptoms.length, 0) ?? null)
-  const selected = useApp(s => s.selectedSymptomIds.length)
-  // what the shown document publishes about itself (an analysis: method, symptoms, remedies, limit)
-  const activeTabId = useApp(s => s.activeTabId)
-  const docStatus = useStatusContext(s => (s.owner === activeTabId ? s.text : null))
-
-  const account = useSyncExternalStore(accountStatus.subscribe, accountStatus.get)
-  let left = docStatus ?? 'Ready'
-  if (rubric) {
-    const sep = rubric.lastIndexOf(':')
-    const rep = catalog.repertory(rubric.slice(0, sep))
-    const i = Number(rubric.slice(sep + 1))
-    if (rep) {
-      const subs = rep.subtreeEndOf(i) - i - 1
-      left = `${rep.info.title}  ·  ${rep.path(i)}  ·  ${plural(rep.remedyCount(i), 'remedy', 'remedies')}${subs > 0 ? `  ·  ${plural(subs, 'sub-rubric')}` : ''}`
-    }
-  }
-  const allRubrics = catalog.repertoryInfos.reduce((n, r) => n + r.rubricCount, 0)
-
+/** A status strip link: runs its command and leaves the keyboard in the document. */
+function StatusLink({ command, children }: { command: string; children: string }) {
   return (
-    <footer className="statusbar" aria-label="Status">
-      <span className="status-main" title={left}>{left}</span>
+    <button className="status-link" onMouseDown={keepFocus} onClick={() => { runCommand(command); returnFocusFromChrome('.statusbar') }}>
+      {children}
+    </button>
+  )
+}
+
+/**
+ * The status strip along the desktop's bottom edge (RadarOpus): only its text links, which show or hide
+ * the table of contents, the toolbars and clipboards, and widen the table of contents. The autosave
+ * state is kept for assistive technology and shows only when saving fails.
+ */
+export const StatusBar = memo(function StatusBar() {
+  const tocOpen = useApp(s => s.layout.showTree)
+  const hideBars = useChrome(s => s.hideBars)
+  const tocExpanded = useChrome(s => s.tocExpanded)
+  return (
+    <footer className="statusbar" aria-label="Status" onMouseDown={e => chromeBackgroundMouseDown(e)}>
+      <StatusLink command="view.toc">{tocOpen ? `Hide the table of contents ${TOC_KEY}` : `Show table of contents ${TOC_KEY}`}</StatusLink>
+      <StatusLink command="view.toolbars">{hideBars ? 'Show toolbars and clipboards' : 'Hide toolbars and clipboards'}</StatusLink>
+      {tocOpen && <StatusLink command="view.expandToc">{tocExpanded ? 'Reduce Toc' : 'Expand Toc'}</StatusLink>}
       <span className="status-spacer" />
-      {clipboard && <span className="status-item"><span className="status-swatch" style={{ background: clipboard.color }} aria-hidden="true" />{clipboard.name}: {plural(clipboard.symptoms.length, 'symptom')}{selected ? ` (${selected} selected)` : ''}</span>}
-      {total != null && <span className="status-item">{total} in case</span>}
-      <span className="status-item status-totals" title={`${catalog.repertoryInfos.length} repertories`}>Library: {plural(allRubrics, 'rubric')} · {plural(catalog.remedies.size, 'remedy', 'remedies')}</span>
-      {account.email && <span className="status-item status-account" title={`Signed in as ${account.email}`}>{account.email}</span>}
-      <span className="status-item status-hint"><span className="kbd">{formatKeys('Mod+K')}</span> commands</span>
+      <SaveIndicator />
     </footer>
   )
 })

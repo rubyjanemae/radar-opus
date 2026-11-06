@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { openApp } from './helpers'
+import { openApp, showClipboardPane } from './helpers'
 
 /* Analysis strategies added from scoring-spec §4 (P1/P2): each is reachable from the strategy menu and ranks. */
 
@@ -38,7 +38,7 @@ async function pick(page: Page, name: RegExp) {
 
 const shot = async (page: Page, name: string) => { if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png` }) }
 
-test.beforeEach(async ({ page }) => { await openApp(page) })
+test.beforeEach(async ({ page }) => { await openApp(page); await showClipboardPane(page) })
 
 test('new strategies are in the menu and rank remedies', async ({ page }) => {
   await analysedCase(page, RUBRICS)
@@ -47,15 +47,16 @@ test('new strategies are in the menu and rank remedies', async ({ page }) => {
   await pick(page, /Sum of symptoms and degrees/)
   // score = Σ i + Σ i×g, so the first remedy scores more than any symptom count alone
   await expect(first.locator('.an-score')).toHaveText(/^\d+$/)
-  const plus = (await headers(page).locator('.an-score').allTextContents()).map(Number)
-  for (let i = 1; i < plus.length; i++) expect(plus[i - 1]).toBeGreaterThanOrEqual(plus[i])
+  // the new ranking arrives in a transition (after the menu button's label): wait until the header shows it
+  const sorted = async () => { const v = (await headers(page).locator('.an-score').allTextContents()).map(Number); return v.every((x, i) => i === 0 || v[i - 1] >= x) }
+  await expect.poll(sorted).toBe(true)
   await shot(page, 'sum-plus')
 
   await pick(page, /Small rubrics \(continuous\)/)
-  const cont = (await headers(page).locator('.an-score').allTextContents()).map(Number)
-  for (let i = 1; i < cont.length; i++) expect(cont[i - 1]).toBeGreaterThanOrEqual(cont[i])
+  await expect.poll(sorted).toBe(true)
 
-  await pick(page, /Prominence/)
+  // the keynote method (spec "prominence"); RadarOpus's Prominence is the default method
+  await pick(page, /Keynotes/)
   await expect(first.locator('.an-score')).toHaveText(/^\d+$/)
   await first.click()
   const panel = page.getByTestId('remedy-panel')
@@ -74,11 +75,13 @@ test('new strategies are in the menu and rank remedies', async ({ page }) => {
   await shot(page, 'composite')
 
   await pick(page, /Segments/)
-  await expect(first.locator('.an-score')).toHaveText(/^\d+\/\d+$/)
+  // two score rows: segments, then degrees
+  await expect(first.locator('.an-score')).toHaveText(/^\d+$/)
+  await expect(first.locator('.an-score2')).toHaveText(/^\d+$/)
   await expect(page.getByTestId('analysis-notes')).toContainText('Segments work best with 2–6 clipboards')
 
-  // back to the default: no notes
-  await pick(page, /Sum of symptoms \(sort degrees\)/)
+  // back to the default, Prominence: no notes
+  await pick(page, /Prominence/)
   await expect(page.getByTestId('analysis-notes')).toHaveCount(0)
 })
 
@@ -97,7 +100,9 @@ test('polarity finds opposite rubrics, marks contraindications and explains PD',
   const pts = await panel.locator('tbody .an-term-pts').evaluateAll(els => els.map(e => e.getAttribute('title')))
   const total = await panel.locator('tfoot .an-term-pts').getAttribute('title')
   expect(pts.reduce((s, x) => s + Number(x), 0)).toBeCloseTo(Number(total), 2)
-  expect(Number(total)).toBe(Number(scores[0].replace('CI ', '')))
+  // the column prints the score rounded to at most four characters; its title has the exact value
+  const title = (await headers(page).first().getAttribute('title'))!
+  expect(Number(total)).toBe(Number(title.match(/score (?:CI )?(-?[\d.]+)/)![1]))
   await shot(page, 'polarity')
 })
 
@@ -129,11 +134,12 @@ test('a grouped symptom at intensity 0 stays out of its group: no grades, no eli
   const labels = view(page).locator('.an-label-text')
   await expect(labels).toHaveCount(3)
   // one group marker (the orange letter), no "[a]" text prefix
-  await expect(labels.nth(0)).toHaveText(/^MIND - anxiety, night$/)
-  await expect(view(page).locator('.an-row').nth(0).locator('.an-flag.f-g')).toHaveText('a')
-  await expect(view(page).locator('.an-corner-rem')).toContainText(/^\d+ remedies/)
+  await expect(labels.nth(0)).toHaveText(/^MIND - ANXIETY - night$/)
+  await expect(view(page).locator('.an-row:not(.an-cbrow)').nth(0).locator('.an-flag.f-g')).toHaveText('a')
+  const count = view(page).locator('.an-footer .an-count')
+  await expect(count).toContainText(/\d+ remedies$/)
   const grouped = await headers(page).locator('.an-score').allTextContents()
-  const total = await view(page).locator('.an-corner-rem').textContent()
+  const total = (await count.textContent())!.split(' / ')[1]
   await shot(page, 'group-weight0')
 
   // identical to analysing a and c alone
@@ -141,5 +147,5 @@ test('a grouped symptom at intensity 0 stays out of its group: no grades, no eli
   await page.keyboard.press('Delete')
   await expect(labels).toHaveCount(2)
   expect(await headers(page).locator('.an-score').allTextContents()).toEqual(grouped)
-  await expect(view(page).locator('.an-corner-rem')).toHaveText(total!)
+  await expect(count).toHaveText(new RegExp(`/ ${total}$`))
 })

@@ -73,7 +73,9 @@ describe('taking rubrics', () => {
     const toasts = useApp.getState().toasts
     expect(toasts).toHaveLength(1)
     expect(toasts[0].text).toMatch(/^3 rubrics taken → Clipboard 1 · last: anger ×2$/)
-    expect(toasts[0].action?.label).toBe('Undo last')
+    // announced only (RadarOpus shows no notification after a take); Edit › Undo undoes it
+    expect(toasts[0].quiet).toBe(true)
+    expect(toasts[0].action).toBeUndefined()
   })
   it('a merged toast lists where each take went and names the last rubric, never "last: 2 rubrics"', () => {
     takeRefs(['t:2'], { ...DEFAULT_TAKE })
@@ -130,15 +132,19 @@ describe('taking rubrics', () => {
     expect(selectActiveConsultation(useApp.getState())).toBeNull()
     expect(Object.keys(useApp.getState().patients)).toHaveLength(0)
   })
-  it("the toast's Undo undoes exactly that take, and nothing once the case changed", () => {
+  it("Undo undoes exactly the last take; a broad take's warning Undo does nothing once the case changed", () => {
     takeRefs(['t:2'], { ...DEFAULT_TAKE })
     takeRefs(['t:3'], { ...DEFAULT_TAKE, clipboard: 2 })
-    useApp.getState().toasts.at(-1)!.action!.run()
+    // an ordinary take shows no card (RadarOpus): it is announced only, Edit › Undo undoes it
+    expect(useApp.getState().toasts.at(-1)).toMatchObject({ quiet: true })
+    actions.undo()
     const c = consultation()
     expect(c.clipboards[0].symptoms).toHaveLength(1)
     expect(c.clipboards[1]?.symptoms ?? []).toHaveLength(0)
-    takeRefs(['t:4'], { ...DEFAULT_TAKE })
-    const undo = useApp.getState().toasts.at(-1)!.action!.run
+    takeRefs(['t:0'], { ...DEFAULT_TAKE })
+    const warning = useApp.getState().toasts.at(-1)!
+    expect(warning.quiet).toBeFalsy()
+    const undo = warning.action!.run
     actions.addRubrics(['t:3'], { clipboardId: c.clipboards[0].id, weight: 1 })
     undo()
     expect(consultation().clipboards[0].symptoms).toHaveLength(3)
@@ -153,7 +159,7 @@ describe('taking again never silently downgrades', () => {
     expect(takeRefs(['t:2'], parsed('+'))).toBe(0)
     expect(takeRefs(['t:2'], { ...DEFAULT_TAKE })).toBe(0)
     expect(consultation().clipboards[0].symptoms[0].weight).toBe(3)
-    expect(useApp.getState().toasts.at(-1)?.text).toBe('Already in Clipboard 1: Mind - fear - alone')
+    expect(useApp.getState().toasts.at(-1)?.text).toBe('Already in Clipboard 1: MIND - FEAR - alone')
   })
   it('only an explicit +N changes the intensity, also down', () => {
     takeRefs(['t:2'], parsed('+3'))

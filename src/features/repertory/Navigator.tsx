@@ -1,436 +1,411 @@
-import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Bookmark, ChevronDown, ChevronRight, History, Library, ListTree, LoaderCircle, Search, Settings2, X } from 'lucide-react'
-import { useCatalog, useRepertory } from '../../data/CatalogContext'
-import { parseRef } from '../../data/catalog'
-import type { Repertory } from '../../data/repertory'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { flushSync } from 'react-dom'
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
+import { useCatalog, useRepertories } from '../../data/CatalogContext'
 import { actions, useApp } from '../../state/store'
-import type { AppState } from '../../state/store'
+import { DEFAULT_LAYOUT } from '../../state/workspace'
 import type { RepertoryTab } from '../../state/workspace'
 import { useContextMenu } from '../../ui/Menu'
 import type { MenuItem } from '../../ui/Menu'
 import { runCommand } from '../../commands/registry'
-import { useFixedVirtual } from './virtual'
-import { matchChapters } from './take'
-import { followExpanded, selectNavigatorTabId, treeRows } from './logic'
-import { goToRef, openRepertory, recentOf, toggleBookmark } from './ops'
-import { RUBRIC_MIME } from '../clipboard/logic'
-import './repertory.css'
-
-const ROW = 22
-
-/** Per-repertory expanded nodes, kept across remounts (written from an effect, read on mount). */
-const expandedByRep = new Map<string, ReadonlySet<number>>()
-
-const repTab = (s: AppState, id: string) => s.tabs.find(t => t.id === id) as RepertoryTab | undefined
-
-function loadSections(): Record<string, boolean> {
-  try { return JSON.parse(localStorage.getItem('rnav.sections') ?? '{}') as Record<string, boolean> } catch { return {} }
-}
-
-export function Navigator() {
-  // the navigator follows the book in a transition: switching repertories (or tabs) renders the book
-  // first, and the tree of the other repertory renders afterwards, interruptibly
-  const tabId = useDeferredValue(useApp(selectNavigatorTabId))
-  const [sections, setSections] = useState(loadSections)
-  const toggleSection = useCallback((k: string) => setSections(s => {
-    const next = { ...s, [k]: !s[k] }
-    try { localStorage.setItem('rnav.sections', JSON.stringify(next)) } catch { /* private mode */ }
-    return next
-  }), [])
-  const toggleBookmarks = useCallback(() => toggleSection('bookmarks'), [toggleSection])
-  const toggleRecent = useCallback(() => toggleSection('recent'), [toggleSection])
-
-  return (
-    <div className="rnav">
-      {tabId ? <TreeSection tabId={tabId} /> : <NoRepertory />}
-      <BookmarksSection collapsed={!!sections.bookmarks} onToggle={toggleBookmarks} />
-      {tabId && <RecentSection tabId={tabId} collapsed={!!sections.recent} onToggle={toggleRecent} />}
-    </div>
-  )
-}
-
-function NoRepertory() {
-  const catalog = useCatalog()
-  return (
-    <div className="rnav-tree-wrap">
-      <div className="pane-head"><ListTree size={13} /> Navigator</div>
-      <div className="rnav-empty">
-        <strong>No repertory open</strong>
-        <span>Choose a repertory to browse its chapters.</span>
-        <div className="rnav-replist">
-          {catalog.repertoryInfos.map(r => (
-            <button key={r.abbrev} className="rnav-rep" onClick={() => void openRepertory(r.abbrev)}>
-              <Library size={14} />
-              <span><b>{r.title}</b><small>{r.author}{r.year ? `, ${r.year}` : ''} · {r.rubricCount.toLocaleString()} rubrics</small></span>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
+import { cancelDocumentFocus, focusDocumentWhenReady } from '../../shell/TabHost'
+import { familiesIfLoaded, loadFamilies, onFamiliesChanged } from '../families/api'
+import { openFamilies } from '../families/ops'
+import { closeOverlays } from '../workspace/responsive'
+import { goToRef, openRepertory } from './ops'
+import { revealAtTop } from './revealTop'
+import { selectNavigatorTabId } from './logic'
+import { ChapterIcon } from '../toc/chapterIcons'
+import { HScrollBar } from '../toc/HScrollBar'
+import { noteSameChapterJump } from '../toc/chapterHistory'
+import { BookGlyph, CogsGlyph, HelpGlyph, LangFlag, RefreshGlyph, StarGlyph, TreeGlyph } from '../toc/glyphs'
+import { buildRows, docLabel, filterDocs, move, pageMove, parentRow, typeahead } from '../toc/model'
+import type { Cursor, Move, TocDoc, TocRow } from '../toc/model'
+import '../toc/toc.css'
 
 /**
- * The repertory's name in the pane head, taking the free space; when the full name does not fit,
- * the abbreviation stands in (the full name stays in the tooltip and the accessible name).
+ * The table of contents (RadarOpus "Toc", Cmd+F2): the installed documents as a tree — Repertories
+ * (each expands to its chapters as a grid of icon tiles) and Families of remedies — with a filter
+ * field on top and the document count at the bottom.
  */
-function PaneTitle({ title, abbrev }: { title: string; abbrev: string }) {
-  const boxRef = useRef<HTMLSpanElement>(null)
-  const fullRef = useRef<HTMLSpanElement>(null)
-  const [short, setShort] = useState(false)
-  useEffect(() => {
-    const box = boxRef.current, full = fullRef.current
-    if (!box || !full) return
-    // widths come from the observer's entries (it reports every observed element once on observe),
-    // never from a synchronous layout read; the full name is always laid out, hidden when short
-    let boxW = -1, fullW = -1
-    const ro = new ResizeObserver(entries => {
-      for (const e of entries) {
-        const w = e.borderBoxSize?.[0]?.inlineSize ?? e.contentRect.width
-        if (e.target === box) boxW = e.contentBoxSize?.[0]?.inlineSize ?? e.contentRect.width
-        else if (e.target === full) fullW = w
-      }
-      if (boxW >= 0 && fullW >= 0) setShort(fullW > boxW + 0.5)
-    })
-    ro.observe(box)
-    ro.observe(full)
-    return () => ro.disconnect()
-  }, [title])
-  return (
-    <span className={`rnav-title${short ? ' rnav-title-short' : ''}`} ref={boxRef} title={title} aria-label={title}>
-      <span className="rnav-title-full" ref={fullRef}>{title}</span>
-      {short && <span className="rnav-title-abbr" aria-hidden="true">{abbrev}</span>}
-    </span>
-  )
-}
 
-/** Memoised: while the navigator waits for its deferred tab, the urgent render skips the tree. */
-const TreeSection = memo(function TreeSection({ tabId }: { tabId: string }) {
-  const repertory = useApp(s => repTab(s, tabId)?.repertory ?? '')
+const FAMILIES_DOC = 'editorial'
+const FAMILIES_FALLBACK_TITLE = 'Radar Opus editorial remedy classification'
+
+/** Tree rows are 20 px; PageUp/PageDown move by the rows in view less one. */
+const ROW_PX = 20
+const TYPEAHEAD_MS = 700
+
+let familiesVersion = 0
+const subscribeFamilies = (fn: () => void) => onFamiliesChanged(() => { familiesVersion++; fn() })
+const getFamiliesVersion = () => familiesVersion
+
+const domId = (key: string, tile?: number) => `toc-${key.replace(/[^\w-]/g, '_')}${tile == null ? '' : `-t${tile}`}`
+
+export function Navigator() {
   const catalog = useCatalog()
-  const loading = useRepertory(repertory)
-  // a loaded repertory is taken from the catalog in this very render (the loader's state catches up
-  // in an effect): switching to a loaded book renders its tree in the navigator's transition, never
-  // the previous book's tree for the new tab
-  const rep = catalog.repertory(repertory) ?? (loading.rep?.abbrev === repertory ? loading.rep : null)
-  const error = rep ? null : loading.error
-  const title = catalog.repertoryInfos.find(r => r.abbrev === repertory)?.title ?? repertory
-  return (
-    <div className="rnav-tree-wrap">
-      <div className="pane-head rnav-head">
-        <ListTree size={13} /><PaneTitle title={title} abbrev={repertory} />
-        <button className="icon-btn" title="Repertories (Ctrl+1)" aria-label="Repertories table of contents" onClick={() => runCommand('repertory.toc')}><Library size={13} /></button>
-        <button className="icon-btn" title="Find rubric (F2)" aria-label="Find rubric" onClick={() => runCommand('nav.chapter')}><Search size={13} /></button>
-      </div>
-      {error ? <div className="rnav-empty"><strong>Could not load</strong><span>{error.message}</span></div>
-        : !rep ? (
-          <div className="rnav-skel" role="status" aria-busy="true">
-            <span className="rnav-loading"><LoaderCircle size={12} className="spin" /> Loading {title}</span>
-            {Array.from({ length: 12 }, (_, i) => <div key={i} className="skeleton" style={{ width: `${45 + ((i * 29) % 45)}%` }} />)}
-          </div>
-        )
-          : <Tree key={rep.abbrev} tabId={tabId} rep={rep} />}
-    </div>
-  )
-})
+  const defaultRep = useApp(s => s.settings.defaultRepertory)
+  // the chapter shown in the book the table of contents follows (announced on its tile, not drawn:
+  // RadarOpus marks no tile as current)
+  const followed = useApp(s => {
+    const id = selectNavigatorTabId(s)
+    const t = id ? s.tabs.find(x => x.id === id) as RepertoryTab | undefined : undefined
+    return t ? `${t.repertory}:${t.rubric}` : ''
+  })
+  useSyncExternalStore(subscribeFamilies, getFamiliesVersion, getFamiliesVersion)
+  const families = familiesIfLoaded()
 
-const Tree = memo(function Tree({ tabId, rep }: { tabId: string; rep: Repertory }) {
-  const showCounts = useApp(s => s.settings.showRemedyCounts)
-  // the book's current rubric; following it is deferred, so a key press in the book renders the book first
-  const liveRubric = useApp(s => repTab(s, tabId)?.rubric ?? 0)
-  const rubric = Math.min(useDeferredValue(liveRubric), rep.size - 1)
-  const [filter, setFilter] = useState('')
-  // the first render already follows the current rubric (no render-phase update on mount)
-  const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => followExpanded(rep, expandedByRep.get(rep.abbrev) ?? new Set(), rubric, null))
-  // the rubric (and its chapter) the tree last followed; a new current rubric re-derives the expansion
-  // and puts the cursor back on it (adjusting state while rendering, not in an effect)
-  const [followed, setFollowed] = useState<{ rubric: number; chapter: number } | null>(() => ({ rubric, chapter: rep.chapterRoot(rubric) }))
-  const [cursorAt, setCursorAt] = useState({ rubric, cursor: rubric })
-  if (followed?.rubric !== rubric) {
-    setExpanded(followExpanded(rep, expanded, rubric, followed?.chapter ?? null))
-    setFollowed({ rubric, chapter: rep.chapterRoot(rubric) })
-  }
-  const cursor = cursorAt.rubric === rubric ? cursorAt.cursor : rubric
-  const setCursor = (c: number) => setCursorAt({ rubric, cursor: c })
-  useLayoutEffect(() => { expandedByRep.set(rep.abbrev, expanded) }, [rep, expanded])
-  const scrollRef = useRef<HTMLDivElement>(null)
+  // the expanded rows and the checked documents are part of the saved workspace (layout)
+  const openKeys = useApp(s => s.layout.tocOpen)
+  const open = useMemo<ReadonlySet<string>>(() => new Set(openKeys), [openKeys])
+  // checked documents (the checkbox column): "Open checked documents" opens them together
+  const checkedKeys = useApp(s => s.layout.tocChecked)
+  const checked = useMemo<ReadonlySet<string>>(() => new Set(checkedKeys), [checkedKeys])
+  const toggleCheck = useCallback((key: string) => {
+    const prev = useApp.getState().layout.tocChecked
+    actions.setLayout({ tocChecked: prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key] })
+  }, [])
+  const [query, setQuery] = useState('')
+  // the cursor starts on the default repertory, as in RadarOpus
+  const [cursor, setCursor] = useState<Cursor>(() => ({ key: `rep:${defaultRep}`, tile: 0 }))
+  const rootRef = useRef<HTMLDivElement>(null)
+  const treeRef = useRef<HTMLDivElement>(null)
+  const typed = useRef({ text: '', at: 0 })
   const cm = useContextMenu()
-  const typeahead = useRef({ text: '', at: 0 })
-  // the row a context menu applies to stays marked while the menu is open
-  const [menuTarget, setMenuTarget] = useState<number | null>(null)
-  const menuOpen = cm.element != null
-  const markedRow = menuOpen ? menuTarget : null
 
-  const chapters = useMemo(() => {
-    if (!filter.trim()) return rep.chapters
-    return matchChapters(rep.chapters.map(c => ({ id: c, name: rep.text(c) })), filter).map(x => x.id)
-  }, [rep, filter])
-  const tree = useMemo(() => treeRows(rep, chapters, expanded), [rep, chapters, expanded])
-  const rows = tree.rows
-  const pos = useMemo(() => { const m = new Map<number, number>(); rows.forEach((r, k) => m.set(r, k)); return m }, [rows])
-  // assume a window-high pane until it is measured: the rows mount in one pass
-  const v = useFixedVirtual(scrollRef, rows.length, ROW, 8, { deferScroll: true, initialHeight: typeof window === 'undefined' ? 0 : window.innerHeight })
+  const reps = useMemo<TocDoc[]>(() => catalog.repertoryInfos.map(r => ({
+    key: `rep:${r.abbrev}`, kind: 'rep', id: r.abbrev, label: docLabel(r.author, r.title), lang: r.lang, extra: `${r.fullTitle} ${r.abbrev}`,
+  })), [catalog])
+  const fams = useMemo<TocDoc[]>(() => [{
+    key: `fam:${FAMILIES_DOC}`, kind: 'fam', id: FAMILIES_DOC, label: families?.source.title ?? FAMILIES_FALLBACK_TITLE, lang: 'en', extra: 'families kingdoms',
+  }], [families])
+  const shownReps = useMemo(() => filterDocs(reps, query), [reps, query])
+  const shownFams = useMemo(() => filterDocs(fams, query), [fams, query])
 
-  const cursorRow = pos.get(cursor) ?? -1
-  // keep the cursor in view, also when the tree pane shrinks (the Bookmarks / Recent sections grow)
-  useEffect(() => { if (cursorRow >= 0) v.scrollToIndex(cursorRow) }, [cursorRow, rows, v.pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
+  // the books of expanded repertories load on demand
+  const openReps = useMemo(() => reps.filter(d => open.has(d.key)).map(d => d.id), [reps, open])
+  const loads = useRepertories(openReps)
+  const famOpen = open.has(`fam:${FAMILIES_DOC}`)
+  useEffect(() => { if (famOpen && !familiesIfLoaded()) void loadFamilies().catch(() => { /* shown as a note */ }) }, [famOpen])
 
-  const toggle = (i: number, open?: boolean) => {
-    const isOpen = expanded.has(i)
-    const want = open ?? !isOpen
-    if (want === isOpen) return
-    const next = new Set(expanded)
-    if (want) next.add(i)
-    else {
-      next.delete(i)
-      // the current rubric disappears inside a collapsed node: move the cursor up to it
-      if (cursor > i && cursor < rep.subtreeEndOf(i)) setCursor(i)
+  const rows = useMemo(() => buildRows({
+    reps: shownReps, fams: shownFams, open, filtering: query.trim() !== '',
+    chapterCount: a => (loads.failed.includes(a) ? null : catalog.repertory(a)?.chapters.length),
+    groups: () => families?.roots.map(id => ({ id, label: families.byId.get(id)?.name ?? id })),
+  }), [shownReps, shownFams, open, query, loads, catalog, families])
+
+  // aria-posinset / aria-setsize: position among the rows of the same parent
+  const position = useMemo(() => {
+    const m = new Map<string, { pos: number; size: number }>()
+    const groups = new Map<string, string[]>()
+    rows.forEach((r, k) => {
+      if (r.kind === 'grid' || r.kind === 'note') return
+      const p = parentRow(rows, k)
+      const g = p < 0 ? '' : rows[p].key
+      groups.set(g, [...(groups.get(g) ?? []), r.key])
+    })
+    for (const keys of groups.values()) keys.forEach((k, x) => m.set(k, { pos: x + 1, size: keys.length }))
+    return m
+  }, [rows])
+
+  // the cursor stays on a row that exists (a collapsed or filtered row hands it to the first row)
+  const cur: Cursor = rows.some(r => r.key === cursor.key) ? cursor : { key: (rows.find(r => r.kind === 'doc') ?? rows[0])?.key ?? '', tile: 0 }
+  const curRow = rows.find(r => r.key === cur.key)
+  const activeId = curRow ? domId(cur.key, curRow.kind === 'grid' ? Math.min(cur.tile, curRow.count - 1) : undefined) : undefined
+
+  useLayoutEffect(() => {
+    // vertically the cursor row is kept in view. Sideways a row keeps its left edge (long labels
+    // overflow to the right with the cursor on them, as in RadarOpus); a chapter tile under the cursor,
+    // with its focus ring RING px outside it, is scrolled into view when the panel is narrower than the grid
+    const tree = treeRef.current, el = activeId ? document.getElementById(activeId) : null
+    if (!tree || !el) return
+    const t = tree.getBoundingClientRect(), r = el.getBoundingClientRect()
+    if (r.top < t.top) tree.scrollTop += r.top - t.top
+    else if (r.bottom > t.bottom) tree.scrollTop += Math.min(r.top - t.top, r.bottom - t.bottom)
+    const RING = 4
+    if (!el.closest('.toc-grid')) { tree.scrollLeft = 0; return }
+    const left = r.left - RING - t.left, right = r.right + RING - (t.left + tree.clientWidth)
+    if (left < 0) tree.scrollLeft += left
+    else if (right > 0) tree.scrollLeft += Math.min(left, right)
+  }, [activeId])
+
+  const toggle = useCallback((key: string, want?: boolean) => {
+    const prev = useApp.getState().layout.tocOpen
+    const isOpen = prev.includes(key)
+    const next = want ?? !isOpen
+    if (next === isOpen) return
+    actions.setLayout({ tocOpen: next ? [...prev, key] : prev.filter(k => k !== key) })
+  }, [])
+
+  // hiding the panel (Cmd+F2) with the focus in it hands the focus to the active document
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    return () => { if (root?.contains(document.activeElement)) focusDocumentWhenReady() }
+  }, [])
+
+  /**
+   * Moves the keyboard focus from the tree to the active document once it is ready. The tree keeps
+   * the focus until then (no moment without a focused element); using the panel meanwhile (a click,
+   * a key) cancels the hand-over so it never takes the focus back from the reader. In narrow mode
+   * the panel floats over the document behind a scrim: opening a document closes it, so the focus
+   * never lands in a book the reader cannot see.
+   */
+  const toDocument = () => {
+    if (document.documentElement.dataset.narrow === 'true') closeOverlays()
+    focusDocumentWhenReady()
+  }
+  const chapterOf = (abbrev: string, tile: number) => catalog.repertory(abbrev)?.chapters[tile]
+  const openChapter = (abbrev: string, tile: number, newTab = false) => {
+    const c = chapterOf(abbrev, tile)
+    if (c == null) return
+    const ref = `${abbrev}:${c}`
+    // a book in a background tab is not on screen (no view takes the reveal, its page cannot be
+    // measured): bring that tab to the front first, so the tile lands exactly as in the active tab
+    if (!newTab) {
+      const s = useApp.getState()
+      const active = s.tabs.find(t => t.id === s.activeTabId)
+      const other = active?.kind === 'repertory' && active.repertory === abbrev ? null : s.tabs.find(t => t.kind === 'repertory' && t.repertory === abbrev)
+      if (other) flushSync(() => actions.activateTab(other.id))
     }
-    setExpanded(next)
+    // a tile for the chapter already shown is a history step only when it moves the page
+    const commit = newTab ? null : sameChapterJump(abbrev, c)
+    void goToRef(ref, { newTab }).then(toDocument)
+    // the chapter heading always comes to the top of column 1, also when that chapter is already
+    // the selected rubric and the reader has wheeled it out of view
+    if (!newTab) revealAtTop(ref)
+    commit?.()
   }
-
-  const go = (i: number, history = true) => {
-    setCursor(i)
-    if (history) actions.navigateRubric(tabId, i)
-    else actions.updateTab<RepertoryTab>(tabId, { rubric: i })
-    if (useApp.getState().activeTabId !== tabId) actions.activateTab(tabId)
+  /** The tab goToRef will navigate, when it already shows the chapter: chapterHistory records the page it leaves. */
+  const sameChapterJump = (abbrev: string, chapter: number) => {
+    const s = useApp.getState()
+    const active = s.tabs.find(t => t.id === s.activeTabId)
+    const tab = (active?.kind === 'repertory' && active.repertory === abbrev ? active : s.tabs.find(t => t.kind === 'repertory' && t.repertory === abbrev)) as RepertoryTab | undefined
+    return tab ? noteSameChapterJump(tab, chapter) : null
   }
-
-  const menuFor = (i: number): MenuItem[] => [
-    { label: 'Show in book', run: () => go(i) },
-    { label: 'Open in new tab', run: () => void goToRef(rep.ref(i), { newTab: true }) },
+  /**
+   * Refresh (the first header button): clears the filter, collapses the tree back to its two
+   * sections and puts the cursor on the default repertory at the top. A book that failed to load is
+   * tried again the next time it is expanded.
+   */
+  const refresh = () => {
+    setQuery('')
+    actions.setLayout({ tocOpen: [...DEFAULT_LAYOUT.tocOpen] })
+    setCursor({ key: `rep:${defaultRep}`, tile: 0 })
+    if (treeRef.current) { treeRef.current.scrollTop = 0; treeRef.current.scrollLeft = 0 }
+    loads.retry()
+    focusTree()
+  }
+  const openDoc = (doc: TocDoc) => {
+    if (doc.kind === 'rep') void openRepertory(doc.id).then(toDocument)
+    else { openFamilies(); toDocument() }
+  }
+  const allDocs = [...reps, ...fams]
+  const checkedDocs = allDocs.filter(d => checked.has(d.key))
+  const openChecked = () => {
+    for (const d of checkedDocs) {
+      if (d.kind === 'rep') void openRepertory(d.id)
+      else openFamilies()
+    }
+    toDocument()
+  }
+  const checkedItems = (): MenuItem[] => [
     { type: 'separator' },
-    { label: expanded.has(i) ? 'Collapse' : 'Expand', disabled: !rep.childCountOf(i), run: () => toggle(i) },
-    { label: 'Collapse all', run: () => { setExpanded(new Set()); setCursor(rep.chapterRoot(cursor)) } },
-    { type: 'separator' },
-    { label: useApp.getState().bookmarks.some(b => b.ref === rep.ref(i)) ? 'Remove bookmark' : 'Bookmark', run: () => toggleBookmark(rep.ref(i)) },
-    { label: 'Find from here…', run: () => actions.openDialog('repertory.find', { repertory: rep.abbrev, from: i }) },
+    { label: checkedDocs.length ? `Open checked documents (${checkedDocs.length})` : 'Open checked documents', disabled: !checkedDocs.length, run: openChecked },
+    { label: 'Uncheck all', disabled: !checkedDocs.length, run: () => actions.setLayout({ tocChecked: [] }) },
   ]
-  const openMenu = (i: number, at: { e?: React.MouseEvent; el?: HTMLElement }) => {
-    setMenuTarget(i)
-    if (at.e) cm.open(at.e, menuFor(i))
-    else if (at.el) cm.openAt(at.el, menuFor(i))
+
+  /** Return / Space / double-click on a row. */
+  const activate = (row: TocRow, tile: number) => {
+    if (row.kind === 'section') toggle(row.key)
+    else if (row.kind === 'doc') openDoc(row.doc)
+    else if (row.kind === 'grid') openChapter(row.doc.id, tile)
+    else if (row.kind === 'group') { openFamilies(row.id); toDocument() }
   }
 
-  /** Row event handlers, stable across renders so unchanged rows skip rendering. */
-  const handlers = useRef<{ go: typeof go; toggle: typeof toggle; openMenu: typeof openMenu } | null>(null)
-  useLayoutEffect(() => { handlers.current = { go, toggle, openMenu } })
-  const rowActions = useMemo<RowActions>(() => ({
-    click: i => { handlers.current?.go(i); scrollRef.current?.focus() },
-    twist: i => handlers.current?.toggle(i),
-    menu: (i, e) => handlers.current?.openMenu(i, { e }),
-  }), [])
+  const menuFor = (row: TocRow, tile: number): MenuItem[] => {
+    if (row.kind === 'doc' && row.doc.kind === 'rep') {
+      const a = row.doc.id
+      return [
+        { label: 'Open', run: () => openDoc(row.doc) },
+        { label: 'Open in new tab', run: () => void goToRef(`${a}:0`, { newTab: true }) },
+        { type: 'separator' },
+        { label: row.open ? 'Collapse' : 'Show chapters', run: () => toggle(row.key) },
+        { label: checked.has(row.key) ? 'Uncheck' : 'Check', run: () => toggleCheck(row.key) },
+        { label: 'Set as default repertory', disabled: a === defaultRep, run: () => actions.setSettings({ defaultRepertory: a }) },
+        { label: 'Repertory information', run: () => actions.openTab({ kind: 'repertories', selected: a }) },
+        ...checkedItems(),
+      ]
+    }
+    if (row.kind === 'grid') {
+      const a = row.doc.id, c = chapterOf(a, tile)
+      return [
+        { label: 'Open chapter', run: () => openChapter(a, tile) },
+        { label: 'Open in new tab', run: () => openChapter(a, tile, true) },
+        { type: 'separator' },
+        { label: 'Find in chapter…', disabled: c == null, run: () => actions.openDialog('repertory.find', { repertory: a, from: c }) },
+      ]
+    }
+    if (row.kind === 'doc') return [
+      { label: 'Open', run: () => openDoc(row.doc) },
+      { label: row.open ? 'Collapse' : 'Expand', run: () => toggle(row.key) },
+      { label: checked.has(row.key) ? 'Uncheck' : 'Check', run: () => toggleCheck(row.key) },
+      ...checkedItems(),
+    ]
+    if (row.kind === 'group') return [{ label: 'Open', run: () => activate(row, 0) }]
+    if (row.kind === 'section') return [{ label: row.open ? 'Collapse' : 'Expand', run: () => toggle(row.key) }]
+    return []
+  }
 
+  const showMenu = (row: TocRow, tile: number, e?: ReactMouseEvent) => {
+    const items = menuFor(row, tile)
+    if (!items.length) return
+    if (e) { cm.open(e, items); return }
+    const el = document.getElementById(domId(row.key, row.kind === 'grid' ? tile : undefined))
+    if (el) cm.openAt(el, items)
+  }
 
   const onKeyDown = (e: ReactKeyboardEvent) => {
-    if (e.target !== scrollRef.current) return
-    const k = cursorRow < 0 ? 0 : cursorRow
-    const cur = rows[k]
+    if (e.target !== treeRef.current || !curRow) return
+    const tile = curRow.kind === 'grid' ? Math.min(cur.tile, curRow.count - 1) : 0
+    const keyMove: Record<string, Move> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Home: 'home', End: 'end' }
+    const plain = !e.altKey && !e.metaKey && !e.ctrlKey
     let handled = true
-    if (e.key === 'ArrowDown') { if (k + 1 < rows.length) go(rows[k + 1], false) }
-    else if (e.key === 'ArrowUp') { if (k > 0) go(rows[k - 1], false) }
-    else if (e.key === 'PageDown') go(rows[Math.min(rows.length - 1, k + v.pageSize)], false)
-    else if (e.key === 'PageUp') go(rows[Math.max(0, k - v.pageSize)], false)
-    else if (e.key === 'Home') go(rows[0], false)
-    else if (e.key === 'End') go(rows[rows.length - 1], false)
-    else if (e.key === 'ArrowRight') {
-      if (rep.childCountOf(cur) && !expanded.has(cur)) toggle(cur, true)
-      else if (rep.childCountOf(cur)) go(rows[k + 1], false)
-    } else if (e.key === 'ArrowLeft') {
-      if (expanded.has(cur)) toggle(cur, false)
-      else if (rep.parent(cur) >= 0) go(rep.parent(cur), false)
-    } else if (e.key === 'Enter') {
-      go(cur)
-      document.querySelector<HTMLElement>('.rv-scroll')?.focus()
-    } else if (e.key === '*') {
-      const next = new Set(expanded)
-      for (const c of rep.children(cur)) if (rep.childCountOf(c)) next.add(c)
-      next.add(cur); setExpanded(next)
-    } else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
-      const el = scrollRef.current?.querySelector<HTMLElement>(`[data-node="${cur}"]`)
-      if (el) openMenu(cur, { el })
-    } else if (e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      const now = performance.now()
-      const t = typeahead.current
-      t.text = now - t.at > 800 ? e.key.toLowerCase() : t.text + e.key.toLowerCase()
+    if (keyMove[e.key] && plain) {
+      const m = move(rows, cur, keyMove[e.key])
+      if (m && 'toggle' in m) toggle(m.toggle, m.open)
+      else if (m) setCursor(m)
+    } else if ((e.key === 'PageDown' || e.key === 'PageUp') && plain) {
+      const n = Math.max(1, Math.floor((treeRef.current?.clientHeight ?? ROW_PX) / ROW_PX) - 1)
+      const m = pageMove(rows, cur, e.key === 'PageDown' ? 'down' : 'up', n)
+      if (m) setCursor(m)
+    } else if (e.key === ' ' && e.shiftKey && plain && curRow.kind === 'doc') toggleCheck(curRow.key)
+    else if ((e.key === 'Enter' || e.key === ' ') && plain) activate(curRow, tile)
+    else if (e.key.length === 1 && e.key !== ' ' && e.key !== '*' && plain) {
+      // type-ahead: letters typed in quick succession find a row by its first letters
+      const now = e.timeStamp
+      const t = typed.current
+      t.text = now - t.at < TYPEAHEAD_MS ? t.text + e.key : e.key
       t.at = now
-      const from = t.text.length === 1 ? k + 1 : k
-      for (let n = 0; n < rows.length; n++) {
-        const r = rows[(from + n) % rows.length]
-        if (rep.text(r).toLowerCase().startsWith(t.text)) { go(r, false); break }
-      }
-    } else handled = false
+      const m = typeahead(rows, cur, t.text) ?? (t.text.length > 1 ? typeahead(rows, cur, e.key) : null)
+      if (m) setCursor(m)
+    }
+    else if (e.key === '*' && curRow.kind === 'section') {
+      const prev = useApp.getState().layout.tocOpen
+      actions.setLayout({ tocOpen: [...new Set([...prev, curRow.key, ...rows.filter(r => r.kind === 'doc').map(r => r.key)])] })
+    }
+    else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) showMenu(curRow, tile)
+    else handled = false
     if (handled) { e.preventDefault(); e.stopPropagation() }
   }
 
-  const currentChapter = rep.chapterRoot(rubric)
-  const items = []
-  for (let k = v.start; k < v.end; k++) {
-    const i = rows[k]
-    items.push(
-      <TreeRow
-        key={i} rep={rep} i={i} top={k * ROW} posinset={tree.pos[k]} setsize={tree.size[k]}
-        open={expanded.has(i)} current={i === rubric} cursor={i === cursor} menuTarget={i === markedRow}
-        currentChapter={i === currentChapter} showCounts={showCounts} actions={rowActions}
-      />,
-    )
-  }
+  const focusTree = () => treeRef.current?.focus({ preventScroll: true })
+  const pick = (key: string, tile = 0) => { setCursor({ key, tile }); focusTree() }
+
+  const docCount = allDocs.length
+  const menuOpen = cm.element != null
 
   return (
-    <>
-      <div className="rnav-filter">
-        <Search size={12} className="rnav-filter-icon" />
+    <div className="toc" ref={rootRef} onPointerDownCapture={cancelDocumentFocus} onKeyDownCapture={cancelDocumentFocus}>
+      <div className="toc-head">
+        <label className="toc-search-label" htmlFor="toc-search">Search for a repertory:</label>
         <input
-          className="input" placeholder="Filter chapters" aria-label="Filter chapters" value={filter}
-          onChange={e => setFilter(e.target.value)}
+          id="toc-search" className="toc-search" type="search" placeholder="Search for a repertory" spellCheck={false} autoComplete="off" value={query}
+          onChange={e => setQuery(e.target.value)}
           onKeyDown={e => {
-            if (e.key === 'Escape' && filter) { e.preventDefault(); e.stopPropagation(); setFilter('') }
+            if (e.key === 'Escape' && query) { e.preventDefault(); e.stopPropagation(); setQuery('') }
             else if (e.key === 'ArrowDown' || e.key === 'Enter') {
               e.preventDefault()
-              if (e.key === 'Enter' && chapters[0] != null) go(chapters[0])
-              scrollRef.current?.focus()
+              const first = rows.find(r => r.kind === 'doc')
+              if (first) setCursor({ key: first.key, tile: 0 })
+              focusTree()
             }
           }}
         />
-        {filter && <button className="icon-btn rnav-filter-x" aria-label="Clear filter" onClick={() => setFilter('')}><X size={12} /></button>}
+        <span className="toc-hbtns">
+          <button className="toc-hbtn toc-refresh" title="Refresh the table of contents" aria-label="Refresh the table of contents" onClick={refresh}><RefreshGlyph /></button>
+          <button className="toc-hbtn" title="Settings" aria-label="Settings" onClick={() => runCommand('app.settings')}><CogsGlyph /></button>
+          <button className="toc-hbtn toc-help" title="Keyboard shortcuts (F1)" aria-label="Keyboard shortcuts" onClick={() => runCommand('help.shortcuts')}><HelpGlyph /></button>
+        </span>
       </div>
       <div
-        className="rnav-tree" ref={scrollRef} tabIndex={0} role="tree" aria-label={`${rep.info.title} chapters`}
-        aria-activedescendant={cursorRow >= 0 ? `rnav-${cursor}` : undefined}
-        onKeyDown={onKeyDown}
+        className="toc-tree" ref={treeRef} tabIndex={0} role="tree" aria-label="Table of contents"
+        aria-activedescendant={activeId} onKeyDown={onKeyDown}
+        onWheel={e => { if (e.deltaX) e.currentTarget.scrollLeft += e.deltaX }}
       >
-        {rows.length === 0 ? <div className="rnav-empty"><span>No chapter matches “{filter}”</span></div>
-          : <div style={{ height: v.total, position: 'relative' }}>{items}</div>}
-      </div>
-      {cm.element}
-    </>
-  )
-})
-
-interface RowActions {
-  click: (i: number) => void
-  twist: (i: number) => void
-  menu: (i: number, e: React.MouseEvent) => void
-}
-
-/** One tree row; memoised, so moving the cursor re-renders two rows, not the whole window. */
-const TreeRow = memo(function TreeRow({ rep, i, top, posinset, setsize, open, current, cursor, menuTarget, currentChapter, showCounts, actions: act }: {
-  rep: Repertory; i: number; top: number; posinset: number; setsize: number; open: boolean; current: boolean; cursor: boolean
-  menuTarget: boolean; currentChapter: boolean; showCounts: boolean; actions: RowActions
-}) {
-  const depth = rep.depth(i)
-  const kids = rep.childCountOf(i)
-  const count = rep.remedyCount(i)
-  return (
-    <div
-      id={`rnav-${i}`}
-      data-node={i}
-      role="treeitem"
-      aria-level={depth + 1}
-      aria-posinset={posinset}
-      aria-setsize={setsize}
-      aria-expanded={kids ? open : undefined}
-      aria-selected={current}
-      className={`rnav-row${current ? ' current' : ''}${cursor ? ' cursor' : ''}${menuTarget ? ' menu-target' : ''}${depth === 0 ? ' chapter' : ''}${currentChapter ? ' current-chapter' : ''}`}
-      style={{ top, paddingLeft: 4 + depth * 14 }}
-      draggable
-      onDragStart={e => { e.dataTransfer.setData(RUBRIC_MIME, rep.ref(i)); e.dataTransfer.setData('text/plain', rep.path(i)); e.dataTransfer.effectAllowed = 'copy' }}
-      onClick={e => { if ((e.target as HTMLElement).closest('.rnav-twist')) return; act.click(i) }}
-      onContextMenu={e => act.menu(i, e)}
-    >
-      <span className="rnav-twist" onClick={() => kids && act.twist(i)} aria-hidden="true">
-        {kids ? <span className={`rnav-chev${open ? ' open' : ''}`} /> : null}
-      </span>
-      <span className="rnav-text">{rep.text(i)}</span>
-      {showCounts && count > 0 && <span className="rnav-count" title={`${countFormat.format(count)} ${count === 1 ? 'remedy' : 'remedies'}`}>{countFormat.format(count)}</span>}
-    </div>
-  )
-})
-const countFormat = new Intl.NumberFormat()
-
-const BookmarksSection = memo(function BookmarksSection({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
-  const bookmarks = useApp(s => s.bookmarks)
-  const catalog = useCatalog()
-  const cm = useContextMenu()
-  const sorted = useMemo(() => [...bookmarks].sort((a, b) => a.folder.localeCompare(b.folder) || a.label.localeCompare(b.label)), [bookmarks])
-  return (
-    <section className={`rnav-sec${collapsed ? ' collapsed' : ''}`} aria-label="Bookmarks">
-      <div className="pane-head rnav-sec-head">
-        <button className="rnav-sec-toggle" aria-expanded={!collapsed} onClick={onToggle}>
-          {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}<Bookmark size={12} /> Bookmarks <span className="badge">{bookmarks.length}</span>
-        </button>
-        <span className="grow" />
-        <button className="icon-btn" title="Manage bookmarks" aria-label="Manage bookmarks" onClick={() => runCommand('bookmarks.open')}><Settings2 size={13} /></button>
-      </div>
-      {!collapsed && (
-        <div className="rnav-sec-body" role={sorted.length ? 'list' : undefined}>
-          {sorted.length === 0 && <div className="rnav-hint">No bookmarks yet. Press <kbd className="kbd">Ctrl+D</kbd> on a rubric.</div>}
-          {sorted.map((b, x) => {
-            const { repertory } = parseRef(b.ref)
-            const showFolder = x === 0 || sorted[x - 1].folder !== b.folder
+        {rows.length === 0 && <div className="toc-empty">No document matches “{query.trim()}”</div>}
+        {rows.map(row => {
+          const isCur = row.key === cur.key
+          if (row.kind === 'grid') {
+            const rep = catalog.repertory(row.doc.id)
+            if (!rep) return null
             return (
-              <div key={b.id} role="listitem">
-                {showFolder && sorted.length > 1 && <div className="rnav-folder">{b.folder}</div>}
-                <button
-                  className="rnav-link" title={`${b.label}\n${catalog.repertoryInfos.find(r => r.abbrev === repertory)?.title ?? repertory}`}
-                  onClick={() => void goToRef(b.ref)}
-                  onContextMenu={e => cm.open(e, [
-                    { label: 'Open', run: () => void goToRef(b.ref) },
-                    { label: 'Open in new tab', run: () => void goToRef(b.ref, { newTab: true }) },
-                    { type: 'separator' },
-                    { label: 'Manage bookmarks…', run: () => actions.openDialog('repertory.bookmarks', { selectId: b.id }) },
-                    { label: 'Remove bookmark', danger: true, run: () => actions.removeBookmark(b.id) },
-                  ])}
-                >
-                  <Bookmark size={11} className="rnav-link-icon" />
-                  <span className="rnav-link-text">{b.label}</span>
-                </button>
+              // the whole grid is one item of the tree: the cursor outlines the block (RadarOpus), and
+              // the tile under the cursor gets a ring while the tree has the keyboard focus
+              <div key={row.key} role="group" aria-label={`${row.doc.label} chapters`} className={`toc-grid${isCur ? ' cursor' : ''}`}>
+                {rep.chapters.map((c, t) => {
+                  const name = rep.text(c)
+                  const active = isCur && t === Math.min(cur.tile, row.count - 1)
+                  const current = followed === `${row.doc.id}:${c}`
+                  return (
+                    <div
+                      key={c} id={domId(row.key, t)} role="treeitem" aria-level={3} aria-posinset={t + 1} aria-setsize={row.count}
+                      aria-selected={active} aria-label={name} title={name}
+                      aria-current={current ? 'page' : undefined}
+                      className={`toc-tile${active ? ' cursor' : ''}${active && menuOpen ? ' menu-target' : ''}`}
+                      onClick={() => { setCursor({ key: row.key, tile: t }); openChapter(row.doc.id, t) }}
+                      onContextMenu={e => { pick(row.key, t); showMenu(row, t, e) }}
+                    >
+                      <ChapterIcon name={name} size={32} />
+                    </div>
+                  )
+                })}
               </div>
             )
-          })}
-        </div>
-      )}
-      {cm.element}
-    </section>
-  )
-})
-
-const RecentSection = memo(function RecentSection({ tabId, collapsed, onToggle }: { tabId: string; collapsed: boolean; onToggle: () => void }) {
-  const tab = useApp(s => repTab(s, tabId))
-  const recentRubrics = useApp(s => s.recentRubrics)
-  const catalog = useCatalog()
-  const rep = tab ? catalog.repertory(tab.repertory) : undefined
-  // the workspace Recent list (saved with the workspace) for this repertory, then the list a tab saved
-  // before it existed; with neither, the tab's jump history
-  const recent = useMemo(() => {
-    if (!tab) return []
-    const out = recentOf(recentRubrics, tab.repertory, tab.recent, 15)
-    return (out.length ? out : recentOf([], tab.repertory, [...tab.back].reverse(), 15)).filter(r => !rep || r < rep.size)
-  }, [tab, recentRubrics, rep])
-  if (!rep || !tab) return null
-  return (
-    <section className={`rnav-sec${collapsed ? ' collapsed' : ''}`} aria-label="Recent rubrics">
-      <div className="pane-head rnav-sec-head">
-        <button className="rnav-sec-toggle" aria-expanded={!collapsed} onClick={onToggle}>
-          {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}<History size={12} /> Recent <span className="badge">{recent.length}</span>
-        </button>
-      </div>
-      {!collapsed && (
-        <div className="rnav-sec-body" role={recent.length ? 'list' : undefined}>
-          {recent.length === 0 && <div className="rnav-hint">Rubrics you jump to, read for a moment, take, copy or bookmark appear here.</div>}
-          {recent.map(r => (
-            <div key={r} role="listitem">
-              <button
-                className={`rnav-link${r === tab.rubric ? ' current' : ''}`} title={rep.path(r)} aria-current={r === tab.rubric ? 'location' : undefined}
-                onClick={() => { actions.navigateRubric(tab.id, r); if (useApp.getState().activeTabId !== tab.id) actions.activateTab(tab.id) }}
-              >
-                <span className="rnav-link-text">{rep.path(r, ' › ')}</span>
-              </button>
+          }
+          if (row.kind === 'note') return <div key={row.key} className="toc-note" role="none">{row.label}</div>
+          const expandable = row.kind === 'section' || row.kind === 'doc'
+          const isOpen = expandable && row.open
+          return (
+            <div
+              key={row.key} id={domId(row.key)} role="treeitem" aria-level={row.depth + 1}
+              aria-posinset={position.get(row.key)?.pos} aria-setsize={position.get(row.key)?.size}
+              aria-expanded={expandable ? isOpen : undefined} aria-selected={isCur}
+              aria-checked={row.kind === 'doc' ? checked.has(row.key) : undefined}
+              className={`toc-row toc-${row.kind}${isCur ? ' cursor' : ''}${isCur && menuOpen ? ' menu-target' : ''}`}
+              onClick={e => {
+                pick(row.key)
+                if (row.kind === 'section' || (e.target as HTMLElement).closest('.toc-twist')) { if (expandable) toggle(row.key) }
+                else if (row.kind === 'group') activate(row, 0)
+              }}
+              onDoubleClick={e => { if (row.kind === 'doc' && !(e.target as HTMLElement).closest('.toc-twist')) openDoc(row.doc) }}
+              onContextMenu={e => { pick(row.key); showMenu(row, 0, e) }}
+            >
+              {row.kind === 'doc' && (
+                <span
+                  className={`toc-check${checked.has(row.key) ? ' on' : ''}`} aria-hidden="true" title="Check (Shift+Space)"
+                  onClick={e => { e.stopPropagation(); setCursor({ key: row.key, tile: 0 }); focusTree(); toggleCheck(row.key) }}
+                  onDoubleClick={e => e.stopPropagation()}
+                />
+              )}
+              {expandable ? <span className={`toc-twist${isOpen ? ' open' : ''}`} aria-hidden="true" /> : <span className="toc-twist-gap" aria-hidden="true" />}
+              {row.kind === 'section' && <span className="toc-label">{row.label}</span>}
+              {row.kind === 'doc' && (
+                <>
+                  {row.doc.kind === 'rep' && row.doc.id === defaultRep && <span className="toc-default" title="Default repertory"><StarGlyph /></span>}
+                  {row.doc.kind === 'rep' ? <BookGlyph /> : <TreeGlyph />}
+                  <LangFlag lang={row.doc.lang} />
+                  <span className="toc-label">{row.doc.label}</span>
+                </>
+              )}
+              {row.kind === 'group' && <span className="toc-label">{row.label}</span>}
             </div>
-          ))}
-        </div>
-      )}
-    </section>
+          )
+        })}
+      </div>
+      <div className="toc-foot" role="status">{docCount} document(s) loaded ({docCount} volumes)</div>
+      {/* the horizontal scrollbar under the footer scrolls the tree (whose own overflow-x is hidden) */}
+      <HScrollBar target={treeRef} deps={rows} />
+      {cm.element}
+    </div>
   )
-})
+}

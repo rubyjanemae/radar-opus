@@ -102,6 +102,8 @@ export const AnalysisBars = memo(function AnalysisBars(p: Props) {
       onFocus={() => { focusWithin.current = true }}
       onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) focusWithin.current = false }}
       onKeyDown={e => {
+        // keys typed in the context menu (a portal, but a React child) are the menu's, not the list's
+        if (!e.currentTarget.contains(e.target as Node)) return
         const page = Math.max(1, Math.floor((ref.current?.clientHeight ?? 300) / ROW) - 1)
         let handled = true
         if (e.key === 'ArrowDown') go(a + 1)

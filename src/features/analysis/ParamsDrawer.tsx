@@ -3,6 +3,9 @@ import { RotateCcw, SlidersHorizontal, X } from 'lucide-react'
 import { strategyInfo } from '../../engine/analysis'
 import { DEFAULT_PARAMS, mergeParams } from '../../engine/model'
 import type { AnalysisOptions, StrategyId, StrategyParams } from '../../engine/model'
+import { STRATEGY_GROUPS } from './strategyParams'
+
+export { hasParams, STRATEGY_GROUPS } from './strategyParams'
 
 type Group = keyof StrategyParams
 
@@ -33,7 +36,7 @@ export const PARAM_GROUPS: { group: Group; title: string; fields: FieldSpec[] }[
     ],
   },
   {
-    group: 'prominence', title: 'Prominence', fields: [
+    group: 'prominence', title: 'Keynotes', fields: [
       { kind: 'num', path: ['k'], label: 'Top grade shared by at most', hint: 'A top grade counts when this many remedies or fewer hold it', min: 1, max: 100, step: 1, int: true },
       { kind: 'bool', path: ['soleBonus'], label: 'Double a sole top grade', hint: 'A remedy alone at the top grade counts twice' },
     ],
@@ -67,19 +70,6 @@ export const PARAM_GROUPS: { group: Group; title: string; fields: FieldSpec[] }[
     ],
   },
 ]
-
-/** Parameter groups each strategy reads. */
-export const STRATEGY_GROUPS: Partial<Record<StrategyId, Group[]>> = {
-  'small-rubrics': ['smallRubrics'],
-  'small-rubrics-cont': ['smallRubricsCont'],
-  'remedy-size': ['smallRemedies'],
-  'small-remedies': ['smallRubrics', 'smallRemedies'],
-  prominence: ['prominence'],
-  kent: ['kent'],
-  polarity: ['polarity'],
-  segments: ['segments'],
-  composite: ['composite', 'kent', 'smallRubricsCont', 'smallRemedies'],
-}
 
 const get = (obj: unknown, path: string[]): unknown => path.reduce<unknown>((o, k) => (o as Record<string, unknown>)?.[k], obj)
 function set<T>(obj: T, path: string[], value: unknown): T {

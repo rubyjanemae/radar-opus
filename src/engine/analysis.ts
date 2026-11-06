@@ -26,6 +26,7 @@
  *
  * ─── Strategies (§3, §4) ────────────────────────────────────────────────────
  *  id                        spec            sort keys                points per line
+ *  graded-prominence         (RadarOpus)     Σ, CI                    i·V(g), V = 100/120/160/240 for g = 1..4
  *  sum-symptoms-degrees      sumSymDeg       CI, DI                   i·g
  *  sum-symptoms              sumSym          CI                       i
  *  sum-degrees               sumDegSym       DI, CI                   i·g
@@ -35,7 +36,7 @@
  *  small-rubrics-cont        smallRubricsCont Σ                       i·g·w(n_s)
  *  remedy-size               smallRemedies   Σ                        i·g·f(r), f(r) = clamp((1000/m_r)^0.5, 0.5, 4)
  *  small-remedies            smallBoth       Σ                        i·g·f_s·f(r)
- *  prominence                prominence      P, CI, DI                i·g·π, π = 1 when r holds top_s and ≤ K share it, else 0
+ *  prominence (Keynotes)     prominence      P, CI, DI                i·g·π, π = 1 when r holds top_s and ≤ K share it, else 0
  *  kent                      kent            Σ                        i·g·κ_s
  *  boenninghausen            boenninghausen  CI, DI over g_eff, where
  *                            g_eff(r,s) = max(g(r,s), g(r, general rubrics linked to s)) (§4.12)
@@ -235,6 +236,7 @@ export interface StrategyInfo {
 }
 
 export const STRATEGIES: StrategyInfo[] = [
+  { id: 'graded-prominence', name: 'Prominence', short: 'Prominence', formula: 'Σ i×V(g), V = 100, 120, 160, 240 for grades 1–4', description: 'Every remedy of a symptom scores by its grade: 100 for grade 1, 120 for grade 2, 160 for grade 3 (RadarOpus scale), times the intensity. The default.' },
   { id: 'sum-symptoms-degrees', name: 'Sum of symptoms (sort degrees)', short: 'Sympt + Deg', formula: 'rank by Σ i, then Σ i×g', description: 'Most symptoms covered first, then the sum of degrees. The classic default.' },
   { id: 'sum-symptoms', name: 'Sum of symptoms (ignore degrees)', short: 'Symptoms', formula: 'rank by Σ i', description: 'Counts the symptoms each remedy covers; degrees only break ties.' },
   { id: 'sum-degrees', name: 'Sum of degrees', short: 'Degrees', formula: 'rank by Σ i×g, then Σ i', description: 'Sum of grades across all symptoms, then symptoms covered.' },
@@ -244,7 +246,7 @@ export const STRATEGIES: StrategyInfo[] = [
   { id: 'small-rubrics-cont', name: 'Small rubrics (continuous)', short: 'Small cont.', formula: 'Σ i×g×w, w = 1 + 29×2^(−(n−1)/10)', description: 'The smaller the rubric, the more it counts: a 1-remedy rubric weighs 30, one with 11 remedies 15.5, large rubrics about 1.' },
   { id: 'remedy-size', name: 'Small remedies', short: 'Small rem.', formula: 'Σ i×g × f(r), f(r) = clamp(√(1000/m), 0.5, 4)', description: 'Corrects for remedy size (m = rubrics the remedy appears in), so lesser-known remedies are not buried by polychrests.' },
   { id: 'small-remedies', name: 'Small rubrics + small remedies', short: 'Small both', formula: 'f(r) × Σ i×g×f', description: 'Small-rubric weighting and the remedy-size correction together.' },
-  { id: 'prominence', name: 'Prominence (keynotes)', short: 'Prominence', formula: 'P = Σ i×g where the remedy has the top grade (≤ 3 share it); then Σ i, Σ i×g', description: 'Counts only the symptoms in which the remedy stands out with the rubric\'s highest grade; remedies without such symptoms follow by symptoms and degrees.' },
+  { id: 'prominence', name: 'Keynotes (top grade)', short: 'Keynotes', formula: 'P = Σ i×g where the remedy has the top grade (≤ 3 share it); then Σ i, Σ i×g', description: 'Counts only the symptoms in which the remedy stands out with the rubric\'s highest grade; remedies without such symptoms follow by symptoms and degrees.' },
   { id: 'kent', name: 'Kent (hierarchy)', short: 'Kent', formula: 'Σ i×g×κ, κ: mind 3, general 2, local 1', description: 'Kent\'s hierarchy: mentals over generals over particulars.' },
   { id: 'boenninghausen', name: 'Bönninghausen (generalisation)', short: 'Bönningh.', formula: 'g′ = max(g, g in linked general rubric); rank by Σ i, then Σ i×g′', description: 'Grand generalisation: a modality or sensation also counts at the grade its remedy has in the matching Generalities rubric.' },
   { id: 'polarity', name: 'Polarity (Frei)', short: 'Polarity', formula: 'PD = Σ g(symptom) − Σ g(opposite); contraindicated if g ≤ 2 and opposite ≥ 3', description: 'Uses symptoms with a polar opposite (agg. ↔ amel.): remedies covering every polar symptom, ranked by polarity difference; a remedy strong in the opposite pole is contraindicated and sorts last.' },
@@ -286,9 +288,22 @@ export function remedySizeFactor(m: number, p: StrategyParams['smallRemedies'] =
   return Math.min(p.fMax, Math.max(p.fMin, Math.pow(p.mRef / m, p.alpha)))
 }
 
-/** Grade value V(g) per strategy: 1 for the pure symptom count, 1 + g for symptoms plus degrees, else g. */
+/**
+ * Points of grades 1–4 under the RadarOpus-style Prominence strategy.
+ *
+ * Engine difference, recorded: RadarOpus 4.2.7 shows 160 / 120 / 100 for grades 3 / 2 / 1 of a single
+ * rubric at intensity 1 (reference: one rubric, 43 remedies). Those three values are matched exactly.
+ * Not observed, and so assumptions of this clone: grade 4 (240, continuing the doubling step 20, 40, 80),
+ * how intensity 2–4 scales (here linear, i × V(g)) and how several symptoms combine (here summed).
+ * RadarOpus's full Prominence formula is not published; the clone's other strategies keep their own
+ * scales (grade × intensity sums), which is why their score rows read 1–4 rather than 100–240.
+ */
+export const PROMINENCE_POINTS: readonly number[] = [0, 100, 120, 160, 240]
+
+/** Grade value V(g) per strategy: 1 for the pure symptom count, 1 + g for symptoms plus degrees, the Prominence points, else g. */
 export function gradeValue(strategy: StrategyId, g: number): number {
   if (g <= 0) return 0
+  if (strategy === 'graded-prominence') return PROMINENCE_POINTS[Math.min(4, Math.round(g))]
   if (strategy === 'sum-symptoms') return 1
   if (strategy === 'sum-symptoms-plus-degrees') return 1 + g
   return g
@@ -806,6 +821,7 @@ function analyzeCore(src: RubricSource, clipboards: Clipboard[], options: Analys
       case 'sum-symptoms-degrees':
       case 'boenninghausen': r.score = CI; r.secondary = P; k = [CI, P]; break
       case 'sum-symptoms': r.score = CI; r.secondary = 0; k = [CI]; break
+      case 'graded-prominence': r.score = P; r.secondary = CI; k = [P, CI]; break
       case 'sum-degrees':
       case 'elimination': r.score = P; r.secondary = CI; k = [P, CI]; break
       case 'prominence': {

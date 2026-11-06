@@ -61,9 +61,13 @@ export function analyzeCached(source: CatalogSource, catalog: Catalog, clipboard
   return result
 }
 
-/** The repertory view the analysis follows: the book's minimum grade shown (ANA-024). */
-export function useAnalysisMinGrade(): number {
-  return useApp(s => s.settings.minGradeShown ?? 1)
+/**
+ * The view an analysis scores with: its own "Limit the analysis to a view" choice (options.viewGrade,
+ * RadarOpus), independent of the grades the repertory book shows.
+ */
+export function analysisViewGrade(options: Pick<AnalysisOptions, 'viewGrade'> | null | undefined): 1 | 2 | 3 {
+  const g = options?.viewGrade
+  return g === 2 || g === 3 ? g : 1
 }
 
 /**
@@ -95,7 +99,7 @@ export function useAnalysis(consultationId: string | null, opts?: { deferFirst?:
   const catalog = useCatalog()
   const source = sourceFor(catalog)
   const consultation = useApp(s => (consultationId ? s.consultations[consultationId] ?? null : null))
-  const minGrade = useAnalysisMinGrade()
+  const minGrade = analysisViewGrade(consultation?.analysis)
   /*
    * deferFirst: the first render gets no inputs, so the view mounts (toolbar, progress) and paints at
    * once; the analysis and the grid then render in a background pass that yields to input, paint and

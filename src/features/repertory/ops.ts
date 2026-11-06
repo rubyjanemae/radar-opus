@@ -10,6 +10,7 @@ import type { MenuItem } from '../../ui/Menu'
 import { DEFAULT_TAKE, bookAbbrev, describeTake, rubricHtml, rubricPlainText, weightGiven } from './take'
 import { alphaRemedies, GRADE_WORD } from './remedies'
 import { getHighlight, setHighlight } from './highlight'
+import { chapterRemsOpen, toggleChapterRems } from './chapterRems'
 import type { TakeOptions } from './take'
 import { broadTakeWarning } from '../clipboard/logic'
 
@@ -113,6 +114,14 @@ export function refShort(ref: RubricRef): string {
   const r = resolve(ref)
   if (!r) return ref
   const line = r.rep.lineage(r.index).map(i => r.rep.text(i))
+  return line.length <= 3 ? line.join(' - ') : `${line[0]} - … - ${line.slice(-2).join(' - ')}`
+}
+
+/** refShort as the breadcrumb and the analysis print it: chapter and first level in capitals ("MIND - ABRUPT - morning"). */
+export function refShortCaps(ref: RubricRef): string {
+  const r = resolve(ref)
+  if (!r) return ref
+  const line = r.rep.lineage(r.index).map((i, k) => (k <= 1 ? r.rep.text(i).toUpperCase() : r.rep.text(i)))
   return line.length <= 3 ? line.join(' - ') : `${line[0]} - … - ${line.slice(-2).join(' - ')}`
 }
 
@@ -248,7 +257,9 @@ export function takeToast(record: TakeRecord, single: string, undo: () => void, 
     return
   }
   const log = [...(prev?.log ?? []), record]
-  actions.toast(takeToastText(log, single), 'success', { label: log.length > 1 ? 'Undo last' : 'Undo', run: undo })
+  // RadarOpus shows no notification after a take, only the count under the clipboard in the left strip:
+  // the take is announced to assistive technology without a card, and Edit › Undo (Mod+Z) undoes it
+  actions.toast(takeToastText(log, single), 'success', undefined, undefined, true)
   const t = st().toasts[st().toasts.length - 1]
   takeLog = t ? { toastId: t.id, log } : null
   lastToast = t ? { id: t.id, kind: 'take', count: log.length } : null
@@ -323,7 +334,7 @@ export function takeRefs(refs: RubricRef[], o: TakeOptions): number {
   if (!result) { featureToast('error', () => 'No clipboard available', 'error'); return 0 }
   const { target, added, updated } = result
   for (const ref of refs.slice(0, 5)) recordRecent(ref)
-  const what = refs.length === 1 ? refShort(refs[0]) : `${refs.length} rubrics`
+  const what = refs.length === 1 ? refShortCaps(refs[0]) : `${refs.length} rubrics`
   const leafNote = o.subRubrics && refs.length === 1 && (() => { const r = resolve(refs[0]); return !!r && r.rep.childCountOf(r.index) === 0 })() ? ' · no sub-rubrics' : ''
   const caseNote = newCase ? ' · new unsaved case' : ''
   const broad = broadTakeWarning(refs.map(ref => takeBreadth(ref, o.subRubrics)))
@@ -526,6 +537,12 @@ export function rubricMenu(ref: RubricRef): MenuItem[] {
       const r = resolve(ref)
       const n = r ? r.rep.remedyCount(r.index) : 0
       return n ? { label: `Remedies (${n})`, submenu: remedyMenuItems(ref) } : { label: 'Remedies', disabled: true }
+    })(),
+    // a chapter heading with remedies of its own: the book folds them away under its "(n)" expander
+    ...(() => {
+      const r = resolve(ref)
+      if (!r || r.rep.depth(r.index) !== 0 || !r.rep.remedyCount(r.index)) return []
+      return [{ label: 'Show chapter remedies in the book', checked: chapterRemsOpen(ref), run: () => toggleChapterRems(ref) }]
     })(),
     { type: 'separator' },
     { command: 'rubric.copy' },

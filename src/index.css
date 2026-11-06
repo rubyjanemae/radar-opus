@@ -2,6 +2,8 @@
   --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-book: "Source Serif 4", "Iowan Old Style", Georgia, "Times New Roman", serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* window chrome (menu bar, toolbar, document tabs, status strip): RadarOpus's Lucida/Verdana look */
+  --font-chrome: "Lucida Grande", "Lucida Sans Unicode", Verdana, Geneva, system-ui, sans-serif;
   --fs: 13px;
   --fs-sm: 12px;
   --fs-xs: 11px;
@@ -92,6 +94,44 @@
   --z-toast: 1100;
   --z-tour: 1200;
 
+
+  /* RadarOpus window chrome (shell): terracotta desktop, peach bars, document window and its tabs */
+  --desk: #d5947c;
+  --desk-fg: #2a1a14;
+  --ro-title: #ffffff;
+  --ro-title-line: #dfd4d2;
+  --ro-bar: #f4dfd8;
+  --ro-bar-line: #dccac9;
+  --ro-sep: #d5ac9d;
+  --ro-sep-edge: #caa193;
+  --ro-win: #ffffff;
+  --ro-win-line: #b07c6d;
+  --ro-win-top: #8f5647;
+  --ro-win-side: #dbaa9a;
+  --ro-win-top-soft: #b7796a;
+  --ro-win-top-under: #c4968b;
+  --ro-win-foot-in: #f5d0c5;
+  --ro-win-foot: #c99384;
+  --ro-tab-edge: #efd2ca;
+  --ro-tab-on: #f4dfd8;
+  --ro-tab-off: #cfaba3;
+  --ro-tab-fg: #1e1e1e;
+  --ro-close: #ffd0d7;
+  --ro-close-line: #e195a4;
+  --ro-close-x: #e0606e;
+  --ro-press: #e9a48f;
+  --ro-label: #2b2b2b;
+  --ro-icon-blue: #2f78c4;
+  --ro-icon-teal: #3f9a86;
+  --ro-icon-orange: #d9822b;
+  --ro-icon-amber: #d8a227;
+  --ro-icon-green: #4f8f3a;
+  --ro-icon-grey: #5f6b72;
+  --ro-icon-ink: #1d2b3a;
+  --ro-clip: #f5c26a;
+  --ro-clip-ring: #8d8a88;
+  --ro-clip-check: #2f78c4;
+  --ro-clip-on: rgba(255, 255, 255, .28);
   color-scheme: light;
 }
 
@@ -132,6 +172,42 @@
     --scrim: rgba(0, 0, 0, .55);
     --scrim-strong: rgba(0, 0, 0, .62);
     --inverse-bg: #2b313c;
+    --desk: #4a2f27;
+    --desk-fg: #f0e2dc;
+    --ro-title: #1b1716;
+    --ro-title-line: #3c302c;
+    --ro-bar: #2b2321;
+    --ro-bar-line: #3c302c;
+    --ro-sep: #6e4a3e;
+    --ro-sep-edge: #5a3b31;
+    --ro-win: #1d2127;
+    --ro-win-line: #2a1c17;
+    --ro-win-top: #120c0a;
+    --ro-win-side: #3a2a25;
+    --ro-win-top-soft: #2a1c17;
+    --ro-win-top-under: #3a2a25;
+    --ro-win-foot-in: #3a2a25;
+    --ro-win-foot: #120c0a;
+    --ro-tab-edge: #4a3a35;
+    --ro-tab-on: #2b2321;
+    --ro-tab-off: #3a2b27;
+    --ro-tab-fg: #ece3df;
+    --ro-close: #6d3a40;
+    --ro-close-line: #9c5560;
+    --ro-close-x: #ffb3bb;
+    --ro-press: #7a4535;
+    --ro-label: #e3dad6;
+    --ro-icon-blue: #78a9ec;
+    --ro-icon-teal: #6cc2ad;
+    --ro-icon-orange: #f0a458;
+    --ro-icon-amber: #f0c45a;
+    --ro-icon-green: #8cc46f;
+    --ro-icon-grey: #aab4ba;
+    --ro-icon-ink: #dfe6ee;
+    --ro-clip: #f0b453;
+    --ro-clip-ring: #b3aca8;
+    --ro-clip-check: #8fb6ff;
+    --ro-clip-on: rgba(255, 255, 255, .12);
     color-scheme: dark;
   }
 }
@@ -171,6 +247,42 @@
   --scrim: rgba(0, 0, 0, .55);
   --scrim-strong: rgba(0, 0, 0, .62);
   --inverse-bg: #2b313c;
+  --desk: #4a2f27;
+  --desk-fg: #f0e2dc;
+  --ro-title: #1b1716;
+  --ro-title-line: #3c302c;
+  --ro-bar: #2b2321;
+  --ro-bar-line: #3c302c;
+  --ro-sep: #6e4a3e;
+  --ro-sep-edge: #5a3b31;
+  --ro-win: #1d2127;
+  --ro-win-line: #2a1c17;
+  --ro-win-top: #120c0a;
+  --ro-win-side: #3a2a25;
+  --ro-win-top-soft: #2a1c17;
+  --ro-win-top-under: #3a2a25;
+  --ro-win-foot-in: #3a2a25;
+  --ro-win-foot: #120c0a;
+  --ro-tab-edge: #4a3a35;
+  --ro-tab-on: #2b2321;
+  --ro-tab-off: #3a2b27;
+  --ro-tab-fg: #ece3df;
+  --ro-close: #6d3a40;
+  --ro-close-line: #9c5560;
+  --ro-close-x: #ffb3bb;
+  --ro-press: #7a4535;
+  --ro-label: #e3dad6;
+  --ro-icon-blue: #78a9ec;
+  --ro-icon-teal: #6cc2ad;
+  --ro-icon-orange: #f0a458;
+  --ro-icon-amber: #f0c45a;
+  --ro-icon-green: #8cc46f;
+  --ro-icon-grey: #aab4ba;
+  --ro-icon-ink: #dfe6ee;
+  --ro-clip: #f0b453;
+  --ro-clip-ring: #b3aca8;
+  --ro-clip-check: #8fb6ff;
+  --ro-clip-on: rgba(255, 255, 255, .12);
   color-scheme: dark;
 }
 
