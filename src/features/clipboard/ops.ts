@@ -416,3 +416,56 @@ export function editNote() {
 }
 
 export function newCase() { actions.openDialog('clipboard.newCase') }
+
+// ---- Edit › Cut... / Paste / Unselect all (RadarOpus Edit menu) ----
+
+/** Symptoms cut with Edit › Cut..., waiting for Edit › Paste (kept for this session only). */
+let cutBuffer: Symptom[] = []
+
+/** Cut: the symptoms leave their clipboard and wait for Paste, which puts them into the active clipboard. */
+export function cutSymptoms(clipboardId: string, symptoms: Symptom[], text?: string) {
+  if (!symptoms.length) return
+  cutBuffer = symptoms.map(s => ({ ...s }))
+  // the text goes to the system clipboard too, for pasting elsewhere (best effort)
+  if (text) void navigator.clipboard?.writeText(text).catch(() => undefined)
+  actions.removeSymptoms(clipboardId, symptoms.map(s => s.id))
+  const n = symptoms.length
+  actions.toast(`Cut ${n} symptom${n === 1 ? '' : 's'}: Paste puts ${n === 1 ? 'it' : 'them'} into the active clipboard`, 'info')
+}
+
+/** Cut the clipboard pane's selection (or cursor row). */
+export function cutSelected(): boolean {
+  const cb = activeClipboard()
+  const ids = targetIds()
+  if (!cb || !ids.length) return false
+  cutSymptoms(cb.id, cb.symptoms.filter(s => ids.includes(s.id)))
+  return true
+}
+export const canCutSelected = hasTarget
+
+export const canPaste = () => cutBuffer.length > 0 && !!activeClipboard()
+
+/** Paste the cut symptoms into the active clipboard, as one undo step; a rubric already there is skipped. */
+export function pasteSymptoms() {
+  const cb = activeClipboard()
+  if (!cb || !cutBuffer.length) return
+  const have = new Set(cb.symptoms.map(s => s.rubrics.join('|')))
+  const fresh = cutBuffer.filter(s => !have.has(s.rubrics.join('|')))
+  if (fresh.length) {
+    actions.transaction(() => {
+      for (const s of fresh) {
+        const { id: _id, addedAt: _at, ...fields } = s
+        void _id; void _at
+        actions.addSymptom(cb.id, fields)
+      }
+    }, fresh.length === 1 ? 'Paste symptom' : `Paste ${fresh.length} symptoms`)
+  }
+  const skipped = cutBuffer.length - fresh.length
+  actions.toast(`Pasted ${fresh.length} symptom${fresh.length === 1 ? '' : 's'} into ${cb.name}${skipped ? ` (${skipped} already there)` : ''}`, fresh.length ? 'success' : 'info')
+}
+
+export const hasSelection = () => st().selectedSymptomIds.length > 0
+export function unselectAll() {
+  actions.setSelectedSymptoms([])
+  setPanelUi({ anchorId: null })
+}

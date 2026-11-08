@@ -41,3 +41,45 @@ const collator = new Intl.Collator(undefined, { sensitivity: 'base' })
 export function alphabetical(ids: readonly number[], name: (id: number) => string): number[] {
   return [...ids].sort((a, b) => collator.compare(name(a), name(b)) || a - b)
 }
+
+/**
+ * Where `typed` occurs in `name`, as [start, end) offsets into `name`, or null. Case and runs of
+ * punctuation are ignored, as in matching. `anywhere` false: only at the start of the name
+ * (RadarOpus with "Search anywhere in the text" off); true: anywhere, even inside a word.
+ */
+export function hitRange(name: string, typed: string, anywhere: boolean): [number, number] | null {
+  const q = norm(typed).replace(/^ +/, '')
+  if (!q) return [0, 0]
+  // the normalised name with, for each of its characters, the offset in `name` it came from
+  let n = ''
+  const at: number[] = []
+  for (let i = 0; i < name.length;) {
+    const cp = name.codePointAt(i)!
+    const ch = String.fromCodePoint(cp)
+    const w = ch.length
+    if (/[\p{L}\p{N}]/u.test(ch)) { const l = ch.toLowerCase(); for (let k = 0; k < l.length; k++) { n += l[k]; at.push(i) } }
+    else if (n && !n.endsWith(' ')) { n += ' '; at.push(i) }
+    i += w
+  }
+  at.push(name.length)
+  const k = anywhere ? n.indexOf(q) : n.startsWith(q) ? 0 : -1
+  if (k < 0) return null
+  const endIdx = k + q.length
+  return [at[k], endIdx < at.length - 1 ? at[endIdx] : name.length]
+}
+
+/**
+ * The ids of a level whose name starts with `typed` (or, `anywhere`, contains it), in the level's
+ * order; with `anywhere` names starting with the text come first.
+ */
+export function filterLevel(ids: readonly number[], name: (id: number) => string, typed: string, anywhere: boolean): number[] {
+  if (!norm(typed).trim()) return [...ids]
+  if (!anywhere) return ids.filter(id => hitRange(name(id), typed, false) != null)
+  const first: number[] = [], later: number[] = []
+  for (const id of ids) {
+    const r = hitRange(name(id), typed, true)
+    if (!r) continue
+    ;(r[0] === 0 ? first : later).push(id)
+  }
+  return first.concat(later)
+}

@@ -28,7 +28,7 @@ export const StatusBar = memo(function StatusBar() {
   return (
     <footer className="statusbar" aria-label="Status" onMouseDown={e => chromeBackgroundMouseDown(e)}>
       <StatusLink command="view.toc">{tocOpen ? `Hide the table of contents ${TOC_KEY}` : `Show table of contents ${TOC_KEY}`}</StatusLink>
-      <StatusLink command="view.toolbars">{hideBars ? 'Show toolbars and clipboards' : 'Hide toolbars and clipboards'}</StatusLink>
+      <StatusLink command="view.toolbars">{hideBars ? 'Show toolbars and clipboard icons' : 'Hide toolbars and clipboards'}</StatusLink>
       {tocOpen && <StatusLink command="view.expandToc">{tocExpanded ? 'Reduce Toc' : 'Expand Toc'}</StatusLink>}
       <span className="status-spacer" />
       <SaveIndicator />

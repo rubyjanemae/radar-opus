@@ -332,3 +332,15 @@
   background: var(--toc-bar-thumb); border-right: 1px solid var(--toc-bar-line);
 }
 .toc-hbar-thumb:hover { background: color-mix(in srgb, var(--toc-bar-thumb) 85%, var(--toc-bar-line)); }
+
+/* ───── the other lists (TocPanel: References, Remedies, Families, Bookmarks) ─────
+   Same rows as the repertory tree (18 px, 2 px apart, cursor box), virtualised: rows sit at absolute offsets. */
+.toc-list-body { position: relative; min-width: 100%; width: max-content; }
+.toc-row.toc-lrow { position: absolute; left: 2px; margin: 0; min-width: calc(100% - 4px); }
+.toc-lrow > .toc-twist, .toc-lrow > .toc-twist-gap { margin-left: 4px; }
+.toc-lrow > .toc-book, .toc-lrow > .toc-treeic { margin-left: 6px; }
+.toc-lrow > .toc-flag { margin-left: 8px; }
+.toc-lrow > .toc-label { margin-left: 6px; }
+.toc-lrow-section > .toc-label { margin-left: 6px; }
+.toc-lrow-remedy > .toc-label { min-width: 72px; }
+.toc-lsub { margin-left: 10px; color: var(--toc-text-2); }

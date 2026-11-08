@@ -41,10 +41,11 @@ describe('analysisStatusText', () => {
 
 describe('splitTabTitle', () => {
   it('splits an analysis title after the patient so it truncates in the middle', () => {
-    expect(splitTabTitle('analysis', 'Whitfield · Follow-up 3')).toEqual(['Whitfield', ' · Follow-up 3'])
-    expect(splitTabTitle('analysis', 'Keller · A · B')).toEqual(['Keller', ' · A · B'])
+    expect(splitTabTitle('analysis', 'Ann Whitfield - Follow-up 3')).toEqual(['Ann Whitfield', '\u00a0-\u00a0Follow-up 3'])
+    expect(splitTabTitle('analysis', 'Anna Keller - A - B')).toEqual(['Anna Keller', '\u00a0-\u00a0A - B'])
+    expect(splitTabTitle('analysis', 'Oefen Casus -')).toEqual(['Oefen Casus', '\u00a0-'])
     expect(splitTabTitle('analysis', 'Missing case')).toBeNull()
-    expect(splitTabTitle('repertory', 'Mind · x')).toBeNull()
+    expect(splitTabTitle('repertory', 'Mind - x')).toBeNull()
   })
 })
 

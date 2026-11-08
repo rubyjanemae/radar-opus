@@ -1,0 +1,212 @@
+/* The patient (case) tab after RadarOpus. Prefix: pv-.
+   Measured on RadarOpus at a 1470 pt window: sub-tabs 24 tall, consultation toolbar 36 with 32 px
+   buttons, the "Last consultation" line 22, the format bar 24, then a white page 784 wide centred in
+   the tab with the bordered Verdana 11 text box at its top. */
+
+:root {
+  --pv-bg: var(--ro-tab-on);
+  --pv-subtab-off: #e7c9c0;
+  --pv-subtab-line: #d9a99a;
+  --pv-text: #222222;
+  --pv-page: #ffffff;
+  --pv-page-line: #c9c9c9;
+  --pv-press: #cfc3c6;
+  --pv-help: #a49c98;
+  --pv-save: #c46a64;
+  --pv-save-clean: #bc8776;
+  --pv-jar: #d9a866;
+  --pv-sep: #d2b2a8;
+  --pv-field: #ffffff;
+  --pv-blue: #2f7ad0;
+  --pv-blue-light: #8fc0ee;
+  --pv-red: #c9483c;
+  --pv-amber: #e3b25c;
+  --pv-amber-light: #f6e3bd;
+  --pv-grey: #8a8a8a;
+  --pv-grey-light: #c8c8c8;
+  --pv-green: #2fa04a;
+  --pv-fmt-off: #b7a9a5;
+  --pv-fmt: #6d6d6d;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --pv-subtab-off: #3a2e2b;
+    --pv-subtab-line: #5a4640;
+    --pv-text: #e3e6eb;
+    --pv-page: #1d2127;
+    --pv-page-line: #4a4d52;
+    --pv-press: #5a4f52;
+    --pv-help: #a89e9b;
+    --pv-sep: #5a4640;
+    --pv-field: #15181d;
+    --pv-grey: #a9a4a6;
+    --pv-grey-light: #6b6668;
+    --pv-amber-light: #6b5530;
+    --pv-fmt-off: #6b6264;
+    --pv-fmt: #c2bcbd;
+  }
+}
+:root[data-theme="dark"] {
+  --pv-subtab-off: #3a2e2b;
+  --pv-subtab-line: #5a4640;
+  --pv-text: #e3e6eb;
+  --pv-page: #1d2127;
+  --pv-page-line: #4a4d52;
+  --pv-press: #5a4f52;
+  --pv-help: #a89e9b;
+  --pv-sep: #5a4640;
+  --pv-field: #15181d;
+  --pv-grey: #a9a4a6;
+  --pv-grey-light: #6b6668;
+  --pv-amber-light: #6b5530;
+  --pv-fmt-off: #6b6264;
+  --pv-fmt: #c2bcbd;
+}
+
+.pv {
+  display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0;
+  background: var(--pv-bg); color: var(--pv-text);
+  font-family: Verdana, Geneva, "DejaVu Sans", sans-serif; font-size: 12px;
+}
+.pv button { font: inherit; color: inherit; }
+
+/* sub-tabs: Administrative | Consultations */
+.pv-subtabs { display: flex; align-items: flex-end; flex: none; height: 25px; padding: 2px 0 0 0; box-sizing: border-box; border-bottom: 1px solid var(--pv-subtab-line); }
+.pv-subtab {
+  display: inline-flex; align-items: center; gap: 8px; height: 23px; padding: 0 12px 0 8px; margin-right: 1px;
+  border: 1px solid var(--pv-subtab-line); border-bottom: 0; border-radius: 4px 4px 0 0; background: var(--pv-subtab-off);
+  font-size: 12px !important; cursor: default; position: relative; top: 1px;
+}
+.pv-subtab.on { background: var(--pv-bg); font-weight: bold; height: 24px; }
+.pv-subtab:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.pv-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* consultation toolbar */
+.pv-cons { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pv-tb { display: flex; align-items: center; flex: none; height: 38px; margin-top: 7px; padding: 0 6px 0 8px; gap: 7px; }
+.pv-tbtn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; flex: none;
+  min-width: 32px; height: 32px; padding: 0 4px; border: 0; border-radius: 6px; background: transparent; cursor: default;
+}
+.pv-tbtn.on { background: var(--pv-press); }
+.pv-tbtn:disabled { opacity: .45; }
+.pv-tbtn:focus-visible, .pv-help:focus-visible, .pv-choose:focus-visible, .pv-fbtn:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
+.pv-tbtn-label { padding: 0 6px 0 2px; font-size: 12px !important; }
+.pv-tbtn-label span { white-space: nowrap; }
+.pv-tb-sep { width: 1px; height: 30px; background: var(--pv-sep); margin: 0 3px; flex: none; }
+.pv-grow { flex: 1; }
+.pv .pv-help { color: var(--pv-help); }
+/* RadarOpus: a thin light grey ring, not the heavy toc help glyph */
+.pv-help circle[fill="none"] { stroke-width: 1.1; }
+.pv-help path { stroke-width: 1.5; }
+.pv-help { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; background: transparent; color: var(--pv-help); margin-left: 12px; }
+
+/* "Last consultation (1) ⌄ on the … at age …" */
+.pv-line { display: flex; align-items: center; flex: none; height: 22px; margin-top: 2px; padding-left: 14px; gap: 10px; font-size: 12px; white-space: nowrap; }
+.pv-line > span { margin-left: 8px; }
+.pv-choose { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 0; background: transparent; }
+
+/* format bar */
+.pv-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pv-fmt { display: flex; align-items: center; flex: none; height: 26px; padding-left: 10px; gap: 3px; }
+.pv-fbtn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 22px; height: 22px; padding: 0; border: 0; border-radius: 11px; background: transparent; cursor: default;
+}
+.pv-fbtn.on { background: var(--pv-press); }
+.pv-fbtn:disabled .pvg { opacity: .7; }
+.pv-fsep { width: 1px; height: 20px; background: var(--pv-sep); margin: 0 5px; flex: none; }
+.pv-letter span { font-family: Georgia, "Times New Roman", serif; font-size: 15px; line-height: 1; color: var(--pv-fmt); }
+.pv-b span { font-weight: bold; }
+.pv-i span { font-style: italic; }
+.pv-u span { text-decoration: underline; }
+.pv-combo { position: relative; display: inline-flex; flex: none; height: 22px; margin-right: 6px; }
+.pv-combo::after {
+  content: ""; position: absolute; right: 8px; top: 9px; width: 0; height: 0; pointer-events: none;
+  border-style: solid; border-width: 5px 4px 0 4px; border-color: var(--pv-text) transparent transparent transparent;
+}
+.pv-combo select {
+  appearance: none; -webkit-appearance: none; height: 22px; padding: 0 22px 0 6px; box-sizing: border-box;
+  font: 12px Verdana, Geneva, sans-serif; color: var(--pv-text); background: var(--pv-field); border: 0; border-radius: 6px; cursor: default;
+}
+.pv-combo select:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+.pv-combo select:disabled { opacity: .6; }
+.pv-font select { width: 180px; }
+.pv-size select { width: 68px; }
+.pv-color-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+/* the page */
+.pv-scroll { flex: 1; min-height: 0; overflow: auto; padding: 6px 0 10px; }
+.pv-page { width: 784px; max-width: calc(100% - 20px); margin: 0 auto; box-sizing: border-box; padding: 5px 24px 5px 5px; background: var(--pv-page); }
+.pv-text {
+  min-height: 60px; padding: 3px 3px 20px; box-sizing: border-box; border: 1px solid var(--pv-page-line); outline: none;
+  font-family: Verdana, Geneva, "DejaVu Sans", sans-serif; font-size: 11px; line-height: 14px; color: var(--pv-text);
+  white-space: pre-wrap; overflow-wrap: anywhere; cursor: text;
+}
+.pv-page.fill { min-height: calc(100% - 4px); }
+.pv-text[contenteditable="false"] { cursor: default; }
+.pv-text table { border-collapse: collapse; margin: 2px 0; }
+.pv-text td, .pv-text th { border: 1px solid var(--pv-page-line); min-width: 60px; padding: 1px 4px; vertical-align: top; }
+.pv-free, .pv-rx { width: 784px; max-width: calc(100% - 20px); margin: 10px auto 0; box-sizing: border-box; padding: 8px 10px; background: var(--pv-page); }
+.pv-free-row { display: flex; gap: 10px; }
+.pv-free-row > :first-child { flex: 1; }
+.pv-rx .pt-rx { margin: 0; }
+.pv-none { padding: 20px 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+
+/* administrative */
+.pv-admin { flex: 1; min-height: 0; overflow: auto; }
+
+/* glyph colours */
+.pvg { display: block; flex: none; }
+.pvg-card { fill: var(--pv-blue-light); stroke: var(--pv-blue); stroke-width: 1.4; }
+.pvg-card-photo { fill: var(--pv-blue); }
+.pvg-card-lines { stroke: var(--pv-blue); stroke-width: 1.4; fill: none; }
+.pvg-steth-tube { fill: none; stroke: var(--pv-grey); stroke-width: 2; stroke-linecap: round; }
+.pvg-steth-bell { fill: var(--pv-grey-light); stroke: var(--pv-grey); stroke-width: 1.4; }
+.pvg-save-body { fill: var(--pv-save); }
+/* RadarOpus: Save is a dull grey-brown until the text has unsaved changes */
+.pv-save .pvg-save-body { fill: var(--pv-save-clean); }
+.pvg-save-shutter { fill: var(--pv-page); opacity: .85; }
+.pvg-save-label { fill: var(--pv-page); opacity: .7; }
+.pvg-pencil-body { fill: var(--pv-blue); }
+.pvg-pencil-tip { fill: var(--pv-amber); }
+.pvg-jar-lid { fill: var(--pv-jar); }
+.pvg-jar-glass { fill: var(--pv-amber-light); stroke: var(--pv-jar); stroke-width: 1.3; }
+.pvg-jar-pill { fill: var(--pv-jar); }
+.pvg-cad-staff { stroke: var(--pv-blue); stroke-width: 2; fill: none; }
+.pvg-cad-wing { fill: var(--pv-blue-light); stroke: var(--pv-blue); stroke-width: 1.2; }
+.pvg-cad-snake { fill: none; stroke: var(--pv-blue); stroke-width: 1.6; }
+.pvg-cad-knob { fill: var(--pv-blue); }
+.pvg-bal-beam { stroke: var(--pv-jar); stroke-width: 1.8; fill: none; stroke-linecap: round; }
+.pvg-bal-arm { fill: none; stroke: var(--pv-jar); stroke-width: 1; }
+.pvg-bal-pan { fill: var(--pv-jar); }
+.pvg-grid-frame { fill: var(--pv-page); stroke: var(--pv-grey); stroke-width: 1.2; }
+.pvg-grid-head { fill: var(--pv-grey); }
+.pvg-grid-lines { stroke: var(--pv-grey); stroke-width: 1; fill: none; }
+.pvg-newc-eraser { fill: var(--pv-red); }
+.pvg-newc-plus { stroke: var(--pv-blue); stroke-width: 2.4; fill: none; }
+.pvg-syr-plunger { stroke: var(--pv-blue); stroke-width: 2; fill: none; stroke-linecap: round; }
+.pvg-syr-barrel { fill: var(--pv-blue-light); stroke: var(--pv-blue); stroke-width: 1.4; stroke-linejoin: round; }
+.pvg-syr-needle { stroke: var(--pv-grey); stroke-width: 1.4; }
+.pvg-flask-glass { fill: none; stroke: var(--pv-grey); stroke-width: 1.6; stroke-linejoin: round; }
+.pvg-flask-liquid { fill: var(--pv-green); opacity: .7; }
+.pvg-free-pad { fill: var(--pv-page); stroke: var(--pv-grey); stroke-width: 1.3; }
+.pvg-free-rings { stroke: var(--pv-grey); stroke-width: 1.4; }
+.pvg-free-pen { fill: var(--pv-blue); }
+.pvg-dchev-path { fill: none; stroke: var(--pv-blue); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.pvg-fmt-paper { fill: var(--pv-page); stroke: var(--pv-fmt-off); stroke-width: 1; }
+.pvg-fmt-board { fill: var(--pv-amber-light); stroke: var(--pv-fmt-off); stroke-width: 1; }
+.pvg-fmt-clip { fill: var(--pv-fmt-off); }
+.pvg-fmt-ring { fill: none; stroke: var(--pv-red); stroke-width: 1.4; }
+.pvg-fmt-blade { stroke: var(--pv-fmt-off); stroke-width: 1.4; }
+.pvg-fmt-lines { stroke: var(--pv-fmt); stroke-width: 1.6; fill: none; }
+.pvg-undo .pvg-arrow-line { fill: none; stroke: var(--pv-red); stroke-width: 1.8; }
+.pvg-undo .pvg-arrow-head { fill: var(--pv-red); }
+.pvg-redo .pvg-arrow-line { fill: none; stroke: var(--pv-blue); stroke-width: 1.8; }
+.pvg-redo .pvg-arrow-head { fill: var(--pv-blue); }
+.pvg-color-a { fill: none; stroke: var(--pv-text); stroke-width: 1.8; stroke-linejoin: round; }
+.pvg-table-frame { fill: var(--pv-page); stroke: var(--pv-fmt); stroke-width: 1; }
+.pvg-table-lines { stroke: var(--pv-fmt); stroke-width: .8; fill: none; }
+.pvg-table-new { fill: var(--pv-green); }
+.pvg-table-arrow { fill: none; stroke: var(--pv-green); stroke-width: 1.8; }
+.pvg-table-x { stroke: var(--pv-red); stroke-width: 1.8; }

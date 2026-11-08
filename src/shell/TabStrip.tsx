@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Library, BookText, FlaskConical, Users, User, Search, Network, Pin, X, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react'
+import { Library, BookText, FlaskConical, Search, Network, Pin, X, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react'
 import { useCatalog } from '../data/CatalogContext'
 import { actions, useApp } from '../state/store'
 import type { NewTab, Tab } from '../state/workspace'
@@ -8,8 +8,10 @@ import type { Catalog } from '../data/catalog'
 import type { AppState } from '../state/store'
 import { useContextMenu } from '../ui/Menu'
 import type { MenuItem } from '../ui/Menu'
-import { splitTabTitle, tabTitle } from './tabTitle'
+import { tabTitle } from './tabTitle'
 import { cancelDocumentFocus, focusActiveDocument, focusDocumentWhenReady } from './TabHost'
+import { AnalysisIcon } from '../features/analysis/AnalysisIcon'
+import { MapsIcon, PatientsIcon } from './toolbarIcons'
 
 /** A repertory window's icon: a solid book, cover and light spine (an original glyph; lucide's book is line art). */
 function SolidBook({ className }: { size?: number; className?: string; 'aria-hidden'?: boolean }) {
@@ -22,30 +24,31 @@ function SolidBook({ className }: { size?: number; className?: string; 'aria-hid
   )
 }
 
-/** The analysis window's icon: pale amber bars with blue caps on a grey base (an original glyph). */
+/** A patient window's icon: the toolbar's two-people Patients picture in colour, at tab size. */
+function PatientsGlyph({ className }: { size?: number; className?: string; 'aria-hidden'?: boolean }) {
+  return <PatientsIcon size={16} className={`${className ?? ''} tab-people`} />
+}
+
+/** The Maps window's icon: the toolbar's folded map, at tab size. */
+function MapsGlyph({ className }: { size?: number; className?: string; 'aria-hidden'?: boolean }) {
+  return <MapsIcon size={16} className={className} />
+}
+
+/** The analysis window's icon: the toolbar's bar chart, at tab size. */
 function AnalysisGlyph({ className }: { size?: number; className?: string; 'aria-hidden'?: boolean }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" className={`${className ?? ''} tab-chart`} aria-hidden="true">
-      {[[1.5, 4], [5, 1.5], [8.5, 6], [12, 8]].map(([x, y]) => (
-        <g key={x}>
-          <rect className="tab-chart-bar" x={x - 1.2} y={y} width="2.4" height={12.5 - y} />
-          <rect className="tab-chart-cap" x={x - 1.2} y={y} width="2.4" height="1.6" />
-        </g>
-      ))}
-      <rect className="tab-chart-base" x="0" y="12.5" width="14" height="1.5" />
-    </svg>
-  )
+  return <AnalysisIcon size={16} className={`${className ?? ''} tab-chart`} />
 }
 
 const ICONS = {
   repertory: SolidBook, repertories: Library, analysis: AnalysisGlyph, 'materia-medica': BookText, remedy: FlaskConical,
-  patients: Users, patient: User, search: Search, families: Network,
+  // RadarOpus's patient window carries the two-people Patients icon
+  patients: PatientsGlyph, patient: PatientsGlyph, search: Search, families: Network,
+  maps: MapsGlyph,
 } as const
 
-function TabTitleText({ kind, title }: { kind: Tab['kind']; title: string }) {
-  const parts = splitTabTitle(kind, title)
-  if (!parts) return <span className="tab-title">{title}</span>
-  return <span className="tab-title tab-title-split"><span className="tab-title-head">{parts[0]}</span><span className="tab-title-tail">{parts[1]}</span></span>
+/** A window's title, cut off at its end with "…" when the tab is too narrow (RadarOpus). */
+function TabTitleText({ title }: { title: string }) {
+  return <span className="tab-title">{title}</span>
 }
 
 /** The single tab panel every tab controls (rendered by the shell around the active document). */
@@ -267,14 +270,14 @@ const TabItem = memo(function TabItem({ tab, index: i, active, dropTarget, ctx }
         }}
       >
         <Icon size={14} className="tab-icon" aria-hidden />
-        <TabTitleText kind={t.kind} title={title} />
+        <TabTitleText title={title} />
         {showSub && <span className="tab-sub sr-only"> {subtitle}</span>}
         {t.pinned && <Pin size={11} className="tab-pin" aria-label="Pinned" />}
       </div>
       {/* mouse affordance only: the keyboard closes the focused tab with Delete or Alt+W */}
       {!t.pinned && (
         <button className="tab-close" tabIndex={-1} aria-hidden="true" title={`Close ${title}`} onMouseDown={e => e.stopPropagation()} onClick={() => actions.closeTab(t.id)}>
-          <X size={9} strokeWidth={2.5} aria-hidden />
+          <X size={9} strokeWidth={2.8} aria-hidden />
         </button>
       )}
     </div>

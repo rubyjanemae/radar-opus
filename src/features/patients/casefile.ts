@@ -95,6 +95,7 @@ export function parseCaseFile(text: string): CaseFile {
     return {
       id: str(c.id, `c${i}`), patientId: patient.id, date: str(c.date, new Date().toISOString().slice(0, 10)), title: str(c.title, 'Consultation'), kind,
       complaint: str(c.complaint), notes: str(c.notes), assessment: str(c.assessment), clipboards,
+      ...(typeof c.notesHtml === 'string' && c.notesHtml ? { notesHtml: c.notesHtml } : {}),
       analysis: {
         ...DEFAULT_ANALYSIS, ...(a as object),
         strategy,

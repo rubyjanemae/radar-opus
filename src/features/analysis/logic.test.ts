@@ -23,7 +23,7 @@ describe('export', () => {
   it('CSV: symptoms as rows, remedies as ranked columns, quoted fields', () => {
     const csv = analysisCsv(result, result.rows, meta)
     const lines = csv.trim().split('\r\n')
-    expect(lines[0]).toBe('Analysis,"Keller, Anna · First",Strategy,Sum of symptoms (sort degrees),Intensity,on')
+    expect(lines[0]).toBe('Analysis,"Keller, Anna · First",Strategy,Sum of symptoms (sorted degrees),Intensity,on')
     expect(lines[2]).toBe('Symptom,Clipboard,Intensity,Flags,Rubric size,Acon,Bell')
     expect(lines[4]).toBe('Rank,,,,,1,(excluded by you)')
     expect(lines[5]).toBe('Score,,,,,3/10,2/2')
@@ -34,7 +34,7 @@ describe('export', () => {
   })
   it('copy analysis: the same table as tab-separated text', () => {
     const lines = analysisText(result, result.rows, meta).trim().split('\n')
-    expect(lines[0]).toBe('Analysis\tKeller, Anna · First\tStrategy\tSum of symptoms (sort degrees)\tIntensity\ton')
+    expect(lines[0]).toBe('Analysis\tKeller, Anna · First\tStrategy\tSum of symptoms (sorted degrees)\tIntensity\ton')
     expect(lines[4]).toBe('Rank\t\t\t\t\t1\t(excluded by you)')
     expect(lines[8]).toBe('MIND - fear, "night"\tMind\t2\tE\t2\t3\t1')
   })

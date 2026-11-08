@@ -257,7 +257,7 @@ function take(text: string, tokens: string[], from: number): number {
 export interface SeeRef {
   /** The rubric name without the reference. */
   name: string
-  /** The reference as printed after the name: "(siehe brennend)", or "(siehe … )" when the data cut it off. */
+  /** The reference as printed after the name: "(siehe brennend)", or "(Siehe ... )" when the data cut it off. */
   see: string
   /** The referred rubric's name, '' when the data does not give it. */
   target: string
@@ -273,8 +273,9 @@ export function splitSee(text: string): SeeRef | null {
   const target = closed ? m[2].trim() : ''
   const name = (text.slice(0, m.index) + text.slice(m.index + m[0].length)).trim()
   if (!name) return null
-  // RadarOpus always prints the collapsed marker "(See … )"; the target is followed, never printed inline
-  return { name, see: `(${m[1]} … )`, target }
+  // RadarOpus always prints the collapsed marker "(See ... )" (capitalised, three periods); the target
+  // is followed, never printed inline
+  return { name, see: `(${m[1][0].toUpperCase()}${m[1].slice(1).toLowerCase()} ... )`, target }
 }
 
 /** The name a rubric is shown by (path strip, labels): its text without a "(see …)" reference. */

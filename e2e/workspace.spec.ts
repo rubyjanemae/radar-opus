@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { openApp, showClipboardPane, showToc, waitForSaved } from './helpers'
+import { openApp, showClipboardPane, showToc, waitForSaved, menubar } from './helpers'
 
 async function menu(page: Page, top: string, item: string) {
-  await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: top, exact: true }).click()
+  await (await menubar(page)).getByRole('menuitem', { name: top, exact: true }).click()
   await page.getByRole('menu').getByRole('menuitem', { name: item }).first().click()
 }
 
@@ -45,15 +45,16 @@ test('settings: tabs, live changes and keyboard toggle', async ({ page }) => {
 
   await dlg.getByRole('tab', { name: 'Analysis' }).click()
   await dlg.getByLabel('Result limit').selectOption('50')
-  await dlg.getByText('Small rubrics (Organon §153)').click()
+  await dlg.getByText('Small rubrics (SPF)', { exact: true }).click()
   await expect(dlg.locator('.ws-strategy.on')).toContainText('Small rubrics')
 
   // the menu reflects the same settings (one source of truth)
   await page.keyboard.press('ControlOrMeta+Comma')
   await expect(dlg).toBeHidden()
-  await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'Analysis', exact: true }).click()
+  await (await menubar(page)).getByRole('menuitem', { name: 'Analysis', exact: true }).click()
   await page.getByRole('menu').getByRole('menuitem', { name: 'Select your default analysis method' }).hover()
-  await expect(page.getByRole('menuitemcheckbox', { name: /^Small rubrics \(Organon/ })).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByRole('menu', { name: 'Select your default analysis method' }).getByRole('menuitemcheckbox', { name: 'Small rubrics (SPF)', exact: true })).toHaveAttribute('aria-checked', 'true')
+  await page.keyboard.press('Escape')
   await page.keyboard.press('Escape')
 
   // settings persist across reloads
@@ -107,17 +108,17 @@ test('keyboard shortcuts: F1, search, cheat sheets and run from the list', async
 
   // click runs the command
   await dlg.getByLabel('Search shortcuts').fill('table of contents')
-  // hidden on a fresh start (RadarOpus)
-  await expect(page.locator('.pane-left')).toHaveCount(0)
+  // on show on a fresh start (RadarOpus)
+  await expect(page.locator('.pane-left')).toBeVisible()
   await dlg.locator('.ws-sc-row', { hasText: 'Table of contents' }).first().click()
   await expect(dlg).toBeHidden()
-  await expect(page.locator('.pane-left')).toBeVisible()
+  await expect(page.locator('.pane-left')).toHaveCount(0)
   // Enter in the search box runs the first match
   await page.keyboard.press('F1')
   await dlg.getByLabel('Search shortcuts').fill('table of contents')
   await page.keyboard.press('Enter')
   await expect(dlg).toBeHidden()
-  await expect(page.locator('.pane-left')).toHaveCount(0)
+  await expect(page.locator('.pane-left')).toBeVisible()
 
   // F1 toggles
   await page.keyboard.press('F1')
@@ -128,7 +129,7 @@ test('keyboard shortcuts: F1, search, cheat sheets and run from the list', async
 
 test('about dialog credits the data sources and licences', async ({ page }) => {
   await openApp(page)
-  await menu(page, 'Help', 'About Radar Opus')
+  await menu(page, 'RadarOpus', 'About RadarOpus')
   const dlg = page.getByRole('dialog', { name: 'About Radar Opus' })
   await expect(dlg).toBeVisible()
   const pkg = JSON.parse(await (await import('node:fs/promises')).readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
@@ -155,10 +156,10 @@ test('welcome tour: shows once on first run, keyboard driven', async ({ page }) 
   await expect(page.getByRole('dialog', { name: 'Read rubrics like the printed book' })).toBeVisible()
   await page.keyboard.press('ArrowLeft')
   await expect(card).toBeVisible()
-  await page.getByRole('button', { name: /Next/ }).click()
-  await page.getByRole('button', { name: /Next/ }).click()
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Collect symptoms in clipboards' })).toBeVisible()
-  await page.getByRole('button', { name: /Next/ }).click()
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Analyse the case' })).toBeVisible()
   // global shortcuts do not leak through the modal tour
   await page.keyboard.press('F1')
@@ -177,7 +178,7 @@ test('welcome tour: shows once on first run, keyboard driven', async ({ page }) 
   // can be replayed from Help and dismissed with Escape; panes it opened are restored
   await page.keyboard.press('ControlOrMeta+b')
   await expect(page.locator('.pane-left')).toHaveCount(0)
-  await menu(page, 'Help', 'Welcome tour')
+  await menu(page, 'Help', 'Welcome page')
   await expect(card).toBeVisible()
   await expect(page.locator('.pane-left')).toBeVisible()
   await page.keyboard.press('Escape')
@@ -240,8 +241,8 @@ test('narrow window: side panes become overlays', async ({ page }) => {
   // widening restores the side-by-side layout
   await page.setViewportSize({ width: 1440, height: 900 })
   await expect(page.locator('html')).not.toHaveAttribute('data-narrow', 'true')
-  // the table of contents was hidden before the window narrowed (fresh start): it stays hidden
-  await expect(page.locator('.pane-left')).toHaveCount(0)
+  // the table of contents was on show before the window narrowed (fresh start): it comes back
+  await expect(page.locator('.pane-left')).toBeVisible()
   // the clipboard pane is opt-in (RadarOpus): it stays as it was before the window narrowed
   await expect(page.locator('.pane-right')).toHaveCount(0)
 })

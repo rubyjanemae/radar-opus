@@ -31,6 +31,8 @@ export function useRepertoriesLoaded(_catalog: Catalog, abbrevs: string[]): Load
 
 export interface LiveAnalysis {
   consultation: Consultation | null
+  /** The options the result is computed with (analysedOptions: the active clipboard when the included ones are empty). */
+  options: AnalysisOptions | null
   result: AnalysisResult | null
   /** True while the shown result is older than the case (a newer one is being computed). */
   stale: boolean
@@ -59,6 +61,27 @@ export function analyzeCached(source: CatalogSource, catalog: Catalog, clipboard
   const result = analyze(source, clipboards, options, view)
   byOptions.set(options, { key, result })
   return result
+}
+
+const fallbacks = new WeakMap<AnalysisOptions, Map<string, AnalysisOptions>>()
+
+/**
+ * The options a case is analysed with (RadarOpus): the clipboards the analysis includes (the rail's
+ * ticked icons); when those hold no symptom, the active clipboard instead, if it has any. A case whose
+ * ticked clipboard 1 is empty while clipboard 2 is active analyses clipboard 2 ("2. Clipboard 2").
+ * The fallback options are memoised per (options, clipboard), so the analysis cache keeps hitting.
+ */
+export function analysedOptions(c: Pick<Consultation, 'clipboards' | 'analysis'>, activeClipboardId: string | null | undefined): AnalysisOptions {
+  const o = c.analysis
+  const ids = o.clipboardIds ?? []
+  if (c.clipboards.some(cb => ids.includes(cb.id) && cb.symptoms.length)) return o
+  const act = activeClipboardId ? c.clipboards.find(cb => cb.id === activeClipboardId) : undefined
+  if (!act || !act.symptoms.length) return o
+  let byId = fallbacks.get(o)
+  if (!byId) { byId = new Map(); fallbacks.set(o, byId) }
+  let f = byId.get(act.id)
+  if (!f) { f = { ...o, clipboardIds: [act.id] }; byId.set(act.id, f) }
+  return f
 }
 
 /**
@@ -99,6 +122,8 @@ export function useAnalysis(consultationId: string | null, opts?: { deferFirst?:
   const catalog = useCatalog()
   const source = sourceFor(catalog)
   const consultation = useApp(s => (consultationId ? s.consultations[consultationId] ?? null : null))
+  const activeClipboardId = useApp(s => s.activeClipboardId)
+  const effective = consultation ? analysedOptions(consultation, activeClipboardId) : undefined
   const minGrade = analysisViewGrade(consultation?.analysis)
   /*
    * deferFirst: the first render gets no inputs, so the view mounts (toolbar, progress) and paints at
@@ -107,7 +132,7 @@ export function useAnalysis(consultationId: string | null, opts?: { deferFirst?:
    */
   const armed = useArmed(!opts?.deferFirst)
   const clipboards = useDeferredValue(armed ? consultation?.clipboards : undefined)
-  const options = useDeferredValue(armed ? consultation?.analysis : undefined)
+  const options = useDeferredValue(armed ? effective : undefined)
   const viewGrade = useDeferredValue(minGrade)
   const reps = useMemo(() => repertoriesOf(clipboards ?? []), [clipboards])
   const load = useRepertoriesLoaded(catalog, reps)
@@ -118,7 +143,7 @@ export function useAnalysis(consultationId: string | null, opts?: { deferFirst?:
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [source, catalog, clipboards, options, view, load.version, load.status],
   )
-  const stale = clipboards !== consultation?.clipboards || options !== consultation?.analysis || viewGrade !== minGrade
+  const stale = clipboards !== consultation?.clipboards || options !== effective || viewGrade !== minGrade
   const computing = !result && !!consultation && !clipboards
-  return { consultation, result, stale, computing, load, source, catalog }
+  return { consultation, options: effective ?? null, result, stale, computing, load, source, catalog }
 }

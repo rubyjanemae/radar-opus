@@ -1,0 +1,326 @@
+/* The patients list docked in the table of contents (RadarOpus Patients panel). Prefix: ptp-.
+   Measured on RadarOpus at a 1470 pt window, converted to CSS px: search row 42 tall, table header 25,
+   rows 23, columns 100 wide; filters, group row and found counter under the table; the patient card
+   (202 tall) with the picture on the right and the Next contact field at the bottom. */
+
+:root {
+  --ptp-bg: #f2dfd8;
+  --ptp-text: #222222;
+  --ptp-field-bg: #ffffff;
+  --ptp-table-bg: #ffffff;
+  --ptp-table-border: #96918f;
+  --ptp-hbar-rule: #d4d1cd;
+  --ptp-head-bg: #8c3913;
+  --ptp-head-text: #ffffff;
+  --ptp-head-rule: #fffaec;
+  --ptp-sel-bg: #d68f7c;
+  --ptp-sel-focus-bg: #d68f7c;
+  --ptp-sel-focus-text: #ffffff;
+  --ptp-sel-rule: #ffffff;
+  --ptp-sex: #6c6c6c;
+  --ptp-radio-on: #8c3913;
+  --ptp-radio-dot: #f3dfd6;
+  --ptp-radio-dot-rim: #b4644c;
+  --ptp-box-border: #9a9a9a;
+  --ptp-box-bg: #ffffff;
+  --ptp-check-on: #a0522d;
+  --ptp-clificol-on: #832800;
+  --ptp-clificol-tick: #f1dcc0;
+  --ptp-field-on: #c47044;
+  --ptp-sep: #cd9481;
+  --ptp-rule: #c8b8b0;
+  --ptp-photo: #0098d6;
+  --ptp-arrow: #c8957f;
+  --ptp-pic-frame: #2b3640;
+  --ptp-pic-sky: #3f86bd;
+  --ptp-pic-sky-top: #c9ecfb;
+  --ptp-pic-hill: #1c262e;
+  --ptp-pic-sun: #ffffff;
+  --ptp-pic-del-sky-top: #f7dccb;
+  --ptp-pic-del-hill: #6e3f2f;
+  --ptp-pic-plus: #2f8fe0;
+  --ptp-pic-del-frame: #a0705c;
+  --ptp-pic-del-sky: #d9a58f;
+  --ptp-pic-x: #85807e;
+  --ptp-human-head: #f6b9a8;
+  --ptp-human-body: #6f8094;
+  --ptp-human-shirt: #dfe8f2;
+  --ptp-human-tie: #6f9bc8;
+  --ptp-radio-off-1: #ffffff;
+  --ptp-radio-off-2: #d6d6d6;
+  --ptp-radio-ring: #9b9b9b;
+  --ptp-cogs: #8a8a8a;
+  --ptp-refresh: #3a7cc4;
+  --ptp-dog: #c09a76;
+  --ptp-dog-ear: #a57d5a;
+  --ptp-gear-on: #2f74c0;
+  --ptp-gear-x: #d0283a;
+  --ptp-hover: rgba(120, 70, 50, .12);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ptp-bg: #2c2425;
+    --ptp-text: #e3e6eb;
+    --ptp-field-bg: #15181d;
+    --ptp-table-bg: #1d2127;
+    --ptp-table-border: #4a3d3b;
+    --ptp-hbar-rule: #3a3234;
+    --ptp-head-bg: #6e2c10;
+    --ptp-head-text: #f3e6e0;
+    --ptp-head-rule: #c9a497;
+    --ptp-sel-bg: #8f4a3a;
+    --ptp-sel-focus-bg: #8f4a3a;
+    --ptp-sel-rule: #c9a497;
+    --ptp-sex: #a9a4a6;
+    --ptp-radio-on: #c2683e;
+    --ptp-radio-dot: #2c2425;
+    --ptp-radio-dot-rim: #7d3f28;
+    --ptp-box-border: #6b6668;
+    --ptp-box-bg: #25292f;
+    --ptp-check-on: #c2683e;
+    --ptp-clificol-on: #a2441c;
+    --ptp-clificol-tick: #f1dcc0;
+    --ptp-field-on: #c47044;
+    --ptp-sep: #6e4a3e;
+    --ptp-rule: #4f4441;
+    --ptp-photo: #3a86b8;
+    --ptp-arrow: #c08c77;
+    --ptp-pic-frame: #b8c2cc;
+    --ptp-hover: rgba(255, 220, 210, .1);
+    --ptp-radio-off-1: #3a3e44;
+    --ptp-radio-off-2: #25292f;
+    --ptp-radio-ring: #6b6668;
+    --ptp-cogs: #a9a4a6;
+    --ptp-refresh: #5aa0e8;
+    --ptp-human-body: #9aa6b4;
+    --ptp-human-shirt: #3a3e44;
+  }
+}
+:root[data-theme="dark"] {
+  --ptp-bg: #2c2425;
+  --ptp-text: #e3e6eb;
+  --ptp-field-bg: #15181d;
+  --ptp-table-bg: #1d2127;
+  --ptp-table-border: #4a3d3b;
+  --ptp-hbar-rule: #3a3234;
+  --ptp-head-bg: #6e2c10;
+  --ptp-head-text: #f3e6e0;
+  --ptp-head-rule: #c9a497;
+  --ptp-sel-bg: #8f4a3a;
+  --ptp-sel-focus-bg: #8f4a3a;
+  --ptp-sel-rule: #c9a497;
+  --ptp-sex: #a9a4a6;
+  --ptp-radio-on: #c2683e;
+  --ptp-radio-dot: #2c2425;
+  --ptp-radio-dot-rim: #7d3f28;
+  --ptp-box-border: #6b6668;
+  --ptp-box-bg: #25292f;
+  --ptp-check-on: #c2683e;
+  --ptp-clificol-on: #a2441c;
+  --ptp-clificol-tick: #f1dcc0;
+  --ptp-field-on: #c47044;
+  --ptp-sep: #6e4a3e;
+  --ptp-rule: #4f4441;
+  --ptp-photo: #3a86b8;
+  --ptp-arrow: #c08c77;
+  --ptp-pic-frame: #b8c2cc;
+  --ptp-hover: rgba(255, 220, 210, .1);
+  --ptp-radio-off-1: #3a3e44;
+  --ptp-radio-off-2: #25292f;
+  --ptp-radio-ring: #6b6668;
+  --ptp-cogs: #a9a4a6;
+  --ptp-refresh: #5aa0e8;
+  --ptp-human-body: #9aa6b4;
+  --ptp-human-shirt: #3a3e44;
+}
+
+.ptp {
+  display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0;
+  background: var(--ptp-bg); color: var(--ptp-text);
+  font-family: Verdana, Geneva, "DejaVu Sans", sans-serif; font-size: 12px;
+  border-radius: 8px; overflow: hidden; position: relative;
+  margin-top: 7px;
+  /* RadarOpus keeps the Next contact row ~3pt further off the panel's bottom edge */
+  padding-bottom: 3px; box-sizing: border-box;
+}
+.pane-left:has(> .ptp:first-child) { border-radius: 8px; background: transparent; }
+.pane-left > .ptp:first-child { border-radius: 8px; }
+.ptp button { font: inherit; color: inherit; }
+
+/* search row */
+.ptp-head { display: flex; align-items: center; flex: none; height: 42px; padding: 0 13px 0 11px; box-sizing: border-box; }
+/* RadarOpus has 461.5pt from the search field top to the radios, the clone panel 4px more because the shared
+   toolbar (shell.css .toolbar) is 74px against RadarOpus' ~78pt and the panel's top edge sits 4px high: the
+   search row moves down by those 4px so it and the table top line up. Drop this if the toolbar grows to 78. */
+.ptp > .ptp-head:first-child { margin-top: 4px; }
+.ptp-search-label { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ptp-search {
+  flex: 0 1 182px; width: 182px; min-width: 50px; height: 23px; margin-left: 6px; padding: 0 4px; box-sizing: border-box;
+  font: inherit; font-size: 12px; color: var(--ptp-text); background: var(--ptp-field-bg); border: 0; border-radius: 11.5px; outline: none;
+}
+/* a macOS-style soft focus ring rather than a solid outline */
+.ptp-search:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 45%, transparent); }
+.ptp-hbtns { display: inline-flex; gap: 6px; margin-left: auto; padding-left: 4px; flex: none; }
+.ptp-hbtn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 23px; height: 23px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--toc-hbtn); cursor: pointer;
+}
+.ptp-hbtn.ptp-help { color: var(--toc-help); }
+.ptp-hbtn:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
+.ptp-hbtn svg { display: block; }
+/* RadarOpus: refresh ~12.5pt, the two gears 14pt, the open-options gear with its cross 14.5pt, help 14pt */
+.ptp-hbtn .ptp-refreshg { width: 13px; height: 14px; }
+.ptp-hbtn .ptp-cogsg { width: 14px; height: 14px; }
+.ptp-hbtn .ptp-gearong { width: 15px; height: 15px; }
+.ptp-hbtn.ptp-help svg { width: 14px; height: 14px; }
+.ptp-cogsg { fill: var(--ptp-cogs); }
+.ptp-gearon-cog { fill: var(--ptp-gear-on); }
+.ptp-gearon-x { fill: none; stroke: var(--ptp-gear-x); stroke-width: 1.9; stroke-linecap: round; }
+/* RadarOpus: two separate solid blue curved arrows, no outline */
+.ptp-refresh-arc { fill: none; stroke: var(--ptp-refresh); stroke-width: 2.7; stroke-linecap: butt; }
+.ptp-refresh-head { fill: var(--ptp-refresh); }
+
+/* search options */
+.ptp-options { flex: none; padding: 0 3px; margin-top: 5px; }
+.ptp-options-title { height: 20px; line-height: 20px; padding-left: 2px; font-size: 12px; }
+.ptp-check-row { display: flex; align-items: center; gap: 6px; height: 20px; padding-left: 2px; font-size: 12px; cursor: default; }
+.ptp-fields {
+  margin-top: 3px; height: 168px; box-sizing: border-box; overflow: auto; padding: 1px 0;
+  background: var(--ptp-table-bg); border: 1px solid var(--ptp-table-border);
+}
+.ptp-field { display: flex; align-items: center; gap: 6px; height: 15px; padding-left: 3px; font-size: 12px; cursor: default; }
+.ptp-fcb {
+  appearance: none; -webkit-appearance: none; margin: 0; flex: none;
+  width: 13px; height: 13px; box-sizing: border-box; border: 1px solid var(--ptp-box-border); background: var(--ptp-box-bg); border-radius: 0;
+}
+.ptp-fcb:checked { background: var(--ptp-field-on); border-color: var(--ptp-field-on); }
+.ptp-fcb:focus-visible, .ptp-cb:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+/* table */
+.ptp-table-box {
+  flex: 1 1 0; min-height: 60px; margin: 5px 3px 0; display: flex; flex-direction: column;
+  border: 1px solid var(--ptp-table-border); background: var(--ptp-table-bg);
+}
+.ptp-options + .ptp-table-box { margin-top: 13px; }
+.ptp-table { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; position: relative; outline: none; scrollbar-width: thin; user-select: none; -webkit-user-select: none; }
+.ptp-table:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+.ptp-row { display: flex; height: 23px; align-items: center; position: absolute; left: 0; min-width: 100%; cursor: default; }
+.ptp-hrow {
+  position: sticky; top: 0; z-index: 1; height: 25px;
+  background: var(--ptp-head-bg); color: var(--ptp-head-text);
+}
+.ptp-hrow .ptp-cell { border-right: 1px solid var(--ptp-head-rule); height: 100%; line-height: 20px; }
+.ptp-hrow .ptp-cell:last-child { border-right: 0; }
+.ptp-body { position: relative; min-width: 100%; margin-top: 4px; }
+.ptp-cell {
+  flex: 0 0 100px; width: 100px; box-sizing: border-box; padding: 0 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px;
+}
+.ptp-hrow .ptp-cell { font-size: 11px; }
+/* RadarOpus: 100pt columns, the last one takes the rest */
+.ptp-cell:last-child { flex: 1 0 92px; }
+/* RadarOpus: the selected row is salmon with white text, white column rules and a white sex glyph,
+   with or without the focus */
+.ptp-row.selected { background: var(--ptp-sel-bg); color: var(--ptp-sel-focus-text); }
+.ptp-table:focus .ptp-row.selected { background: var(--ptp-sel-focus-bg); }
+.ptp-row.selected .ptp-sexg { color: inherit; }
+.ptp-body .ptp-row.selected .ptp-cell { border-right: 1px solid var(--ptp-sel-rule); height: 100%; line-height: 23px; }
+.ptp-body .ptp-row.selected .ptp-cell:last-child { border-right: 0; }
+.ptp-sexg { color: var(--ptp-sex); font-size: 11px; font-weight: bold; }
+.ptp-table-box .toc-hbar { border-top-color: var(--ptp-hbar-rule); }
+
+/* filters */
+.ptp-filters { display: flex; align-items: center; flex: none; height: 17px; margin: 30.5px 10.5px 0 3px; }
+/* RadarOpus: radio at 9pt, person at ~37.5pt, second radio at ~63.5pt, dog at ~86pt */
+.ptp-radios { display: inline-flex; align-items: center; gap: 11.5px; }
+.ptp-radio { display: inline-flex; align-items: center; gap: 4px; cursor: default; }
+.ptp-radio:first-child { gap: 6.5px; }
+.ptp-radio input {
+  appearance: none; -webkit-appearance: none; margin: 0; flex: none;
+  width: 16px; height: 16px; box-sizing: border-box; border-radius: 50%;
+  border: 1px solid var(--ptp-radio-ring); background: linear-gradient(160deg, var(--ptp-radio-off-1), var(--ptp-radio-off-2));
+}
+.ptp-radio input:checked {
+  border: 0;
+  /* RadarOpus: a thick brown ring round a small hole in the panel's own colour, shaded darker at its rim */
+  background: radial-gradient(circle at 50% 47%, var(--ptp-radio-dot) 0 2.3px, var(--ptp-radio-dot-rim) 3.3px, var(--ptp-radio-on) 3.9px);
+}
+.ptp-radio input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.ptp-kindg { display: block; }
+.ptp-human-head { fill: var(--ptp-human-head); }
+/* RadarOpus: two shoulder lobes in a dense grey-blue outline either side of a blue tie */
+.ptp-human-body { fill: var(--ptp-human-shirt); stroke: var(--ptp-human-body); stroke-width: 1.5; }
+.ptp-human-tie { stroke: var(--ptp-human-tie); stroke-width: 1.8; }
+.ptp-dog { fill: var(--ptp-dog); }
+.ptp-dog-ear { fill: var(--ptp-dog-ear); }
+.ptp-clificol { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 12px; cursor: default; white-space: nowrap; }
+.ptp-cb {
+  appearance: none; -webkit-appearance: none; margin: 0; flex: none; position: relative;
+  width: 15px; height: 15px; box-sizing: border-box; border: 1px solid var(--ptp-box-border); border-radius: 3px; background: var(--ptp-box-bg);
+}
+.ptp-cb:checked { background: var(--ptp-check-on); border-color: var(--ptp-check-on); }
+.ptp-cb:checked::after {
+  content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px;
+  border: solid #ffffff; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+/* the Clificol box is drawn darker, with a thin light-tan tick (as in RadarOpus) */
+.ptp-clificol .ptp-cb:checked { background: var(--ptp-clificol-on); border-color: var(--ptp-clificol-on); }
+.ptp-clificol .ptp-cb:checked::after { border-color: var(--ptp-clificol-tick); border-width: 0 1.4px 1.4px 0; left: 4.5px; top: 1.5px; height: 7.5px; }
+.ptp-filters2 { display: flex; align-items: center; flex: none; height: 25px; margin: 16px 14.5px 0 3px; font-size: 12px; }
+.ptp-group-label { flex: none; }
+.ptp-group {
+  display: inline-flex; align-items: center; width: 90px; height: 25px; margin-left: 6px; padding: 0 9px 0 6px; box-sizing: border-box;
+  border: 0; border-radius: 8px; background: var(--ptp-field-bg); cursor: default; font-size: 12px !important;
+}
+.ptp-group:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.ptp-group-value { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ptp-group-caret { flex: none; width: 0; height: 0; border-style: solid; border-width: 4.6px 5.4px 0 5.4px; margin-right: -2px; transform: translateY(-1px); border-color: var(--ptp-text) transparent transparent transparent; }
+.ptp-found { display: inline-flex; gap: 7px; margin-left: auto; white-space: nowrap; }
+.ptp-found > span:first-child { margin-right: 2px; }
+
+/* patient card */
+.ptp-card {
+  flex: none; position: relative; height: 236px; margin-top: 5.5px; box-sizing: border-box;
+  border-top: 3px solid var(--ptp-sep); font-size: 12px;
+}
+.ptp-card-info { position: absolute; left: 3px; top: 0; right: 170px; }
+.ptp-card-row { display: flex; gap: 6px; height: 16px; line-height: 16px; white-space: nowrap; }
+.ptp-card-row > span { overflow: hidden; text-overflow: ellipsis; }
+.ptp-card-name { position: absolute; top: 14px; }
+.ptp-r-code { position: absolute; top: 54px; }
+.ptp-r-age { position: absolute; top: 95px; }
+.ptp-r-cons { position: absolute; top: 136px; }
+.ptp-card-last { position: absolute; top: 167px; width: 240px; }
+.ptp-card-last .ptp-card-row { height: 16px; line-height: 16px; }
+.ptp-photo { position: absolute; top: 24px; right: 20px; width: 119px; height: 115px; display: flex; align-items: flex-end; justify-content: center; }
+.ptp-photo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.ptp-silhouette { display: block; width: 119px; height: 115px; fill: var(--ptp-photo); }
+.ptp-card-btns { position: absolute; top: 169px; right: 14px; display: flex; gap: 15px; }
+.ptp-cbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 23px; height: 23px; padding: 0; border: 0; border-radius: 4px; background: transparent; cursor: pointer;
+}
+.ptp-cbtn:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
+.ptp-arrowg { fill: none; stroke: var(--ptp-arrow); stroke-width: 2.6; stroke-linecap: butt; stroke-linejoin: miter; }
+.ptp-pic-frame { fill: var(--ptp-pic-frame); }
+.ptp-pic-sky-a { stop-color: var(--ptp-pic-sky-top); }
+.ptp-pic-sky-b { stop-color: var(--ptp-pic-sky); }
+.ptp-pic-hill { fill: var(--ptp-pic-hill); }
+.ptp-pic-glow { fill: var(--ptp-pic-sun); opacity: .45; }
+.ptp-pic-sun { fill: var(--ptp-pic-sun); }
+.ptp-picg.del .ptp-pic-frame { fill: var(--ptp-pic-del-frame); }
+.ptp-picg.del .ptp-pic-sky-a { stop-color: var(--ptp-pic-del-sky-top); }
+.ptp-picg.del .ptp-pic-sky-b { stop-color: var(--ptp-pic-del-sky); }
+.ptp-picg.del .ptp-pic-hill { fill: var(--ptp-pic-del-hill); }
+.ptp-pic-plus { stroke: var(--ptp-pic-plus); stroke-width: 2.2; }
+.ptp-pic-x { stroke: var(--ptp-pic-x); stroke-width: 1.8; }
+.ptp-next {
+  position: absolute; left: 3px; right: 3px; top: 204px; padding-top: 9px;
+  display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--ptp-rule);
+}
+.ptp-next label { flex: none; white-space: nowrap; }
+.ptp-next-input {
+  flex: 1; min-width: 0; height: 17px; padding: 0 6px; box-sizing: border-box;
+  font: inherit; color: var(--ptp-text); background: var(--ptp-field-bg); border: 0; border-radius: 8px; outline: none;
+}
+.ptp-next-input:focus-visible { box-shadow: 0 0 0 2px var(--focus); }

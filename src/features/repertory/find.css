@@ -1,5 +1,5 @@
 /* ───────── Navigation window: Find a rubric, F2 / F3 (rfind-) ───────── */
-.dialog[data-dialog="repertory.find"] {
+.dialog[data-dialog="repertory.find"], .dialog[data-dialog="repertory.take"] {
   --nw-title: #aeaeae;
   --nw-peach: #f4dfd8;
   --nw-peach-line: #e8cfc7;
@@ -12,47 +12,68 @@
   --nw-dot: #dcdcdc;
   --nw-dot-line: #cdcdcd;
   --nw-close: #ff5f57;
-  --nw-hand-cuff: #7f817f;
+  --nw-hand-cuff: #9a9c9a;
   --nw-hand-fill: #fdebe6;
   --nw-sb-track: #f4f4f4;
   --nw-sb-line: #dcdcdc;
   --nw-sb-thumb: #fff;
-  --nw-sb-thumb-line: #c5c0bf;
+  --nw-sb-thumb-line: #c9a69c;
   --nw-sb-btn-line: #c0b9b8;
   --nw-sb-arrow: #5a5a5a;
   --nw-rule-2: #d1c1bf;
-  --nw-key-shadow: #d9d2d0;
+  --nw-key-shadow: #e3dbda;
+  --nw-key-shadow-2: #d2cac9;
+  --nw-key-top: #e3dad7;
+  --nw-key-gap: #f2f3f3;
   --nw-typed: #276476;
   --nw-outline: #a4867b;
-  --nw-default: #a6735f;
+  --nw-default: #d9806a;
   --nw-rule: #c1b4b1;
   --nw-up: #4682bf;
-  --nw-crumb: #52509e;
+  --nw-crumb: #5651c2;
   --nw-plus: #6772ab;
   --nw-plus-bg: #e9f0ff;
   --nw-row-sel: #f7ebe8;
   --nw-band-edge: #8c766f;
-  --nw-hand: #d99486;
+  --nw-hand: #e6b3a8;
   --nw-go: #4f9a7f;
-  --nw-cancel: #f48ca5;
+  --nw-cancel: #f77f98;
   --nw-help: #6f6f6f;
   --nw-help-ring: #959595;
   --nw-cancel-x: #fff;
-  --nw-view-frame: #a2a2a2;
-  --nw-view-bar: #4f4f4f;
+  --nw-view-frame: #4d4d4d;
+  --nw-view-bar: #454545;
+  --nw-view-bar-hi: #9c9c9c;
+  --nw-view-line: #9e9e9e;
+  --nw-view-edge: #d4d4d4;
+  --nw-view-foot-hi: #9c9c9c;
+  --nw-view-gloss: #fff;
+  --nw-view-rim: #e4e4e4;
+  --nw-view-bevel: #b8b8b8;
+  --nw-view-sheen: #808080;
   --nw-prompt: #463633;
-  --nw-caret: #b9b9b9;
-  --nw-view-bg: #f1f1f1;
-  --nw-view-1: #9fc0e8;
-  --nw-view-2: #d8414b;
-  --nw-view-3: #f2c43c;
-  --nw-view-4: #6dba6a;
+  --nw-caret: #c39a8c;
+  --nw-view-bg: #fbfbfb;
+  --nw-view-1: #6a8cc6;
+  --nw-view-2: #c8102a;
+  --nw-view-3: #f5a300;
+  --nw-view-4: #6fa553;
   --nw-take: #c9a238;
   --nw-strong: #000;
-  --nw-tile-outline: #aa8b80;
+  --nw-tile-outline: #8a4a3a;
   --nw-sb-btn: #fff;
+  --nw-check: #8b2b07;
+  --nw-check-bg: #f2f2f4;
+  --nw-check-line: #a29a98;
+  --nw-gear-on: #3a7fd0;
+  --nw-path-line: #7d5c52;
+  --nw-sheet: #c9907c;
+  --nw-sheet-line: #1c1c1c;
+  --nw-char: #3a8fd0;
+  --nw-scrim: rgba(128, 128, 128, .4);
+  --nw-hit: #ffe36b;
 }
-:root[data-theme="dark"] .dialog[data-dialog="repertory.find"] {
+:root[data-theme="dark"] .dialog[data-dialog="repertory.find"], :root[data-theme="dark"] .dialog[data-dialog="repertory.take"] {
   --nw-title: #8d8d8d;
   --nw-peach: #3a2c28;
   --nw-peach-line: #4e3b35;
@@ -75,6 +96,9 @@
   --nw-sb-arrow: #b0b0b0;
   --nw-rule-2: #4a3d39;
   --nw-key-shadow: #24201f;
+  --nw-key-shadow-2: #181514;
+  --nw-key-top: #4a3e3a;
+  --nw-key-gap: #3b3331;
   --nw-typed: #7cc3d6;
   --nw-outline: #c79a8c;
   --nw-default: #d0927c;
@@ -91,10 +115,18 @@
   --nw-help: #b4b4b4;
   --nw-help-ring: #9a9a9a;
   --nw-cancel-x: #fff;
-  --nw-view-frame: #9a9a9a;
-  --nw-view-bar: #8a8a8a;
+  --nw-view-frame: #5a5a5a;
+  --nw-view-bar: #1e1e1e;
+  --nw-view-bar-hi: #6a6a6a;
+  --nw-view-line: #2a2a2a;
+  --nw-view-edge: #303030;
+  --nw-view-foot-hi: #555;
+  --nw-view-gloss: #e8e8e8;
+  --nw-view-rim: #4a4a4a;
+  --nw-view-bevel: #444;
+  --nw-view-sheen: #3c3c3c;
   --nw-prompt: var(--text-2);
-  --nw-caret: #6e6e6e;
+  --nw-caret: #8a6a60;
   --nw-view-bg: #3a3a3a;
   --nw-view-1: #8fb4e6;
   --nw-view-2: #e0645a;
@@ -102,11 +134,21 @@
   --nw-view-4: #62b865;
   --nw-take: #e3c15e;
   --nw-strong: var(--text);
-  --nw-tile-outline: #c79a8c;
+  --nw-tile-outline: #d27a68;
   --nw-sb-btn: var(--bg-elev);
+    --nw-check: #c0533c;
+    --nw-check-bg: var(--bg-elev);
+    --nw-check-line: #6a5f5c;
+    --nw-gear-on: #7fb0e6;
+    --nw-path-line: #9b7f76;
+    --nw-sheet: #7a4c3e;
+    --nw-sheet-line: #9a9a9a;
+    --nw-char: #7fc0f0;
+    --nw-scrim: rgba(0, 0, 0, .45);
+    --nw-hit: #806a10;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .dialog[data-dialog="repertory.find"] {
+  :root:not([data-theme="light"]) .dialog[data-dialog="repertory.find"], :root:not([data-theme="light"]) .dialog[data-dialog="repertory.take"] {
     --nw-title: #8d8d8d;
     --nw-peach: #3a2c28;
     --nw-peach-line: #4e3b35;
@@ -129,6 +171,9 @@
   --nw-sb-arrow: #b0b0b0;
   --nw-rule-2: #4a3d39;
   --nw-key-shadow: #24201f;
+  --nw-key-shadow-2: #181514;
+  --nw-key-top: #4a3e3a;
+  --nw-key-gap: #3b3331;
     --nw-typed: #7cc3d6;
     --nw-outline: #c79a8c;
     --nw-default: #d0927c;
@@ -145,10 +190,18 @@
     --nw-help: #b4b4b4;
     --nw-help-ring: #9a9a9a;
   --nw-cancel-x: #fff;
-    --nw-view-frame: #9a9a9a;
-    --nw-view-bar: #8a8a8a;
+    --nw-view-frame: #5a5a5a;
+    --nw-view-bar: #1e1e1e;
+    --nw-view-bar-hi: #6a6a6a;
+    --nw-view-line: #2a2a2a;
+    --nw-view-edge: #303030;
+    --nw-view-foot-hi: #555;
+    --nw-view-gloss: #e8e8e8;
+    --nw-view-rim: #4a4a4a;
+    --nw-view-bevel: #444;
+    --nw-view-sheen: #3c3c3c;
   --nw-prompt: var(--text-2);
-  --nw-caret: #6e6e6e;
+  --nw-caret: #8a6a60;
     --nw-view-bg: #3a3a3a;
     --nw-view-1: #8fb4e6;
     --nw-view-2: #e0645a;
@@ -156,8 +209,18 @@
     --nw-view-4: #62b865;
     --nw-take: #e3c15e;
     --nw-strong: var(--text);
-    --nw-tile-outline: #c79a8c;
+    --nw-tile-outline: #d27a68;
     --nw-sb-btn: var(--bg-elev);
+    --nw-check: #c0533c;
+    --nw-check-bg: var(--bg-elev);
+    --nw-check-line: #6a5f5c;
+    --nw-gear-on: #7fb0e6;
+    --nw-path-line: #9b7f76;
+    --nw-sheet: #7a4c3e;
+    --nw-sheet-line: #9a9a9a;
+    --nw-char: #7fc0f0;
+    --nw-scrim: rgba(0, 0, 0, .45);
+    --nw-hit: #806a10;
   }
 }
 
@@ -165,21 +228,25 @@
    not close it (the app behind stays inert while it is open) */
 .dialog-backdrop:has(> .dialog[data-dialog="repertory.find"]) { background: transparent; pointer-events: none; animation: none; padding-top: round(down, 12vh, 1px); }
 .dialog[data-dialog="repertory.find"] { pointer-events: auto; animation: none; box-shadow: 0 10px 30px rgba(0, 0, 0, .22), 0 0 0 .5px rgba(0, 0, 0, .18); }
+/* RadarOpus opens the window over the right part of the main window (x 562, y 153 of a 1470 pt window) */
+.dialog[data-dialog="repertory.find"] { position: fixed; left: clamp(4px, calc(100vw - 908px), 562px); top: clamp(4px, calc(100vh - 640px - 4px), 147px); max-height: none; }
+/* the options panel makes the window 164 px taller: it moves up as far as needed to stay on screen */
+.dialog[data-dialog="repertory.find"]:has(.rfind.with-opts) { top: clamp(4px, calc(100vh - 804px - 4px), 147px); }
 /* an OS window in RadarOpus: it appears at once, without the dialogs' pop-in (an animation would keep it
    invisible until the first animation frame while it already takes typing) */
 /* the dialog frame: a 33 px white title strip with the title in light grey, a body without padding */
 .dialog[data-dialog="repertory.find"] { max-height: 92vh; border-radius: 10px 10px 13px 13px; overflow: hidden; }
-.dialog[data-dialog="repertory.find"] .dialog-head { position: relative; box-sizing: border-box; height: 32px; min-height: 0; padding: 1px 8px 0 8.5px; border-bottom: 0; justify-content: flex-start; }
+.dialog[data-dialog="repertory.find"] .dialog-head { position: relative; box-sizing: border-box; height: 30px; min-height: 0; padding: 1px 8px 0 8.5px; border-bottom: 0; justify-content: flex-start; }
 /* the three window dots of a macOS window (an inactive one: all grey); the first is the working close box */
 .dialog[data-dialog="repertory.find"] .dialog-head::before, .dialog[data-dialog="repertory.find"] .dialog-head::after {
-  content: ""; position: absolute; top: 50%; left: 33.5px; box-sizing: border-box; width: 15px; height: 15px; margin-top: -8px;
+  content: ""; position: absolute; top: 50%; left: 31.5px; box-sizing: border-box; width: 13px; height: 13px; margin-top: -7px;
   border: 1px solid var(--nw-dot-line); border-radius: 50%; background: var(--nw-dot); pointer-events: none;
 }
-.dialog[data-dialog="repertory.find"] .dialog-head::after { left: 58.5px; }
-.dialog[data-dialog="repertory.find"] .dialog-head h2 { order: 1; margin-left: 66.5px; font: 700 13px Verdana, Geneva, sans-serif; color: var(--nw-title); }
+.dialog[data-dialog="repertory.find"] .dialog-head::after { left: 54.5px; }
+.dialog[data-dialog="repertory.find"] .dialog-head h2 { order: 1; margin-left: 62.5px; position: relative; top: -1px; font: 700 13px -apple-system, BlinkMacSystemFont, system-ui, "Helvetica Neue", sans-serif; color: var(--nw-title); }
 /* the dialog's close box drawn as a window close dot at the left of the title strip (× on hover) */
 .dialog[data-dialog="repertory.find"] .dialog-x {
-  order: 0; flex: none; box-sizing: border-box; width: 15px; height: 15px; margin-top: -2px; min-width: 0; padding: 0; border: 1px solid var(--nw-dot-line); border-radius: 50%;
+  order: 0; flex: none; box-sizing: border-box; width: 13px; height: 13px; margin-top: -2px; min-width: 0; padding: 0; border: 1px solid var(--nw-dot-line); border-radius: 50%;
   background: var(--nw-dot); color: transparent; font: 700 11px/11px Verdana, Geneva, sans-serif; display: grid; place-items: center;
 }
 .dialog[data-dialog="repertory.find"] .dialog-x:hover, .dialog[data-dialog="repertory.find"] .dialog-x:focus-visible {
@@ -188,56 +255,91 @@
 .dialog[data-dialog="repertory.find"] .dialog-body { padding: 0; display: block; overflow: hidden; }
 
 .rfind {
-  display: flex; flex-direction: column; height: min(647px, calc(92vh - 32px));
+  display: flex; flex-direction: column; height: min(608px, calc(100vh - 40px));
   font-family: Verdana, Geneva, sans-serif; color: var(--nw-ink); background: var(--bg-elev);
 }
 
 /* prompt band: the prompt, what was typed (bold, no box) and the gear */
-.rfind-head { display: flex; align-items: center; height: 46px; padding: 0 13px 0 8px; background: var(--nw-peach); }
-.rfind-prompt { font: 10px Tahoma, "Helvetica Neue", Arial, sans-serif; color: var(--nw-prompt); white-space: nowrap; cursor: text; }
+.rfind.with-opts { height: min(772px, calc(100vh - 40px)); }
+.rfind-head { display: flex; align-items: center; flex: none; height: 42px; padding: 0 12px 0 9px; background: var(--nw-peach); }
+/* RadarOpus's small system face: a short, semibold, letter-spaced Helvetica (246 px wide in all) */
+.rfind-prompt { font: 600 8.2px "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: .3px; position: relative; top: .75px; color: var(--nw-prompt); white-space: nowrap; cursor: text; }
 .rfind-input {
   field-sizing: content; min-width: 3px; max-width: 420px; height: 20px; margin-left: 3px; padding: 0; border: 0; border-radius: 0;
-  background: transparent; color: var(--nw-typed); font: 700 12px Verdana, Geneva, sans-serif; caret-color: var(--nw-ink);
+  background: transparent; color: var(--nw-typed); font: 600 12px "Helvetica Neue", Helvetica, Arial, sans-serif; caret-color: var(--nw-ink);
+  /* RadarOpus echoes the typed letters in lower case, whatever the case typed (the match ignores case),
+     except at the chapter level of the first window of a session, where they show in capitals */
+  text-transform: lowercase;
 }
+.rfind-input.caps { text-transform: uppercase; }
 .rfind-input:focus, .rfind-input:focus-visible { outline: none; box-shadow: none; }
 .rfind-grow { flex: 1; }
 .rfind-gear { display: grid; place-items: center; width: 22px; height: 22px; margin-top: -3px; border: 0; border-radius: 4px; background: transparent; color: var(--nw-help); }
 .rfind-gear:hover { background: var(--nw-peach-line); }
+.rfind-gear.on { color: var(--nw-gear-on); }
 
-/* the letter row: one white strip of keys with faint separators */
-.rfind-letters { display: flex; padding: 0 5px 8px; background: var(--nw-peach); }
-.rfind-letters button {
-  flex: 1; min-width: 0; height: 20px; padding: 0; border: 0; border-right: 1px solid var(--nw-key-sep); border-radius: 0;
-  box-shadow: 0 1px 0 var(--nw-key-shadow);
-  background: var(--nw-key); color: var(--nw-strong); font: 700 10.5px Verdana, Geneva, sans-serif;
-  -webkit-text-stroke: .3px currentColor;
+/* the letter row: 28 separate white keys, 2 px apart on a pale grey ground, each with a faint top edge and a
+   soft drop shadow under it that darkens where neighbouring keys meet; 6 px of the peach band under it */
+.rfind-letters {
+  display: flex; gap: 2px; flex: none; padding: 1px 6px 6px;
+  background: linear-gradient(var(--nw-key-gap), var(--nw-key-gap)) content-box, var(--nw-peach);
 }
-.rfind-letters button:first-child { border-radius: 2px 0 0 2px; }
-.rfind-letters button:last-child { border-right: 0; border-radius: 0 2px 2px 0; }
-.rfind-letters button:hover:not(:disabled) { background: var(--nw-row-sel); }
+.rfind-letters button {
+  flex: 1; min-width: 0; box-sizing: border-box; height: 21px; padding: 0; border: 0; border-radius: 1px;
+  border-top: 1px solid var(--nw-key-top);
+  background:
+    linear-gradient(to right, var(--nw-key-shadow-2), var(--nw-key-shadow) 9px, var(--nw-key-shadow) calc(100% - 9px), var(--nw-key-shadow-2)) bottom / 100% 1px no-repeat,
+    var(--nw-key);
+  color: var(--nw-strong); font: 700 9.5px Verdana, Geneva, sans-serif;
+}
+/* no hover state: RadarOpus leaves a letter plain white under the pointer */
 .rfind-letters button:active:not(:disabled) { background: var(--nw-peach-line); }
 
 /* level row: up arrow, book, "- ", chapter icon, path */
 .rfind-path {
-  display: flex; align-items: center; flex-wrap: nowrap; flex: none; height: 39px; padding: 0 8px 0 6px; overflow: hidden;
-  background: var(--bg-elev); border-bottom: 2px solid var(--nw-rule); box-shadow: 0 1px 0 var(--nw-rule-2); position: relative; z-index: 1; font-size: 12.5px;
+  display: flex; align-items: center; flex-wrap: nowrap; flex: none; box-sizing: border-box; height: 37px; padding: 0 8px 0 4px; overflow: hidden;
+  /* the rule under it sits on the half line above the row's last pixel (RadarOpus draws it there on retina);
+     a border would snap to whole pixels, so it is painted */
+  background: linear-gradient(to bottom, transparent calc(100% - 1.5px), var(--nw-path-line) calc(100% - 1.5px), var(--nw-path-line) calc(100% - .5px), transparent calc(100% - .5px)), var(--bg-elev);
+  position: relative; z-index: 1; font-size: 12.5px;
 }
 .rfind-upbtn { flex: none; display: grid; place-items: center; width: 24px; height: 28px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--nw-up); }
 .rfind-upbtn:hover { background: var(--nw-row-sel); }
-.rfind-book { flex: none; display: grid; place-items: center; width: 27px; height: 27px; margin-left: 8px; }
-.rfind-view-frame { fill: var(--nw-view-bg); stroke: var(--nw-view-frame); }
-.rfind-view-bar { fill: var(--nw-view-bar); }
-.rfind-pathicon { flex: none; margin: 0 7px 0 3px; border-radius: 5px; }
+.rfind-book { flex: none; display: grid; place-items: center; width: 24px; height: 24px; margin-left: 9px; position: relative; top: -1px; }
+.rfind-view-rim { fill: var(--nw-view-rim); }
+.rfind-view-bevel { fill: var(--nw-view-bevel); }
+.rfind-vt-bar { stop-color: var(--nw-view-bar); }
+.rfind-vt-sheen { stop-color: var(--nw-view-sheen); }
+.rfind-view-foot { fill: var(--nw-view-bar); }
+.rfind-view-line { fill: var(--nw-view-line); }
+/* each cell glows faintly in its own colour */
+.rfind-view-halo { opacity: .14; }
+.rfind-vh-1 { fill: var(--nw-view-1); }
+.rfind-vh-2 { fill: var(--nw-view-2); }
+.rfind-vh-3 { fill: var(--nw-view-3); }
+.rfind-vh-4 { fill: var(--nw-view-4); }
+.rfind-vs-bg { stop-color: var(--nw-view-bg); }
+.rfind-vs-edge { stop-color: var(--nw-view-edge); }
+.rfind-vs-1 { --c: var(--nw-view-1); stop-color: var(--c); }
+.rfind-vs-2 { --c: var(--nw-view-2); stop-color: var(--c); }
+.rfind-vs-3 { --c: var(--nw-view-3); stop-color: var(--c); }
+.rfind-vs-4 { --c: var(--nw-view-4); stop-color: var(--c); }
+/* each cell is lit from the top left: pale there, full colour in the middle, darker to the bottom right */
+.rfind-vs-top.rfind-vs-top { stop-color: color-mix(in srgb, var(--c) 40%, var(--nw-view-gloss)); }
+.rfind-vs-low.rfind-vs-low { stop-color: color-mix(in srgb, var(--c) 72%, #000); }
+.rfind-pathicon { flex: none; margin: 0 3.6px 0 1.3px; border-radius: 5px; }
+/* the up arrow: 14 x 21.5, its tip 6 px below the row's top edge (RadarOpus) */
+.rfind-up { position: relative; top: -1.25px; }
 .rfind-step { display: inline-flex; align-items: center; min-width: 0; }
 .rfind-crumb {
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; padding: 2px 4px; border-radius: 3px;
-  color: var(--nw-crumb); font: 400 12.5px Verdana, Geneva, sans-serif;
+  min-width: 0; position: relative; top: -1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; padding: 2px 3px; border-radius: 3px;
+  color: var(--nw-crumb); font: 400 12.2px Verdana, Geneva, sans-serif;
   -webkit-text-stroke: .45px currentColor;
 }
 .rfind-crumb.caps { text-transform: uppercase; }
 .rfind-crumb:hover { background: var(--nw-row-sel); }
-.rfind-sep { flex: none; color: var(--nw-ink-2); padding: 0 1px; margin-left: 7px; }
-.rfind-step .rfind-sep { margin-left: 0; color: var(--nw-crumb); }
+.rfind-sep { flex: none; position: relative; top: -1px; color: var(--nw-crumb); padding: 0 2px; margin-left: 7px; font: 400 12.5px Verdana, Geneva, sans-serif; -webkit-text-stroke: .6px currentColor; }
+.rfind-step .rfind-sep { margin-left: 0; }
 .rfind-take { padding: 4px 10px; font-size: 11.5px; color: var(--success); border-bottom: 1px solid var(--nw-peach-line); }
 .rfind-take.err { color: var(--danger); }
 
@@ -246,60 +348,64 @@
 
 /* chapter tiles: 73 px pitch, the first focused one outlined */
 /* 14 columns as RadarOpus: the window edge cuts the 14th off (clipped, never scrolled sideways) */
-.rfind-grid { display: grid; grid-template-columns: repeat(14, 73px); overflow: clip; grid-auto-rows: 84px; padding: 2px 0 6px 6px; }
+.rfind-grid { display: grid; grid-template-columns: repeat(14, 68.8px); overflow: clip; grid-auto-rows: 79px; padding: 3px 0 6px 5px; }
 .rfind-tile {
-  box-sizing: border-box; width: 66px; height: 78px; display: flex; flex-direction: column; align-items: center; gap: 1px; padding-top: 0;
-  border: 2px solid transparent; border-radius: 2px; cursor: default; user-select: none;
+  box-sizing: border-box; width: 62px; height: 74px; display: flex; flex-direction: column; align-items: center; gap: 0; padding-top: 2px;
+  border: 1px solid transparent; border-radius: 2px; cursor: default; user-select: none;
 }
 .rfind-tile.active { border-color: var(--nw-tile-outline); }
 /* medium weight (a light stroke over the regular face), near-black, slightly spaced: RadarOpus's captions are wide and open */
-.rfind-cap { margin-top: .7px; font: 400 10.5px/13px Verdana, Geneva, sans-serif; letter-spacing: .35px; color: var(--nw-cap); white-space: pre; -webkit-text-stroke: .3px currentColor; }
+.rfind-cap { margin-top: 2px; font: 400 10px/13px Verdana, Geneva, sans-serif; letter-spacing: .15px; color: var(--nw-cap); white-space: pre; -webkit-text-stroke: .3px currentColor; }
 /* the glyph itself is the shared chapter icon (features/toc/chapterIcons.tsx) */
-.rfind-glyph { border-radius: 8px; margin-top: -.5px; }
+.rfind-glyph { border-radius: 8px; }
 .rfind-tile:hover .rfind-glyph { filter: brightness(1.05); }
 
 /* rubric rows: plain UPPERCASE names with the count appended, a "+" box in the left gutter for
    rubrics with sub-rubrics; the selected row has a pale band and the hand, and pushes the list right */
 .rfind-rubrics { --shift: 0px; scrollbar-width: none; }
 .rfind-rubrics::-webkit-scrollbar { display: none; }
-/* the classic scrollbar beside the list (VScrollBar): arrow buttons, a light track, a white box thumb */
-.rfind-sb { flex: none; display: flex; flex-direction: column; width: 21px; box-sizing: border-box; border-left: 1px solid var(--nw-sb-line); background: var(--nw-sb-track); user-select: none; }
+/* the classic scrollbar beside the list (VScrollBar): arrow buttons, a light track, a white box thumb.
+   17 px including its grey left and right edges, ending where RadarOpus's does (the window's own border follows) */
+.rfind-sb { flex: none; display: flex; flex-direction: column; width: 17px; box-sizing: border-box; border-left: 1px solid var(--nw-sb-line); background: var(--nw-sb-track); user-select: none; }
 .rfind-sb[hidden] { display: none; }
-.rfind-sb-btn { flex: none; position: relative; height: 15px; background: var(--nw-sb-btn); }
+.rfind-sb-btn { flex: none; position: relative; height: 15px; background: var(--nw-sb-btn); box-shadow: inset -1px 0 var(--nw-sb-line); }
 .rfind-sb-btn.up { border-bottom: 1px solid var(--nw-sb-btn-line); }
 .rfind-sb-btn.down { border-top: 1px solid var(--nw-sb-line); }
-.rfind-sb-btn::before { content: ""; position: absolute; left: 50%; top: 50%; margin: -2px 0 0 -4px; border: 4px solid transparent; }
+.rfind-sb-btn::before { content: ""; position: absolute; left: 50%; top: 50%; margin: -2px 0 0 calc(-4px - .5px); border: 4px solid transparent; }
 .rfind-sb-btn.up::before { border-top: 0; border-bottom: 4px solid var(--nw-sb-arrow); }
 .rfind-sb-btn.down::before { border-bottom: 0; border-top: 4px solid var(--nw-sb-arrow); }
 .rfind-sb-btn:active { background: var(--nw-sb-line); }
-.rfind-sb-track { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.rfind-sb-track { flex: 1; min-height: 0; position: relative; overflow: hidden; box-shadow: inset -1px 0 var(--nw-sb-line); }
 /* the thumb fills the track's width, white with a grey lower edge */
-.rfind-sb-thumb { position: absolute; left: 0; right: 0; top: 0; box-sizing: border-box; background: var(--nw-sb-thumb); border: 0; border-bottom: 1px solid var(--nw-sb-thumb-line); }
-.rfind-sb-thumb:hover { border-bottom-color: var(--nw-sb-arrow); }
+.rfind-sb-thumb { position: absolute; left: 0; right: 0; top: 0; box-sizing: border-box; background: var(--nw-sb-thumb); border: 0; border-left: 1px solid var(--nw-sb-thumb-line); border-right: 1px solid var(--nw-sb-thumb-line); border-bottom: 1px solid var(--nw-sb-thumb-line); }
+.rfind-sb-thumb:hover { border-color: var(--nw-sb-arrow); }
 .rfind-rubrics.has-sel { --shift: 12.5px; }
 .rfind-row {
-  position: absolute; left: 0; right: 0; height: 17px; display: flex; align-items: center; padding: 0 10px 0 calc(58px + var(--shift));
+  position: absolute; left: 0; right: 0; height: 16px; box-sizing: border-box; display: flex; align-items: center; padding: 0 10px 0 calc(55px + var(--shift));
   font: 400 12.5px Verdana, Geneva, sans-serif; color: var(--nw-strong); cursor: default; user-select: none; white-space: nowrap;
-  -webkit-text-stroke: .35px currentColor;
+  -webkit-text-stroke: .2px currentColor;
 }
-.rfind-row.top .rfind-text { text-transform: uppercase; }
+.rfind-row.top .rfind-label { text-transform: uppercase; }
 .rfind-row::before { content: ""; position: absolute; top: 0; bottom: 0; left: calc(24px + var(--shift)); right: 0; z-index: 0; }
 .rfind-row:hover::before { background: color-mix(in srgb, var(--nw-row-sel) 55%, transparent); }
-.rfind-row.active::before { left: calc(23px + var(--shift)); padding-left: 4px; background: var(--nw-row-sel) content-box; border-left: 1px dashed var(--nw-band-edge); }
-.rfind-text { position: relative; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.rfind-count { position: relative; flex: none; }
-.rfind-hand { position: absolute; left: 2px; top: 4px; overflow: visible; }
+.rfind-row.active::before { left: calc(20px + var(--shift)); padding-left: 5px; background: var(--nw-row-sel) content-box; border-left: 1px dashed var(--nw-band-edge); }
+.rfind-label { position: relative; top: -1px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Word wrap: long names continue on the next lines (each line 16 px) */
+.rfind-rubrics.wrap .rfind-row { align-items: flex-start; white-space: normal; line-height: 16px; }
+.rfind-rubrics.wrap .rfind-label { overflow: visible; overflow-wrap: anywhere; }
+.rfind-hit { background: var(--nw-hit); color: inherit; border-radius: 1px; }
+.rfind-hand { position: absolute; left: 3px; top: 1px; overflow: visible; }
 .rfind-hand-cuff { fill: var(--nw-hand-cuff); }
 .rfind-hand-body { fill: var(--nw-hand-fill); stroke: var(--nw-hand); stroke-width: 1.1; stroke-linejoin: round; }
 .rfind-hand-line { fill: none; stroke: var(--nw-hand); stroke-width: 1; stroke-linecap: round; }
-.rfind-caret { position: absolute; top: 0; left: 24px; height: 17px; border-left: 1px dotted var(--nw-caret); pointer-events: none; }
+.rfind-caret { position: absolute; top: 0; left: 22px; height: 16px; border-left: 1px dotted var(--nw-caret); pointer-events: none; }
 .rfind-plus {
-  position: absolute; left: calc(33px + var(--shift)); top: 3px; box-sizing: border-box; width: 11px; height: 11px;
+  position: absolute; left: calc(31px + var(--shift)); top: 2px; box-sizing: border-box; width: 12px; height: 12px;
   border: 1px solid var(--nw-plus); border-radius: 1px; background: var(--nw-plus-bg); cursor: pointer;
 }
 .rfind-plus::before, .rfind-plus::after { content: ""; position: absolute; background: var(--nw-plus); }
-.rfind-plus::before { left: 2px; right: 2px; top: 4px; height: 1px; }
-.rfind-plus::after { top: 2px; bottom: 2px; left: 4px; width: 1px; }
+.rfind-plus::before { left: 2px; right: 2px; top: 4.5px; height: 1px; }
+.rfind-plus::after { top: 2px; bottom: 2px; left: 4.5px; width: 1px; }
 
 .rfind-loading { padding: 16px; color: var(--text-3); font-size: 12px; }
 /* no match: an empty list */
@@ -308,9 +414,9 @@
 .rfind-help .kbd { margin-right: 4px; }
 
 /* footer: Take▾, Go to (default), Cancel, Help */
-.rfind-foot { display: flex; align-items: flex-start; justify-content: flex-end; gap: 6px; height: 41px; flex: none; box-sizing: border-box; padding: 4px 10px 0 8px; background: var(--nw-peach); }
+.rfind-foot { display: flex; align-items: flex-start; justify-content: flex-end; gap: 6px; height: 40px; flex: none; box-sizing: border-box; padding: 8px 8px 0 8px; background: var(--nw-peach); }
 .rfind-btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 7px; box-sizing: border-box; min-width: 85px; height: 26px; padding: 0 6px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; box-sizing: border-box; min-width: 80px; height: 24px; padding: 0 4px;
   border: 1px solid var(--nw-key-line); border-radius: 3px; background: var(--nw-key); color: var(--nw-strong);
   /* window buttons in the macOS system face (RadarOpus), not the book's Verdana */
   font: 500 13px -apple-system, BlinkMacSystemFont, system-ui, "Helvetica Neue", sans-serif;
@@ -319,10 +425,12 @@
 .rfind-btn:hover:not(:disabled) { border-color: var(--nw-outline); }
 .rfind-btn:disabled { opacity: .55; }
 .rfind-btn[aria-pressed="true"] { background: var(--nw-row-sel); }
-.rfind-default { border-color: var(--nw-default); }
-.rfind-takebtn { min-width: 0; gap: 4px; padding: 0 6px; margin-right: -3px; border-color: transparent; background: transparent; }
+/* the default button keeps its terracotta rim under the pointer too (RadarOpus) */
+.rfind-default, .rfind-default:hover:not(:disabled) { border-color: var(--nw-default); }
+.rfind-takebtn { min-width: 0; gap: 3px; padding: 0 0 0 2px; margin-right: 0; border-color: transparent; background: transparent; }
 .rfind-takebtn:hover:not(:disabled) { background: var(--nw-key); }
-.rfind-ico-take { color: var(--nw-take); }
+/* Take: a small beige clipboard holding a ruled sheet (bookIcons ClipboardIcon, given the window's tokens) */
+.rfind-ico-take { --rb-ic-tan: color-mix(in srgb, var(--nw-take) 62%, var(--bg-elev)); --rb-ic-grey: var(--nw-ink-2); --rb-paper: var(--bg-elev); }
 .rfind-ico-go { color: var(--nw-go); }
 .rfind-ico-cancel { flex: none; margin: -3px 0; }
 .rfind-ico-cancel rect { fill: var(--nw-cancel); }
@@ -331,3 +439,33 @@
 .rfind-ico-help circle { stroke: var(--nw-help-ring); }
 .rfind-ico-help path { fill: var(--nw-help); }
 .rfind-ico-drop { color: var(--nw-ink-2); margin-left: 1px; }
+
+/* the gear's options: two columns of checkboxes on the peach band, between the letters and the level row */
+.rfind-opts { flex: none; display: grid; grid-template-columns: 446px 1fr; height: 164px; box-sizing: border-box; padding: 8px 10px 0; background: var(--nw-peach); border-top: 1px solid var(--nw-peach-line); }
+.rfind-opts-col { display: flex; flex-direction: column; }
+.rfind-opt { display: flex; align-items: center; gap: 6px; height: 27px; font: 400 13px -apple-system, BlinkMacSystemFont, system-ui, "Helvetica Neue", sans-serif; color: var(--nw-strong); white-space: nowrap; cursor: default; }
+.rfind-opt input {
+  appearance: none; flex: none; position: relative; width: 14px; height: 14px; margin: 0; border: 1px solid var(--nw-check-line); border-radius: 3.5px; background: var(--nw-check-bg);
+}
+.rfind-opt input:checked { background: var(--nw-check); border-color: var(--nw-check); }
+.rfind-opt input:checked::after {
+  content: ""; position: absolute; left: 4px; top: 1.5px; width: 3.5px; height: 7px; border: solid var(--nw-cancel-x); border-width: 0 1.6px 1.6px 0; transform: rotate(40deg);
+}
+.rfind-opt input:focus-visible { outline: 2px solid var(--nw-gear-on); outline-offset: 1px; }
+
+/* the "..." sheet: the window dimmed, a terracotta panel with a grid of accented letters and Cancel */
+.rfind-scrim { position: absolute; inset: 0; z-index: 5; display: grid; place-items: start center; padding-top: 180px; background: var(--nw-scrim); }
+/* grid and Cancel sit at the panel's left (10px in), Cancel centred under the grid */
+.rfind-sheet { box-sizing: border-box; width: 398px; height: 280px; padding: 10px 0 0 10px; border-radius: 20px; background: var(--nw-sheet); display: grid; grid-template-columns: max-content; align-content: start; justify-content: start; justify-items: center; outline: none; }
+.rfind-sheet > .rfind-chars { justify-self: stretch; }
+.rfind-chars { display: grid; border-top: 1px solid var(--nw-sheet-line); border-left: 1px solid var(--nw-sheet-line); background: var(--nw-key); }
+.rfind-chars-row { display: flex; }
+.rfind-char {
+  box-sizing: border-box; width: 25px; height: 25px; padding: 0; border: 0; border-right: 1px solid var(--nw-sheet-line); border-bottom: 1px solid var(--nw-sheet-line); border-radius: 0;
+  background: var(--nw-key); color: var(--nw-char); font: 400 14px -apple-system, BlinkMacSystemFont, system-ui, "Helvetica Neue", sans-serif; display: grid; place-items: center;
+}
+button.rfind-char:hover, button.rfind-char:focus-visible { background: var(--nw-plus-bg); outline: none; }
+.rfind-sheet-cancel {
+  margin-top: 40px; box-sizing: border-box; min-width: 68px; height: 20px; padding: 0 10px; border: 1px solid var(--nw-key-line); border-radius: 3px;
+  background: var(--nw-key); color: var(--nw-strong); font: 400 13px -apple-system, BlinkMacSystemFont, system-ui, "Helvetica Neue", sans-serif;
+}

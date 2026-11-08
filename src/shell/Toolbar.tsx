@@ -1,71 +1,120 @@
 import { memo, useLayoutEffect, useRef } from 'react'
 import type { FocusEvent as ReactFocusEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
-import {
-  ArrowLeft, ArrowRight, BookMarked, BookOpen, Bookmark, ChartColumnBig, FlaskConical, Printer, ScanSearch,
-  Search, TreeDeciduous, Users,
-} from 'lucide-react'
 import type { ComponentType } from 'react'
 import { displayKey, formatKeys, getCommand, runCommand } from '../commands/registry'
 import { useCommandState } from '../commands/useCommandState'
 import type { CommandState } from '../commands/useCommandState'
+import { useChrome } from './chrome'
 import { useApp } from '../state/store'
+import type { TocView } from './chrome'
 import { QuickFind } from '../features/search/QuickFind'
 import { useContextMenu } from '../ui/Menu'
 import type { MenuItem } from '../ui/Menu'
-import { STRATEGIES } from '../engine/analysis'
+import { DEFAULT_METHOD_ITEM, LIMIT_FAMILY_ITEM } from './menus'
 import { activeSearchTab, openSearch } from '../features/search/ops'
-import { historyItems } from './history'
 import { keepFocus, returnFocusFromChrome } from './focus'
+import { AnalysisIcon } from '../features/analysis/AnalysisIcon'
+import { BackArrowIcon, BookmarksIcon, CameraIcon, ForwardArrowIcon, HistoryBookIcon, MapsIcon, PatientsIcon, PrintIcon, RepertoriesIcon, ZoomGlassIcon } from './toolbarIcons'
 
 type Tone = 'blue' | 'teal' | 'orange' | 'amber' | 'green' | 'grey' | 'ink' | 'slate'
 type ToolIcon = ComponentType<{ size?: number; strokeWidth?: number; 'aria-hidden'?: boolean }>
 
-/** History: a slate rewind arc around a blue clock face (two tones, as the desktop icon reads; lucide's history geometry). */
-function HistoryIcon({ size = 24, strokeWidth = 2 }: { size?: number; strokeWidth?: number }) {
+/**
+ * References: an open book in light teal line art, unfilled, its pages resting on a curved base
+ * (RadarOpus draws it as an outline, unlike the solid Repertories book; original glyph).
+ */
+function ReferencesIcon({ size = 24, strokeWidth = 2 }: { size?: number; strokeWidth?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle className="tb-hist-face" cx="12" cy="12" r="6.2" stroke="none" />
-      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" style={{ fill: 'none' }} />
-      <path d="M3 3v5h5" style={{ fill: 'none' }} />
-      <path className="tb-hist-hands" d="M12 7v5l4 2" style={{ fill: 'none' }} />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth * 0.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <g className="tb-refs-book" style={{ fill: 'none' }}>
+        <path d="M12 6.2C10.2 4.7 7.2 4 3 4.3v12.4c4.2-.3 7.2.4 9 1.9 1.8-1.5 4.8-2.2 9-1.9V4.3C16.8 4 13.8 4.7 12 6.2z" />
+        <path d="M12 6.2v12.4" />
+        <path d="M3 17.2v1.7c4.2-.3 7.2.4 9 1.9 1.8-1.5 4.8-2.2 9-1.9v-1.7" />
+      </g>
     </svg>
   )
 }
 
+/**
+ * Remedies: a grey glass jar with a screw lid and two orange-yellow globules resting at its bottom
+ * (RadarOpus's remedy jar; original glyph).
+ */
+function RemediesIcon({ size = 24, strokeWidth = 2 }: { size?: number; strokeWidth?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth * 0.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect className="tb-jar-lid" x="7.6" y="1.8" width="8.8" height="3.2" rx=".8" />
+      <path className="tb-jar-glass" d="M8.4 5v1.4c-1.6.8-2.6 2-2.6 3.6v9.6c0 1.2.9 2.2 2.2 2.2h8c1.3 0 2.2-1 2.2-2.2V10c0-1.6-1-2.8-2.6-3.6V5" />
+      <circle className="tb-jar-pill" cx="10.4" cy="18.2" r="2.3" />
+      <circle className="tb-jar-pill" cx="14" cy="16.6" r="2.3" />
+    </svg>
+  )
+}
 
 /**
- * Zoom in / Zoom out: a dark-rimmed magnifier on a heavy handle whose light lens carries a bold blue
- * plus or minus (the desktop's blue accent, as on Back and Forward; lucide's zoom geometry, original tones).
+ * Families: a wide, scalloped green canopy (eight lobes, a little darker underneath) in front of which
+ * a thick tan trunk forks into two branches and flares at its foot (RadarOpus's family tree; original glyph).
  */
-function zoomIcon(plus: boolean) {
-  return function ZoomIcon({ size = 24, strokeWidth = 2 }: { size?: number; strokeWidth?: number }) {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle className="tb-zoom-lens" cx="10.5" cy="10.5" r="7.5" />
-        <path d="m16.2 16.2 5 5" strokeWidth={strokeWidth * 1.6} style={{ fill: 'none' }} />
-        <path className="tb-zoom-sign" d={plus ? 'M10.5 6.9v7.2M6.9 10.5h7.2' : 'M6.9 10.5h7.2'} strokeWidth={strokeWidth * 1.45} style={{ fill: 'none' }} />
-      </svg>
-    )
-  }
+function FamiliesIcon({ size = 24, strokeWidth = 2 }: { size?: number; strokeWidth?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth * 0.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path className="tb-tree-crown" d="M5.2 9.2A2.8 2.8 0 0 1 8.5 5.2A3.7 3.7 0 0 1 15.5 5.2A2.8 2.8 0 0 1 18.8 9.2A2.6 2.6 0 0 1 19.1 14.2A2.4 2.4 0 0 1 15.5 16.8A3.6 3.6 0 0 1 8.5 16.8A2.4 2.4 0 0 1 4.9 14.2A2.6 2.6 0 0 1 5.2 9.2z" />
+      <path className="tb-tree-shade" d="M5.4 13.4c2.2 1.5 4.4 2.1 6.6 2.1s4.4-.6 6.6-2.1c.6.4 1 .9 1.1 1.5a2.4 2.4 0 0 1-4.2 1.9 3.6 3.6 0 0 1-7 0 2.4 2.4 0 0 1-4.2-1.9c.1-.6.5-1.1 1.1-1.5z" />
+      <path className="tb-tree-trunk" d="M8.2 21.9c1.6-.9 2.3-2.1 2.3-4.2l-.3-3.6c-.3-.9-.7-1.5-1.2-2.1l2.6-.7c.3 1.2.7 2.2 1.2 2.9.5-.6.9-1.3 1.1-2.1l2.4.6c-.4 1.5-1.2 2.7-1.9 3.6l-.1 2.3c.1 1.6.8 2.5 2 3.3z" />
+    </svg>
+  )
 }
-const ZoomIn = zoomIcon(true)
-const ZoomOut = zoomIcon(false)
+
+const ZoomIn = ({ size }: { size?: number }) => <ZoomGlassIcon size={size} plus />
+const ZoomOut = ({ size }: { size?: number }) => <ZoomGlassIcon size={size} plus={false} />
+/**
+ * Search area: a grey dashed square framing a small blue magnifier with a pale lens (RadarOpus's
+ * "search area" picture; original glyph).
+ */
+function SearchAreaIcon({ size = 24 }: { size?: number; strokeWidth?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect className="tb-area-frame" x="2.5" y="2.5" width="19" height="19" strokeWidth="1.6" strokeDasharray="2.2 1.8" strokeLinecap="butt" />
+      <circle className="tb-area-lens" cx="10.6" cy="10.6" r="3.9" strokeWidth="1.9" />
+      <path className="tb-area-handle" d="m13.5 13.5 3.9 3.9" strokeWidth="2.6" />
+    </svg>
+  )
+}
+
+/**
+ * Search: a glass magnifier, grey rim around a pale lens, on a gold handle running down to the right
+ * (RadarOpus's Search picture; original glyph).
+ */
+function SearchGlassIcon({ size = 24 }: { size?: number; strokeWidth?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path className="tb-glass-handle" d="m15.6 15.6 6 6" strokeWidth="3.6" />
+      <circle className="tb-glass-lens" cx="9.8" cy="9.8" r="7.4" strokeWidth="1.9" />
+    </svg>
+  )
+}
 
 /** Every command the toolbar shows: their enabled flags drive its re-renders. */
 const TOOL_COMMANDS = [
-  'repertory.toc', 'mm.open', 'patients.open', 'remedy.open', 'families.open', 'bookmarks.open',
-  'search.open', 'analysis.open', 'shell.back', 'shell.forward', 'view.zoomIn', 'view.zoomOut', 'file.print',
+  'toc.repertories', 'toc.references', 'patients.open', 'toc.remedies', 'toc.families', 'toc.bookmarks',
+  'search.open', 'analysis.open', 'maps.open', 'shell.back', 'shell.forward', 'view.history', 'view.zoomIn', 'view.zoomOut', 'file.print', 'tools.screenshot',
 ] as const
 
 /** RadarOpus's tooltip wording per button (its menu item for the same action); the shortcut follows it. */
 const TIPS: Record<string, string> = {
+  'toc.repertories': 'Open list of repertories', 'toc.references': 'Open list of references', 'toc.remedies': 'List of remedies',
+  'toc.families': 'List of families', 'toc.bookmarks': 'Bookmarks',
   'repertory.toc': 'Open list of repertories', 'mm.open': 'Open list of references', 'patients.open': 'Open list of patients',
   'remedy.open': 'List of remedies', 'families.open': 'List of families', 'bookmarks.open': 'Bookmarks', 'search.open': 'Search',
-  'analysis.open': 'Show current analysis with symptoms and remedies', 'shell.back': 'Go back', 'shell.forward': 'Go forward',
-  'view.zoomIn': 'Zoom in', 'view.zoomOut': 'Zoom out', 'file.print': 'Print',
+  'analysis.open': 'Show current analysis with symptoms and remedies', 'maps.open': 'Maps', 'shell.back': 'Go back', 'shell.forward': 'Go forward', 'view.history': 'History',
+  'view.zoomIn': 'Zoom in', 'view.zoomOut': 'Zoom out', 'file.print': 'Print', 'tools.screenshot': 'Take a screenshot',
 }
+// RadarOpus's Print menu is the File menu's trio; Print there prints the active document (analysis, monograph),
+// else the page. The case report stays after a rule: it has no other place in the menus.
 const PRINT_MENU: MenuItem[] = [
-  { command: 'file.print', label: 'Print' },
+  { label: 'Print', commands: ['analysis.print', 'mm.print', 'file.print'], keys: 'Mod+P' },
+  { command: 'file.printPreview', label: 'Print preview' },
+  { command: 'file.printSetup', label: 'Print setup' },
+  { type: 'separator' },
   { command: 'case.report' },
 ]
 
@@ -102,9 +151,19 @@ const scopeMenu = (): MenuItem[] => {
 const analysisMenu = (): MenuItem[] => [
   { command: 'view.clipboardsOnly', label: 'Show current analysis with symptoms only' },
   { command: 'analysis.open', label: 'Show current analysis with symptoms and remedies' },
-  { command: 'families.filter', label: 'Limit to a family' },
+  LIMIT_FAMILY_ITEM,
+  { command: 'analysis.save', label: 'Save current analysis' },
+  { command: 'analysis.recall', label: 'Recall an existing analysis' },
   { command: 'clipboard.clearAll', label: 'Start a new analysis (clear all clipboards)' },
-  { label: 'Select your default analysis method', submenu: STRATEGIES.map(s => ({ command: `analysis.default.${s.id}`, label: s.name })) },
+  { command: 'analysis.email', label: 'Send current analysis by email' },
+  { command: 'analysis.old', label: 'Show old analysis with old Remedy' },
+  DEFAULT_METHOD_ITEM,
+]
+
+/** Maps ▾: the maps the current analysis can be shown on (features/maps). */
+const MAPS_MENU: MenuItem[] = [
+  { command: 'maps.periodic', label: 'Periodic table' },
+  { command: 'maps.kingdoms', label: 'Kingdoms' },
 ]
 
 const tip = (command: string | undefined, fallback: string) => {
@@ -114,7 +173,8 @@ const tip = (command: string | undefined, fallback: string) => {
 }
 
 /** The small solid ▾ at a menu button's icon (original glyph). */
-const Caret = () => <svg width="7" height="4" viewBox="0 0 7 4" aria-hidden="true"><path d="M0 0h7L3.5 4z" fill="currentColor" /></svg>
+// RadarOpus's menu triangle: small (6 x 3.5 pt) and dark grey rather than black
+const Caret = () => <svg width="6" height="3.5" viewBox="0 0 6 3.5" aria-hidden="true"><path d="M0 0h6L3 3.5z" fill="currentColor" opacity=".8" /></svg>
 
 interface BigButtonProps {
   label: string
@@ -129,13 +189,19 @@ interface BigButtonProps {
   disabled?: boolean
   /** Folded away in narrow windows (the command is in the menu bar too). */
   low?: boolean
+  /** A toggle's state (RadarOpus draws a checked toggle on a rounded rose fill). */
+  pressed?: boolean
+  /** Class of the button's ▾ menu (its own look). */
+  menuClass?: string
+  /** Never drawn dimmed (RadarOpus's Back / Forward): a click with nothing to step to does nothing. */
+  live?: boolean
 }
 
 /** A RadarOpus toolbar button: a large icon over its label, optionally with a ▾ menu. */
-function BigButton({ label, icon: Icon, tone, command, state, menu, disabled, low }: BigButtonProps) {
+function BigButton({ label, icon: Icon, tone, command, state, menu, disabled, low, pressed, menuClass, live }: BigButtonProps) {
   const cm = useContextMenu()
-  const idle = disabled ?? (command ? !state?.enabled : false)
-  const openMenu = (el: HTMLElement) => { if (menu) cm.openAt(el, menu()) }
+  const idle = live ? false : disabled ?? (command ? !state?.enabled : false)
+  const openMenu = (el: HTMLElement) => { if (menu) cm.openAt(el, menu(), menuClass) }
   const onKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (menu && command && (e.key === 'ArrowDown' || (e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu')) { e.preventDefault(); openMenu(e.currentTarget) }
   }
@@ -146,11 +212,15 @@ function BigButton({ label, icon: Icon, tone, command, state, menu, disabled, lo
         aria-label={label}
         title={tip(command, label)}
         disabled={idle}
+        aria-pressed={pressed}
         aria-haspopup={!command && menu ? 'menu' : undefined}
         aria-expanded={!command && menu ? cm.isOpen : undefined}
         // like a desktop toolbar: a click acts on the document without taking its focus
         onMouseDown={keepFocus}
-        onClick={e => { if (idle) return; if (command) { runCommand(command); returnFocusFromChrome('.toolbar') } else openMenu(e.currentTarget) }}
+        onClick={e => {
+          if (idle) return
+          if (command) { if (state?.enabled !== false) runCommand(command); returnFocusFromChrome('.toolbar') } else openMenu(e.currentTarget)
+        }}
         onContextMenu={menu ? e => { e.preventDefault(); openMenu(e.currentTarget) } : undefined}
         onKeyDown={onKeyDown}
       >
@@ -173,7 +243,11 @@ const Sep = ({ low }: { low?: boolean }) => <span className={`tb-sep${low ? ' tb
 
 export const Toolbar = memo(function Toolbar() {
   const cs = useCommandState(TOOL_COMMANDS)
-  const hasHistory = useApp(s => s.recentRubrics.length > 0)
+  // RadarOpus checks only the button of the list the table of contents shows (Patients at start), none
+  // while it is hidden
+  const tocView = useChrome(s => s.tocView)
+  const tocOpen = useApp(s => s.layout.showTree)
+  const shows = (v: TocView) => tocOpen && tocView === v
   const ref = useRef<HTMLDivElement>(null)
   /** Roving tab stop (ARIA toolbar): the button last focused, else the first enabled one; arrows move between buttons. */
   const current = useRef<string | null>(null)
@@ -199,34 +273,40 @@ export const Toolbar = memo(function Toolbar() {
     current.current = t.getAttribute('aria-label')
     for (const b of ref.current?.querySelectorAll<HTMLButtonElement>('.tb-btn') ?? []) b.tabIndex = b === t ? 0 : -1
   }
-  const b = (command: string, label: string, icon: ToolIcon, tone: Tone, menu?: () => MenuItem[], low?: boolean) => (
-    <BigButton command={command} state={cs[command]} label={label} icon={icon} tone={tone} menu={menu} low={low} />
+  const b = (command: string, label: string, icon: ToolIcon, tone: Tone, menu?: () => MenuItem[], low?: boolean, pressed?: boolean) => (
+    <BigButton command={command} state={cs[command]} label={label} icon={icon} tone={tone} menu={menu} low={low} pressed={pressed} />
   )
   return (
     <div className="toolbar" role="toolbar" aria-label="Main toolbar" ref={ref} onKeyDown={onKeyDown} onFocus={onFocus}>
-      {b('repertory.toc', 'Repertories', BookMarked, 'blue')}
-      {b('mm.open', 'References', BookOpen, 'teal')}
-      {b('patients.open', 'Patients', Users, 'orange', () => PATIENTS_MENU)}
-      {b('remedy.open', 'Remedies', FlaskConical, 'amber')}
-      {b('families.open', 'Families', TreeDeciduous, 'green')}
-      {b('bookmarks.open', 'Bookmarks', Bookmark, 'grey', undefined, true)}
+      {b('toc.repertories', 'Repertories', RepertoriesIcon, 'blue', undefined, false, shows('repertories'))}
+      {b('toc.references', 'References', ReferencesIcon, 'teal', undefined, false, shows('references'))}
+      {b('patients.open', 'Patients', PatientsIcon, 'orange', () => PATIENTS_MENU, false, shows('patients'))}
+      {b('toc.remedies', 'Remedies', RemediesIcon, 'grey', undefined, false, shows('remedies'))}
+      {b('toc.families', 'Families', FamiliesIcon, 'green', undefined, false, shows('families'))}
+      {b('toc.bookmarks', 'Bookmarks', BookmarksIcon, 'grey', undefined, true, shows('bookmarks'))}
       <Sep />
-      <BigButton label="Search area" icon={ScanSearch} tone="blue" menu={scopeMenu} low />
-      {b('search.open', 'Search', Search, 'grey', () => SEARCH_MENU)}
+      <BigButton label="Search area" icon={SearchAreaIcon} tone="blue" menu={scopeMenu} low />
+      {b('search.open', 'Search', SearchGlassIcon, 'grey', () => SEARCH_MENU)}
       <div className="tb-find"><QuickFind /></div>
       <Sep />
-      {b('analysis.open', 'Analysis', ChartColumnBig, 'amber', analysisMenu)}
-      {/* RadarOpus's Maps, Shop / Gifts and Screenshot are left out: the remaining groups close up, each still
-          framed by its separator as in RadarOpus */}
+      {b('analysis.open', 'Analysis', AnalysisIcon, 'amber', analysisMenu)}
+      {b('maps.open', 'Maps', MapsIcon, 'green', () => MAPS_MENU)}
       <Sep />
-      {b('shell.back', 'Back', ArrowLeft, 'blue')}
-      {b('shell.forward', 'Forward', ArrowRight, 'blue')}
-      <BigButton label="History" icon={HistoryIcon} tone="slate" menu={historyItems} disabled={!hasHistory} />
+      {/* RadarOpus draws Back and Forward in full colour even with nothing to step to; a click then does nothing */}
+      <BigButton command="shell.back" state={cs['shell.back']} label="Back" icon={BackArrowIcon} tone="blue" live />
+      <BigButton command="shell.forward" state={cs['shell.forward']} label="Forward" icon={ForwardArrowIcon} tone="blue" live />
+      {/* always available, as in RadarOpus: its popup (shell/HistoryPopup) starts with "Clear History" */}
+      <BigButton command="view.history" state={cs['view.history']} label="History" icon={HistoryBookIcon} tone="slate" />
+      <Sep low />
+      {/* the room of RadarOpus's Shop and Gifts group (its own store, left out here), so the groups after it
+          stand where RadarOpus draws them */}
+      <span className="tb-gap tb-low" aria-hidden="true" />
       <Sep low />
       {b('view.zoomIn', 'Zoom in', ZoomIn, 'ink', undefined, true)}
       {b('view.zoomOut', 'Zoom out', ZoomOut, 'ink', undefined, true)}
       <Sep low />
-      {b('file.print', 'Print', Printer, 'grey', () => PRINT_MENU, true)}
+      {b('file.print', 'Print', PrintIcon, 'grey', () => PRINT_MENU, true)}
+      {b('tools.screenshot', 'Screenshot', CameraIcon, 'grey', undefined, true)}
     </div>
   )
 })

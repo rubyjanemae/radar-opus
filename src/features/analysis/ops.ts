@@ -6,9 +6,12 @@ import type { AnalysisTab, AnalysisViewMode } from '../../state/workspace'
 import { getDialog } from '../../shell/dialogs'
 import { downloadBlob } from '../../ui/files'
 import { openPrescription } from '../patients/ops'
+import { consultationsOldestFirst } from '../patients/panel'
+import type { Consultation, SavedAnalysis } from '../../state/patients'
+import { uid } from '../../state/ids'
 import type { ExportMeta } from './labels'
 import { sourceFor } from './source'
-import { analysisViewGrade, analyzeCached, repertoriesOf } from './useAnalysis'
+import { analysedOptions, analysisViewGrade, analyzeCached, repertoriesOf } from './useAnalysis'
 
 const st = () => useApp.getState()
 let catalogRef: Catalog | null = null
@@ -252,7 +255,7 @@ export async function computeTarget(id = outputConsultationId()): Promise<Comput
   const cat = catalog()
   await Promise.all(repertoriesOf(c0.clipboards).map(a => cat.loadRepertory(a).catch(() => null)))
   const c = st().consultations[c0.id] ?? c0
-  const result = analyzeCached(sourceFor(cat), cat, c.clipboards, c.analysis, { minGrade: analysisViewGrade(c.analysis) })
+  const result = analyzeCached(sourceFor(cat), cat, c.clipboards, analysedOptions(c, st().activeClipboardId), { minGrade: analysisViewGrade(c.analysis) })
   const p = st().patients[c.patientId]
   const title = `${p ? `${p.lastName}${p.firstName ? `, ${p.firstName}` : ''}` : 'Case'} · ${c.title} · ${c.date}`
   const meta: ExportMeta = {
@@ -290,6 +293,23 @@ export async function copyAnalysis(id?: string) {
   }
 }
 
+/** Longest mail body handed to the mail program (mailto: links beyond ~2000 characters are cut or refused). */
+const MAIL_BODY_MAX = 1800
+
+/** Analysis › Send current analysis by email: opens the mail program with the analysis as the message text. */
+export async function emailAnalysis(id?: string) {
+  const t = await computeTarget(id)
+  if (!t) return
+  if (!t.result.symptoms.length) { actions.toast('Nothing to send: the analysed clipboards are empty', 'info'); return }
+  const { analysisText } = await loadExport()
+  let body = analysisText(t.result, t.rows, t.meta)
+  if (body.length > MAIL_BODY_MAX) {
+    const cut = body.lastIndexOf('\n', MAIL_BODY_MAX)
+    body = `${body.slice(0, cut > 0 ? cut : MAIL_BODY_MAX)}\n…\n(Shortened: Edit › Copy analysis copies the whole analysis.)`
+  }
+  window.location.href = `mailto:?subject=${encodeURIComponent(t.meta.title)}&body=${encodeURIComponent(body)}`
+}
+
 export async function exportPng(id?: string) {
   const t = await computeTarget(id)
   if (!t) return
@@ -309,4 +329,72 @@ export async function printAnalysis(id?: string) {
   if (!t.result.symptoms.length) { actions.toast('Nothing to print: the analysed clipboards are empty', 'info'); return }
   const { printResult } = await import('./print')
   printResult(t)
+}
+
+/* Analysis › Save current analysis / Recall an existing analysis / Show old analysis with old Remedy */
+export const SAVE_DIALOG = 'analysis.save'
+export const RECALL_DIALOG = 'analysis.recall'
+export const DEFAULT_METHOD_DIALOG = 'analysis.defaultMethod'
+
+const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T
+
+/** The case the save / recall commands act on: the visible analysis tab's, else the target case. */
+function savedTarget(): Consultation | null {
+  const id = activeAnalysisTab()?.consultationId ?? targetConsultationId()
+  return id ? st().consultations[id] ?? null : null
+}
+
+export function canSaveAnalysis(): boolean { return !!savedTarget()?.clipboards.some(cb => cb.symptoms.length > 0) }
+export function canRecallAnalysis(): boolean { return (savedTarget()?.savedAnalyses?.length ?? 0) > 0 }
+export function openSaveAnalysis() { const c = savedTarget(); if (c) actions.openDialog(SAVE_DIALOG, { consultationId: c.id }) }
+export function openDefaultMethod() { actions.openDialog(DEFAULT_METHOD_DIALOG, {}) }
+export function openRecallAnalysis() { const c = savedTarget(); if (c) actions.openDialog(RECALL_DIALOG, { consultationId: c.id }) }
+
+/** Store a named snapshot of the case's clipboards and analysis options; it becomes the current analysis. */
+export function saveAnalysis(consultationId: string, name: string): SavedAnalysis | null {
+  const c = st().consultations[consultationId]
+  if (!c) return null
+  const saved: SavedAnalysis = { id: uid('an'), name: name.trim(), savedAt: Date.now(), clipboards: clone(c.clipboards), analysis: clone(c.analysis) }
+  actions.updateConsultation(c.id, { savedAnalyses: [...(c.savedAnalyses ?? []), saved], currentAnalysisId: saved.id })
+  actions.toast(`Analysis ${(c.savedAnalyses?.length ?? 0) + 1} saved`, 'success')
+  return saved
+}
+
+/** Replace the case's clipboards and analysis options by a saved analysis (one undo step). */
+export function recallAnalysis(consultationId: string, savedId: string): boolean {
+  const c = st().consultations[consultationId]
+  const saved = c?.savedAnalyses?.find(a => a.id === savedId)
+  if (!c || !saved) return false
+  const clipboards = clone(saved.clipboards)
+  actions.updateConsultation(c.id, { clipboards, analysis: clone(saved.analysis), currentAnalysisId: saved.id })
+  const s = st()
+  if (s.activeConsultationId === c.id && !clipboards.some(cb => cb.id === s.activeClipboardId) && clipboards[0]) actions.setActiveClipboard(clipboards[0].id)
+  openAnalysisFor(c.id)
+  return true
+}
+
+export function deleteSavedAnalysis(consultationId: string, savedId: string) {
+  const c = st().consultations[consultationId]
+  if (!c?.savedAnalyses?.some(a => a.id === savedId)) return
+  const rest = c.savedAnalyses.filter(a => a.id !== savedId)
+  actions.updateConsultation(c.id, { savedAnalyses: rest.length ? rest : undefined, currentAnalysisId: c.currentAnalysisId === savedId ? undefined : c.currentAnalysisId })
+}
+
+/** The patient's previous consultation and the remedy prescribed there (its last prescription). */
+export function oldAnalysis(): { consultationId: string; remedyId: number } | null {
+  const c = savedTarget()
+  if (!c) return null
+  const list = consultationsOldestFirst(st().consultations, c.patientId)
+  const i = list.findIndex(x => x.id === c.id)
+  for (let j = i - 1; j >= 0; j--) {
+    const rx = list[j].prescriptions[list[j].prescriptions.length - 1]
+    if (rx) return { consultationId: list[j].id, remedyId: rx.remedyId }
+  }
+  return null
+}
+
+/** Open the previous consultation's analysis with the remedy prescribed then selected and scrolled into view. */
+export function showOldAnalysis() {
+  const o = oldAnalysis()
+  if (o) openAnalysisFor(o.consultationId, o.remedyId)
 }

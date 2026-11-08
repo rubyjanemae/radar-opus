@@ -89,6 +89,8 @@ export function register(catalog: Catalog) {
     { id: 'rubric.add.w2', title: 'Take with intensity 2', category: 'Repertory', enabled: hasRubric, run: () => void take({ weight: 2 }) },
     { id: 'rubric.add.w3', title: 'Take with intensity 3', category: 'Repertory', enabled: hasRubric, run: () => void take({ weight: 3 }) },
     { id: 'rubric.add.w4', title: 'Take with intensity 4', category: 'Repertory', enabled: hasRubric, run: () => void take({ weight: 4 }) },
+    // the default take (= in the book): intensity 1 into the active clipboard, an already taken rubric keeps its intensity
+    { id: 'rubric.takeDefault', title: 'Take with default options', category: 'Repertory', keywords: 'add clipboard symptom take =', enabled: hasRubric, run: () => void take({}) },
     { id: 'rubric.takeOptions', title: 'Take with options…', category: 'Repertory', keys: ['F6'], enabled: hasRubric, run: () => openTakeOptions(currentRefs()) },
 
     // rubric utilities

@@ -15,10 +15,10 @@ const crumbs = (page: Page) => page.locator('.rv-crumbs')
 const current = (page: Page) => page.locator('.tab-doc[data-active] .rv-row.rv-current')
 
 const toc_ = (page: Page) => page.getByRole('tree', { name: 'Table of contents' })
-/** The table of contents is hidden on a fresh start (RadarOpus): open it from the status strip. */
+/** A fresh start shows the table of contents on the Patients list (RadarOpus): switch it to the repertories. */
 async function showToc(page: Page) {
   if (await toc_(page).count()) return
-  await page.locator('.statusbar, footer').getByRole('button', { name: /^Show table of contents/ }).first().click()
+  await page.getByRole('toolbar', { name: 'Main toolbar' }).getByRole('button', { name: 'Repertories', exact: true }).click()
   await expect(toc_(page)).toBeVisible()
 }
 
@@ -379,8 +379,8 @@ test('table of contents: a tile of the chapter already shown is a Back step only
 test('table of contents in a narrow window: opening a chapter closes the overlay and focuses the book', async ({ page }) => {
   await page.setViewportSize({ width: 1000, height: 720 })
   await openBook(page)
-  await page.locator('.rv-scroll').first().focus()
-  await page.keyboard.press('ControlOrMeta+b')
+  // the toolbar's Repertories button opens the overlay on the repertories list (a fresh start shows Patients)
+  await page.getByRole('toolbar', { name: 'Main toolbar' }).getByRole('button', { name: 'Repertories', exact: true }).click()
   const toc = toc_(page)
   await expect(toc).toBeVisible()
   await expect(page.locator('.ws-scrim')).toBeVisible()
@@ -912,19 +912,21 @@ test('Navigation window: Go to puts the rubric at the top of column 1 even when 
     await page.keyboard.type(w)
     await expect(dlg.locator('.rfind-row.active')).toContainText(w)
     await dlg.getByRole('button', { name: 'Go to' }).click()
+    // RadarOpus: Go to on a rubric with sub-rubrics opens its level; Go to with nothing selected shows the level's rubric
+    if (await dlg.locator('.rfind-crumb.on').filter({ hasText: w }).count()) await dlg.getByRole('button', { name: 'Go to' }).click()
     await expect(dlg).toBeHidden()
     await expect(crumbs(page).locator('.rv-crumb-last')).toContainText(w)
     await expect.poll(atTop).toBe(true)
   }
-  // Go to with nothing selected in a level just opened shows its first rubric
+  // Go to with nothing selected in a level just opened shows that level's own rubric (the chapter)
   await page.keyboard.press('F2')
   await page.keyboard.type('mi')
   await expect(dlg.locator('.rfind-tile.active')).toContainText(/^\W*mind/i)
   await page.keyboard.press('Enter')
-  const first = (await dlg.locator('.rfind-row .rfind-text').first().textContent())!
+  await expect(dlg.locator('.rfind-crumb.on')).toHaveText(/Mind/)
   await dlg.getByRole('button', { name: 'Go to' }).click()
-  await expect(crumbs(page).locator('.rv-crumb-last')).toHaveText(first)
-  await expect.poll(atTop).toBe(true)
+  await expect(dlg).toBeHidden()
+  await expect(crumbs(page).locator('.rv-crumb-last')).toHaveText(/Mind/i)
 })
 
 test('Navigation window keeps the typing focus after clicks and menus', async ({ page }) => {
@@ -937,8 +939,11 @@ test('Navigation window keeps the typing focus after clicks and menus', async ({
   await page.mouse.click(box.x + box.width / 2, box.y + box.height - 20)
   await page.keyboard.type('h')
   await expect(input).toHaveValue('h')
+  // the gear shows and hides the options panel (RadarOpus); the typing focus stays
   await dlg.getByRole('button', { name: 'Navigation window options' }).click()
-  await page.keyboard.press('Escape')
+  await expect(dlg.locator('.rfind-opts')).toBeVisible()
+  await dlg.getByRole('button', { name: 'Navigation window options' }).click()
+  await expect(dlg.locator('.rfind-opts')).toHaveCount(0)
   await page.keyboard.type('e')
   await expect(input).toHaveValue('he')
   await dlg.getByRole('button', { name: 'Cancel' }).focus()
@@ -956,7 +961,8 @@ test('Navigation window: letter row narrows the chapter tiles, Go to opens a cha
   await expect(dlg.locator('.rfind-tile').first().locator('.rfind-cap')).toHaveText('MIND')
   // the letter buttons type: only chapters with a word starting with V are left
   await dlg.getByRole('button', { name: 'Type V' }).click()
-  await expect(dlg.getByRole('combobox', { name: 'Type ahead' })).toHaveValue('v')
+  // a letter button types its capital, as RadarOpus (the keyboard types lower case)
+  await expect(dlg.getByRole('combobox', { name: 'Type ahead' })).toHaveValue('V')
   await expect(dlg.locator('.rfind-tile .rfind-cap')).toHaveText(['VERTIGO', 'VISION'])
   await page.keyboard.press('ArrowRight')
   await expect(dlg.locator('.rfind-tile.active')).toHaveAttribute('aria-label', 'Vision')
@@ -1024,12 +1030,12 @@ test('Kent: a "(siehe …)" reference is set apart from the name, and Return fol
   // a reference the data cuts off: the name stands alone (path strip too), the reference follows in its own style
   await go(1710)
   await expect(current(page).locator('.rv-text')).toHaveText('Grobheit')
-  await expect(current(page).locator('.rv-see')).toHaveText('(siehe … )')
+  await expect(current(page).locator('.rv-see')).toHaveText('(Siehe ... )')
   await expect(page.locator('.tab-doc[data-active] .rv-crumb-last')).toHaveText('Grobheit')
   // a whole reference: Return jumps to the rubric it names, which starts the page
   await go(18534)
   // RadarOpus prints the collapsed marker for every reference; the target is only the tooltip
-  await expect(current(page).locator('.rv-see')).toHaveText('(siehe … )')
+  await expect(current(page).locator('.rv-see')).toHaveText('(Siehe ... )')
   await expect(current(page).locator('.rv-see')).toHaveAttribute('title', 'brennend')
   await page.locator('.tab-doc[data-active] .rv-scroll').focus()
   await page.keyboard.press('Enter')

@@ -16,8 +16,6 @@
 .qf-input:focus { outline: none; background: var(--bg-elev); border-color: var(--focus); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 22%, transparent); }
 .qf-kbd { position: absolute; right: 6px; pointer-events: none; }
 .qf-input:focus ~ .qf-kbd { display: none; }
-.qf-clear { position: absolute; right: 5px; display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 50%; background: var(--bg-hover); color: var(--text-2); }
-.qf-clear:hover { background: var(--border-strong); color: var(--text); }
 .qf-pop {
   position: absolute; top: calc(100% + 5px); left: 0; z-index: var(--z-dropdown, 800); width: min(600px, calc(100vw - 24px)); max-height: min(560px, 72vh); overflow: auto;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-2); padding: 4px 0 0;

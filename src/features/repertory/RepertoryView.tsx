@@ -1,9 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
-import {
-  Binoculars, Bookmark, CaseSensitive, ChartPie, ChevronDown, ChevronRight, CircleHelp, ClipboardPlus, Ellipsis, Globe, Hash, History, MessageSquareText,
-  Pill, Settings, StickyNote, TriangleAlert, X,
-} from 'lucide-react'
+import type { ComponentType, MouseEvent as ReactMouseEvent, ReactElement } from 'react'
+import { Bookmark, Ellipsis, History, StickyNote, TriangleAlert, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useCatalog, useRepertory } from '../../data/CatalogContext'
 import type { Catalog } from '../../data/catalog'
@@ -22,13 +19,15 @@ import { matchChapters } from './take'
 import { TakeBar, replayKey } from './TakeBar'
 import { clipboardMembership, openFind, openRepertory, recentOf, recordRecent, remedyMenuItems, rubricMenu, takeRefs } from './ops'
 import { selectRubric, useBookKeys } from './useBookKeys'
-import { BOOK, NEAR_ROWS, estimateRow, layoutSizes, lineTrim, remedyChars } from './estimate'
+import { BOOK, NEAR_ROWS, estimateRow, layoutSizes, lineIndent, lineTrim, remedyChars } from './estimate'
 import type { EstimateParams } from './estimate'
 import { remedyMarkup } from './remedies'
 import { onRemedyMenuRequest, setHighlight, useHighlight } from './highlight'
 import { onRevealTop, takeRevealTop } from './revealTop'
 import { VScrollBar } from './VScrollBar'
-import { toggleChapterRems, useOpenChapterRems } from './chapterRems'
+import { BinocularsIcon, ClipboardIcon, GearsIcon, GlobeIcon, HelpIcon, JarIcon, JarPlusIcon, MenuTriangle, PagePlusIcon, PersonIcon, PieIcon, TagsIcon } from './bookIcons'
+import type { BookIconProps } from './bookIcons'
+import { useOpenChapterRems } from './chapterRems'
 import './repertory.css'
 import './book.css'
 
@@ -101,6 +100,8 @@ interface RowProps {
   bookmarked: boolean
   note: string | undefined
   measure: (el: HTMLElement | null) => (() => void) | undefined
+  /** Chapter picture size (px): it grows with the zoom, as RadarOpus's does. */
+  pic: number
   /** The part of a rubric that runs over from column 1 into column 2: presentational. */
   cont?: boolean
 }
@@ -112,7 +113,7 @@ interface RowProps {
  * capitals), wrapped lines hanging at the rubric's own indent (its level marker). Blocks are whole lines of the book line
  * height, so a column can break between lines. The remedy list is cached static markup.
  */
-const RubricRow = memo(function RubricRow({ rep, catalog, i, setSize, current, showRemedies, names, minGrade, counts, chOpen, showNote, clips, bookmarked, note, measure, cont }: RowProps) {
+const RubricRow = memo(function RubricRow({ rep, catalog, i, setSize, current, showRemedies, names, minGrade, counts, chOpen, showNote, clips, bookmarked, note, measure, pic, cont }: RowProps) {
   const depth = rep.depth(i)
   const total = rep.remedyCount(i)
   const see = depth > 0 ? splitSee(rep.text(i)) : null
@@ -140,7 +141,8 @@ const RubricRow = memo(function RubricRow({ rep, catalog, i, setSize, current, s
   // the common row (no marks, not selected) as one element of static markup: scrolling mounts many
   // rows a frame, and each React element costs (most of all in development)
   if (depth > 0 && !chips?.length && !note && (cont || (!current && !bookmarked))) {
-    const pad = depth > 1 ? ` style="padding-left:${BOOK.text + (depth - 1) * BOOK.indent}px"` : ''
+    const ind = lineIndent(depth)
+    const pad = depth > 1 ? ` style="padding-left:${zpx(ind.pad)}${ind.first ? `;text-indent:${zpx(ind.first)}` : ''}"` : ''
     const html = `<div class="rv-line"${pad}>${lineMarkup(rep.text(i), depth, total, showRemedies ? list : null, names, hidden, minGrade, deadSee, counts)}</div>`
     return <div key="f" ref={measure} className={cls} data-vindex={i} data-rubric={i} {...a11y} dangerouslySetInnerHTML={{ __html: html }} />
   }
@@ -156,28 +158,22 @@ const RubricRow = memo(function RubricRow({ rep, catalog, i, setSize, current, s
       {depth === 0 ? (
         <>
           <div className="rv-chhead">
-            <ChapterIcon name={rep.text(i)} size={48} className="rv-chicon" />
+            <ChapterIcon name={rep.text(i)} size={pic} className="rv-chicon" />
             {chips}<span className="rv-text">{rep.text(i)}</span>
-            {total > 0 && (
-              // RadarOpus prints no list at chapter level: the heading's own remedies stay folded under "(n)"
-              <button
-                type="button" className="rv-chrems" aria-expanded={chOpen} tabIndex={-1}
-                title={`${chOpen ? 'Hide' : 'Show'} the ${total} remedies of the chapter heading`}
-                onClick={() => toggleChapterRems(rep.ref(i), !chOpen)}
-              >({total})<ChevronRight className="rv-chrems-caret" size={11} strokeWidth={2.2} aria-hidden="true" /></button>
-            )}
           </div>
-          {total > 0 && chOpen && <div className="rv-line rv-chline">{/* the heading's "(n)" already counts this list */}{remedies(false)}</div>}
+          {/* RadarOpus prints only the picture and the name at chapter level: a heading's own remedies
+              (OOREP data) stay folded away, shown on demand from the context menu or its Remedies submenu */}
+          {total > 0 && chOpen && <div className="rv-line rv-chline">{remedies()}</div>}
         </>
       ) : !chips?.length ? (
         // the common case as one string of markup: a few elements per row instead of a dozen keeps
         // mounting rows cheap while the book scrolls (rows move between the columns as it does)
         <div
-          key="h" className="rv-line" style={depth > 1 ? { paddingLeft: BOOK.text + (depth - 1) * BOOK.indent } : undefined}
+          key="h" className="rv-line" style={depth > 1 ? lineStyle(depth) : undefined}
           dangerouslySetInnerHTML={{ __html: lineMarkup(rep.text(i), depth, total, showRemedies ? list : null, names, hidden, minGrade, deadSee, counts) }}
         />
       ) : (
-        <div key="j" className="rv-line" style={depth > 1 ? { paddingLeft: BOOK.text + (depth - 1) * BOOK.indent } : undefined}>
+        <div key="j" className="rv-line" style={depth > 1 ? lineStyle(depth) : undefined}>
           {chips}
           {depth > 1 && <span className="rv-pre">{levelPrefix(depth)} </span>}
           <span className="rv-text">{see ? see.name : rep.text(i)}</span>{total > 0 && <span className="rv-colon">:</span>}
@@ -190,6 +186,18 @@ const RubricRow = memo(function RubricRow({ rep, catalog, i, setSize, current, s
   )
 })
 
+/** Inline indent of a rubric line (see lineIndent). */
+function lineStyle(depth: number) {
+  const ind = lineIndent(depth)
+  return ind.first ? { paddingLeft: zpx(ind.pad), textIndent: zpx(ind.first) } : { paddingLeft: zpx(ind.pad) }
+}
+
+/** The chapter heading's picture: 55 px (RadarOpus's 52 pt tile at the reference 1470x895 frame), and
+ * RadarOpus barely grows it with the zoom (one px a step) while the text and insets scale fully. */
+const chapterPic = (zoom: number) => Math.round(55 * (1 + (zoom - 1) * 0.25))
+/** A book inset (px at zoom 1) scaled with the zoom: insets and indents grow with the text (--rb-z). */
+const zpx = (px: number) => `calc(${px}px * var(--rb-z, 1))`
+
 /** Tooltip of a "(see …)" reference that cannot be followed. */
 export const DEAD_SEE = 'Reference target not in this repertory'
 
@@ -201,7 +209,7 @@ function lineMarkup(text: string, depth: number, total: number, list: { html: st
   const see = splitSee(text)
   h += `<span class="rv-text">${escHtml(see ? see.name : text)}</span>`
   if (total > 0) h += '<span class="rv-colon">:</span>'
-  // a "(see …)" reference follows the name (and its colon), as RadarOpus prints "ABANDONED (See … )"
+  // a "(see …)" reference follows the name (and its colon), as RadarOpus prints "ABANDONED (See ... )"
   if (see) h += deadSee ? ` <span class="rv-see rv-see-dead" title="${DEAD_SEE}">${escHtml(see.see)}</span>` : ` <span class="rv-see" title="${escHtml(see.target)}">${escHtml(see.see)}</span>`
   if (total > 0 && counts) h += ` <span class="rv-count" title="${total} remedies">(${total})</span>`
   if (list && list.shown > 0) h += ` <span class="rv-rems${names ? ' rv-names' : ''}">${list.html}</span>`
@@ -212,7 +220,7 @@ function lineMarkup(text: string, depth: number, total: number, list: { html: st
 /** Selection marker in the gutter: a cuffed hand pointing right at the selected rubric (original drawing). */
 function HandMark() {
   return (
-    <svg className="rv-hand" width="26" height="14" viewBox="0 0 26 14" aria-hidden="true">
+    <svg className="rv-hand" width="30" height="16" viewBox="0 0 26 14" aria-hidden="true">
       <rect className="rv-hand-cuff" x="0.5" y="2.5" width="5" height="9.5" rx="1" />
       <path
         className="rv-hand-palm"
@@ -258,15 +266,16 @@ interface BookColumnsProps {
   bookmarked: Set<string>
   notes: Record<string, string>
   highlight: number | null
+  pic: number
 }
 
 /** The two columns and the rule between them: re-renders alone when scrolling changes the rows shown. */
-const BookColumns = memo(function BookColumns({ book, rep, catalog, rubric, showRemedies, names, minGrade, counts, openCh, showNotes, membership, bookmarked, notes, highlight }: BookColumnsProps) {
+const BookColumns = memo(function BookColumns({ book, rep, catalog, rubric, showRemedies, names, minGrade, counts, openCh, showNotes, membership, bookmarked, notes, highlight, pic }: BookColumnsProps) {
   const r = useColumnWindow(book)
   // row elements are kept while their inputs hold: scrolling re-renders the columns many times, and an
   // element React has seen before is skipped without even comparing its props
   const cache = useRef<{ deps: readonly unknown[]; rubric: number; els: Map<number, ReactElement> } | null>(null)
-  const deps = [rep, catalog, showRemedies, names, minGrade, counts, openCh, showNotes, membership, bookmarked, notes, book.measure] as const
+  const deps = [rep, catalog, showRemedies, names, minGrade, counts, openCh, showNotes, membership, bookmarked, notes, book.measure, pic] as const
   let c = cache.current
   if (!c || c.els.size > 3000 || deps.some((d, k) => d !== c!.deps[k])) c = cache.current = { deps, rubric, els: new Map() }
   if (c.rubric !== rubric) {
@@ -282,7 +291,7 @@ const BookColumns = memo(function BookColumns({ book, rep, catalog, rubric, show
       <RubricRow
         key={i} rep={rep} catalog={catalog} i={i} setSize={rep.size} current={i === rubric} cont={cont}
         showRemedies={showRemedies} names={names} minGrade={minGrade} counts={counts} chOpen={rep.depth(i) === 0 && openCh.has(ref)} showNote={showNotes}
-        clips={membership.get(ref)} bookmarked={bookmarked.has(ref)} note={notes[ref]} measure={book.measure}
+        clips={membership.get(ref)} bookmarked={bookmarked.has(ref)} note={notes[ref]} measure={book.measure} pic={pic}
       />
     )
     els.set(i * 2 + (cont ? 1 : 0), el)
@@ -376,10 +385,15 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
   /** Opens a menu at an element (toolbar buttons, folded crumbs): stable, so those stay memoised. */
   const onMenu = useCallback((el: HTMLElement, items: MenuItem[]) => cmRef.current.openAt(el, items), [])
 
-  // book typography: Verdana 12px on 18px lines at zoom 1 (the zoom commands scale it)
-  const fs = Math.round(12 * settings.fontScale * 2) / 2
-  const lineH = Math.round(fs * 1.5) + (settings.density === 'comfortable' ? 2 : 0)
-  const head = Math.round(BOOK.head * Math.max(1, settings.fontScale))
+  // book typography: Verdana 14px on 20px lines at zoom 1 (RadarOpus at 1470pt); each zoom step
+  // (0.1 font scale) grows the text and its line by 1px, as RadarOpus's Zoom in does
+  const fs = Math.round((14 + (settings.fontScale - 1) * 10) * 2) / 2
+  const lineH = Math.round(fs + 6) + (settings.density === 'comfortable' ? 2 : 0)
+  // the chapter heading band grows 5px per zoom step (RadarOpus: 76.5pt at 100%, 81.5pt one step in)
+  const head = BOOK.head + Math.round(Math.max(0, fs - 14) * 5)
+  // RadarOpus's Zoom in grows the whole page, not the text alone: the chapter picture, the path
+  // icon, the column insets and level indents scale with the font (z = 1 at 14px)
+  const zoom = fs / 14
   const rc = remedyChars(rep, catalog)
   /** Rubrics of this repertory with a note (a note adds a line to the block). */
   const noteRows = useMemo(() => {
@@ -586,12 +600,12 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
   const onGo = useCallback((i: number) => { selectRubric(tab, rep, i, true); scrollRef.current?.focus({ preventScroll: true }) }, [tab, rep])
 
   return (
-    <div className="rv" onKeyDown={onKeyDown} onMouseDown={keepBookFocus} style={{ ['--rb-fs' as string]: `${fs}px`, ['--rb-lh' as string]: `${lineH}px`, ['--rb-head' as string]: `${head}px`, ['--rb-trim-t' as string]: `${trim.top}px`, ['--rb-trim-b' as string]: `${trim.bottom}px` }}>
+    <div className="rv" onKeyDown={onKeyDown} onMouseDown={keepBookFocus} style={{ ['--rb-fs' as string]: `${fs}px`, ['--rb-z' as string]: zoom, ['--rb-lh' as string]: `${lineH}px`, ['--rb-head' as string]: `${head}px`, ['--rb-trim-t' as string]: `${trim.top}px`, ['--rb-trim-b' as string]: `${trim.bottom}px` }}>
       <BookTools
         view={view} onView={setView} minGrade={minGrade} onMenu={onMenu} repertory={tab.repertory}
         bookmarked={bookmarked.has(ref)} counts={counts} showNotes={showNotes} onDone={focusBook}
       />
-      <Crumbs rep={rep} rubric={crumbRubric} onMenu={onMenu} onGo={onGo} />
+      <Crumbs rep={rep} rubric={crumbRubric} onMenu={onMenu} onGo={onGo} icon={Math.round(26 * zoom)} />
       {highlight != null && (
         <div className="rv-hlbar" role="region" aria-label="Remedy highlight">
           <span className="rv-hl-chip">{catalog.remedy(highlight).abbrev}</span>
@@ -619,7 +633,7 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
       >
         <BookColumns
           book={book} rep={rep} catalog={catalog} rubric={rubric} highlight={highlight}
-          showRemedies={showRemedies} names={names} minGrade={minGrade} counts={counts} openCh={openCh} showNotes={showNotes} membership={membership} bookmarked={bookmarked} notes={notes}
+          showRemedies={showRemedies} names={names} minGrade={minGrade} counts={counts} openCh={openCh} showNotes={showNotes} membership={membership} bookmarked={bookmarked} notes={notes} pic={chapterPic(zoom)}
         />
         <div className="rv-spacer" ref={book.refs.spacer} />
         {highlight != null && <style>{`.rv-cols[data-hl="${highlight}"] .rv-rem[data-rid="${highlight}"] { background: var(--rv-hl-bg); outline: 1px solid var(--rv-hl-ring); }`}</style>}
@@ -651,10 +665,8 @@ function BookView({ tab, rep }: { tab: RepertoryTab; rep: Repertory }) {
 }
 
 /** A sub-toolbar button: an icon (with a ▾ when it opens a menu); `pressed` makes it a toggle. */
-function ToolButton({ icon: Icon, label, title, onClick, pressed, menu, className, tone }: {
-  icon: LucideIcon; label: string; title?: string; onClick: (el: HTMLButtonElement) => void; pressed?: boolean; menu?: boolean; className?: string
-  /** Colour scheme of the glyph (book.css .rv-ic-*): the sub-toolbar icons are coloured, as in RadarOpus. */
-  tone?: string
+function ToolButton({ icon: Icon, label, title, onClick, pressed, menu, className }: {
+  icon: LucideIcon | ComponentType<BookIconProps>; label: string; title?: string; onClick: (el: HTMLButtonElement) => void; pressed?: boolean; menu?: boolean; className?: string
 }) {
   return (
     <button
@@ -662,8 +674,8 @@ function ToolButton({ icon: Icon, label, title, onClick, pressed, menu, classNam
       aria-label={label} title={title ?? label} aria-pressed={pressed} aria-haspopup={menu ? 'menu' : undefined}
       onClick={e => onClick(e.currentTarget)}
     >
-      <Icon size={27} strokeWidth={1.4} aria-hidden="true" className={tone ? `rv-ic rv-ic-${tone}` : undefined} />
-      {menu && <ChevronDown className="rv-tb-caret" size={9} strokeWidth={2.4} aria-hidden="true" />}
+      <Icon size={26} strokeWidth={1.4} aria-hidden="true" />
+      {menu && <MenuTriangle className="rv-tb-caret" />}
     </button>
   )
 }
@@ -714,8 +726,8 @@ const BookTools = memo(function BookTools({ view, onView, minGrade, onMenu, repe
   ]
   return (
     <div className="rv-tools" role="toolbar" aria-label="Repertory tools">
-      <ToolButton icon={Binoculars} tone="find" label="Find a rubric" title={`Find a rubric (${formatKeys('F2')})`} onClick={() => openFind(false)} />
-      <ToolButton icon={ClipboardPlus} tone="clip" label="Take" title="Take the rubric into the clipboard" menu onClick={el => onMenu(el, take)} />
+      <ToolButton icon={BinocularsIcon} label="Find a rubric" title={`Find a rubric (${formatKeys('F2')})`} onClick={() => openFind(false)} />
+      <ToolButton icon={ClipboardIcon} label="Take" title="Take the rubric into the clipboard" menu className="rv-tb-take" onClick={el => onMenu(el, take)} />
       <label className="rv-views-label" htmlFor="rv-views">Views:</label>
       <span className="rv-views-wrap">
         <select
@@ -726,28 +738,28 @@ const BookTools = memo(function BookTools({ view, onView, minGrade, onMenu, repe
         </select>
       </span>
       <span className="rv-tsep" aria-hidden="true" />
-      {books.length > 2 && <ToolButton icon={Globe} tone="globe" label="Repertory and language" title="Repertory and language" onClick={el => onMenu(el, books)} />}
+      {books.length > 2 && <ToolButton icon={GlobeIcon} label="Repertory and language" title="Repertory and language" onClick={el => onMenu(el, books)} />}
       <ToolButton
-        icon={ChartPie} tone="pie" label="Minimum grade shown" menu pressed={minGrade > 1}
+        icon={PieIcon} label="Minimum grade shown" menu pressed={minGrade > 1}
         title={`Remedies shown: ${GRADE_VIEWS.find(x => x.g === minGrade)?.label ?? 'All grades'}`} onClick={el => onMenu(el, grades)}
       />
       <span className="rv-tfill" />
-      <div className="rv-toggles" role="group" aria-label="Book display">
-        <ToolButton icon={Pill} tone="rems" label="Show remedies" pressed={view !== 'rubrics'} onClick={() => { onView(view === 'rubrics' ? 'full' : 'rubrics'); onDone() }} />
-        <ToolButton icon={CaseSensitive} tone="names" label="Full remedy names" pressed={view === 'names'} onClick={() => { onView(view === 'names' ? 'full' : 'names'); onDone() }} />
+      <div className="rv-toggles" role="group" aria-label="Book display and settings">
+        <ToolButton icon={JarIcon} label="Show remedies" pressed={view !== 'rubrics'} onClick={() => { onView(view === 'rubrics' ? 'full' : 'rubrics'); onDone() }} />
+        <ToolButton icon={PersonIcon} label="Full remedy names" pressed={view === 'names'} onClick={() => { onView(view === 'names' ? 'full' : 'names'); onDone() }} />
         {/* the middle toggle carries a ▾ as in RadarOpus: its caret opens the book display options */}
         <span className={`rv-tb-split${counts ? ' on' : ''}`}>
-          <ToolButton icon={Hash} tone="count" label="Remedy counts" title="Remedy counts after the rubric names" pressed={counts} onClick={() => { actions.setSettings({ showRemedyCounts: !counts }); onDone() }} />
+          <ToolButton icon={TagsIcon} label="Remedy counts" title="Remedy counts after the rubric names" pressed={counts} onClick={() => { actions.setSettings({ showRemedyCounts: !counts }); onDone() }} />
           <button
             type="button" className="rv-tb-split-caret" aria-label="Book display options" title="Book display options" aria-haspopup="menu"
             onClick={e => onMenu(e.currentTarget.parentElement ?? e.currentTarget, display)}
-          ><ChevronDown size={9} strokeWidth={2.4} aria-hidden="true" /></button>
+          ><MenuTriangle /></button>
         </span>
-        <ToolButton icon={MessageSquareText} tone="note" label="Show rubric notes" title={`Show rubric notes in the book (add one: ${formatKeys('Mod+Shift+M')})`} pressed={showNotes} onClick={() => { actions.setSettings({ showRubricNotes: !showNotes }); onDone() }} />
-        <ToolButton icon={Bookmark} tone="bm" label="Bookmark rubric" title={`Bookmark rubric (${formatKeys('Mod+D')})`} pressed={bookmarked} onClick={() => run('rubric.bookmark')} />
+        <ToolButton icon={PagePlusIcon} label="Show rubric notes" title={`Show rubric notes in the book (add one: ${formatKeys('Mod+Shift+M')})`} pressed={showNotes} onClick={() => { actions.setSettings({ showRubricNotes: !showNotes }); onDone() }} />
+        <ToolButton icon={JarPlusIcon} label="Bookmark rubric" title={`Bookmark rubric (${formatKeys('Mod+D')})`} pressed={bookmarked} onClick={() => run('rubric.bookmark')} />
+        <ToolButton icon={GearsIcon} label="Settings" title={`Settings… (${formatKeys('Mod+,')})`} onClick={() => runCommand('app.settings')} />
+        <ToolButton icon={HelpIcon} label="Keyboard shortcuts" title={`Keyboard shortcuts (${formatKeys('F1')})`} onClick={() => runCommand('help.shortcuts')} />
       </div>
-      <ToolButton icon={Settings} label="Settings" title={`Settings… (${formatKeys('Mod+,')})`} onClick={() => runCommand('app.settings')} className="rv-quiet" />
-      <ToolButton icon={CircleHelp} label="Keyboard shortcuts" title={`Keyboard shortcuts (${formatKeys('F1')})`} onClick={() => runCommand('help.shortcuts')} className="rv-help rv-quiet" />
     </div>
   )
 })
@@ -825,7 +837,7 @@ function textWidth(text: string, font: string): number {
  * harsh" (chapter and main rubric in capitals). A level selects that rubric. When the path does
  * not fit, middle levels and then the chapter fold into "…" menus; the last two levels stay whole.
  */
-const Crumbs = memo(function Crumbs({ rep, rubric, onMenu, onGo }: { rep: Repertory; rubric: number; onMenu: (el: HTMLElement, items: MenuItem[]) => void; onGo: (i: number) => void }) {
+const Crumbs = memo(function Crumbs({ rep, rubric, onMenu, onGo, icon }: { rep: Repertory; rubric: number; onMenu: (el: HTMLElement, items: MenuItem[]) => void; onGo: (i: number) => void; icon: number }) {
   const navRef = useRef<HTMLElement>(null)
   const lineage = rep.lineage(rubric)
   const [width, setWidth] = useState(0)
@@ -882,7 +894,7 @@ const Crumbs = memo(function Crumbs({ rep, rubric, onMenu, onGo }: { rep: Repert
   })
   return (
     <div className="rv-path">
-      <ChapterIcon name={rep.text(lineage[0])} size={24} className="rv-path-icon" />
+      <ChapterIcon name={rep.text(lineage[0])} size={icon} className="rv-path-icon" />
       <nav className={`rv-crumbs${n >= order.length ? ' rv-crumbs-fit' : ''}`} ref={navRef} aria-label="Symptom path">{parts}</nav>
     </div>
   )

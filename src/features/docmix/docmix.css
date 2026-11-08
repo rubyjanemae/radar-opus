@@ -1,0 +1,14 @@
+/* File › document mixes (DocMixDialogs.tsx) */
+.dm-form { display: flex; flex-direction: column; gap: 10px; }
+.dm-row { display: grid; grid-template-columns: 60px 1fr; align-items: center; gap: 8px; }
+.dm-docs { max-height: 180px; overflow: auto; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-sunken); }
+.dm-docs > div { height: 22px; line-height: 22px; }
+.dm-muted { margin: 0; color: var(--text-2); }
+.dm-spacer { flex: 1; }
+.dm-list { max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: 4px; outline: none; }
+.dm-list:focus-visible { box-shadow: 0 0 0 2px var(--focus); }
+.dm-opt { display: flex; flex-direction: column; padding: 4px 8px; cursor: default; }
+.dm-opt.active { background: var(--active-bg); color: var(--active-fg); }
+.dm-name { font-weight: 600; }
+.dm-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); color: var(--text-2); }
+.dm-opt.active .dm-sub { color: var(--active-fg-2); }

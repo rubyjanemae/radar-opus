@@ -1,20 +1,25 @@
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import {
-  ArrowLeftRight, Ban, ChessPawn, CircleHelp, ClipboardList, Copy, Download, Eye, EyeOff, Filter, GitCompare,
-  Highlighter, Info, LoaderCircle, Pin, Settings, SlidersHorizontal, TreeDeciduous, TriangleAlert, X,
+  ArrowLeftRight, Ban, CircleHelp, Filter,
+  Highlighter, Info, LoaderCircle, Pin, SlidersHorizontal, TriangleAlert, X,
 } from 'lucide-react'
 import { getCommand, runCommand } from '../../commands/registry'
-import { STRATEGIES, strategyInfo } from '../../engine/analysis'
+import { RO_METHODS, STRATEGIES, strategyInfo } from '../../engine/analysis'
 import type { AnalysisResult, AnalysisRow } from '../../engine/analysis'
-import { actions, useApp } from '../../state/store'
+import { actions, DEFAULT_ANALYSIS, useApp } from '../../state/store'
 import { SETTINGS_DIALOG } from '../workspace/commands'
 import type { AnalysisTab, AnalysisViewMode, RepertoryTab } from '../../state/workspace'
 import { MenuList } from '../../ui/Menu'
 import type { MenuCloseReason, MenuItem } from '../../ui/Menu'
 import { Splitter } from '../../ui/Splitter'
 import { AnalysisGrid } from './AnalysisGrid'
+import { TreeIcon } from './TreeIcon'
+import { BarListIcon, DoubleGearIcon, KingIcon, SwapPolarityIcon, WindowsIcon, YinYangIcon } from './ToolbarIcons'
+import { MapsIcon } from '../../shell/toolbarIcons'
+import type { StrategyId } from '../../engine/model'
 import { hasCustomParams, hasParams, ParamsDrawer } from './ParamsDrawer'
+import { columnAbbrev } from './paneLabel'
 import { RemedyPanel } from './RemedyPanel'
 import * as ops from './ops'
 import { useAnalysis } from './useAnalysis'
@@ -293,7 +298,7 @@ export function AnalysisView({ tab }: { tab: AnalysisTab }) {
     )
   } else if (!result || !options) {
     body = null
-  } else if (!options.clipboardIds.some(id => consultation.clipboards.some(c => c.id === id))) {
+  } else if (!(live.options ?? options).clipboardIds.some(id => consultation.clipboards.some(c => c.id === id))) {
     body = (
       <div className="empty-state">
         <strong>No clipboard selected</strong>
@@ -464,11 +469,19 @@ function describeEmpty(r: AnalysisResult): string {
   return parts.length ? `${parts.join(', ')}.` : 'No remedy appears in the scored symptoms.'
 }
 
-/** Toolbar glyph size (RadarOpus icons are about 26–30px). */
-const ICON = 26
+/** Toolbar glyph size (RadarOpus's analysis icons are about 18pt). */
+const ICON = 19
 
-type ToolbarMenu = 'layout' | 'strategy' | 'filter' | 'clipboards' | 'export'
-const MENU_LABEL: Record<ToolbarMenu, string> = { layout: 'Display', strategy: 'Analysis method', filter: 'Remedy filters', clipboards: 'Analysed clipboards', export: 'Export' }
+type ToolbarMenu = 'layout' | 'strategy' | 'filter' | 'maps' | 'polarity'
+const MENU_LABEL: Record<ToolbarMenu, string> = { layout: 'Display', strategy: 'Analysis method', filter: 'Remedy filters', maps: 'Maps', polarity: 'Polarity' }
+
+/** The method each case used before the polarity switch: the swap button and the Polarity menu go back to it. */
+const beforePolarity = new Map<string, StrategyId>()
+function togglePolarity(cid: string, current: StrategyId) {
+  if (current !== 'polarity') { beforePolarity.set(cid, current); ops.setStrategy('polarity', cid); return }
+  const back = beforePolarity.get(cid) ?? useApp.getState().settings.defaultStrategy
+  ops.setStrategy(back === 'polarity' ? DEFAULT_ANALYSIS.strategy : back, cid)
+}
 
 /** "Limit the analysis to a view": the grades this analysis scores with (options.viewGrade; the book's own view is separate). */
 const VIEWS: { value: 1 | 2 | 3; label: string }[] = [
@@ -556,7 +569,11 @@ function Toolbar({ live, tab, view, limit, onReveal, onFound, paramsOpen, onTogg
   ]
   const strategyItems: MenuItem[] = [
     { type: 'label', label: 'Analysis method' },
-    ...STRATEGIES.map((s): MenuItem => ({ command: `analysis.strategy.${s.id}`, checked: o.strategy === s.id, disabled: false, run: () => ops.setStrategy(s.id, cid) })),
+    // RadarOpus's methods (as in Analysis › Select your default analysis method), then the engine's further ones
+    ...STRATEGIES.flatMap((s, i): MenuItem[] => [
+      ...(i === RO_METHODS.length ? [{ type: 'separator' } as const] : []),
+      { command: `analysis.strategy.${s.id}`, checked: o.strategy === s.id, disabled: false, run: () => ops.setStrategy(s.id, cid) },
+    ]),
     { type: 'separator' },
     { command: 'analysis.intensity', checked: o.useIntensity !== false, disabled: false, run: () => ops.toggleIntensity(cid) },
     { command: 'analysis.showExcluded', checked: !!o.showExcluded, disabled: false, run: () => ops.toggleShowExcluded(cid) },
@@ -576,8 +593,22 @@ function Toolbar({ live, tab, view, limit, onReveal, onFound, paramsOpen, onTogg
   const exportItems: MenuItem[] = [
     { command: 'analysis.exportCsv', disabled: false, run: () => void ops.exportCsv(cid) },
     { command: 'analysis.exportPng', disabled: false, run: () => void ops.exportPng(cid) },
-    { type: 'separator' },
     { command: 'analysis.print', disabled: false, run: () => void ops.printAnalysis(cid) },
+  ]
+  // Maps ▾ (as the main toolbar's): this analysis on the periodic table or across the kingdoms
+  const mapsItems: MenuItem[] = [
+    { command: 'maps.periodic', label: 'Periodic table' },
+    { command: 'maps.kingdoms', label: 'Kingdoms' },
+  ]
+  // the yin-yang ▾: the polarity analysis (Frei) and its options
+  const polar = o.strategy === 'polarity'
+  const nonPolar = !!o.params?.polarity?.includeNonPolar
+  const polarityItems: MenuItem[] = [
+    { type: 'label', label: 'Polarity' },
+    { label: 'Polarity analysis', checked: polar, run: () => togglePolarity(cid, o.strategy) },
+    { label: 'Include non-polar symptoms', checked: nonPolar, disabled: !polar, run: () => ops.setParams({ ...o.params, polarity: { ...o.params?.polarity, includeNonPolar: !nonPolar } }, cid) },
+    { label: 'Show contraindicated remedies in position', checked: !!o.showExcluded, run: () => ops.toggleShowExcluded(cid) },
+    ...(polar ? [{ type: 'separator' } as const, { label: 'Polarity parameters…', checked: paramsOpen, run: () => setTimeout(onToggleParams) } as MenuItem] : []),
   ]
   // "All" analyses every non-empty clipboard (every clipboard when all are empty)
   const nonEmpty = consultation.clipboards.filter(c => c.symptoms.length)
@@ -597,35 +628,41 @@ function Toolbar({ live, tab, view, limit, onReveal, onFound, paramsOpen, onTogg
     })),
     ...(consultation.clipboards.length > 1 ? [{ type: 'separator' } as const, { label: 'All clipboards', checked: allSelected, run: analyseAll }] : []),
   ]
-  const menuItems = { layout: layoutItems, strategy: strategyItems, filter: filterItems, clipboards: clipboardItems, export: exportItems }
-  const chosen = consultation.clipboards.filter(c => selected.has(c.id))
+  // the display menu also holds what RadarOpus puts elsewhere (the rail's clipboard checks, File › Print): the analysed clipboards, compare, export
+  const displayItems: MenuItem[] = [
+    ...layoutItems,
+    { type: 'separator' }, ...clipboardItems,
+    { type: 'separator' }, { label: 'Compare remedies…', run: () => ops.openCompare(undefined, cid) },
+    { type: 'separator' }, ...exportItems,
+  ]
+  const menuItems = { layout: displayItems, strategy: strategyItems, filter: filterItems, maps: mapsItems, polarity: polarityItems }
+  const bars = !tab.symptomsOnly && view === 'bars'
+  const back = strategyInfo(beforePolarity.get(cid) ?? useApp.getState().settings.defaultStrategy).name
 
   return (
     <div className="an-toolbar" role="toolbar" aria-label="Analysis toolbar" onKeyDown={onToolbarKey}>
       {/*
-        RadarOpus slots: five icon menus, a separator, two buttons, at RadarOpus's positions and pitch. Slots 1-3
-        (display, method, families) match RadarOpus's functions. Deliberate differences: RadarOpus's 4th (maps) and 5th
-        (yin-yang) menus and its two buttons after the separator are features the clone does not have or whose
-        behaviour no reference shows (the clone has no maps; what the yin-yang menu does is unverified, so it is not
-        mapped to the Polarity method). Those slots hold the clone's own working controls: analysed clipboards,
-        export and print, compare remedies, show excluded remedies. CLAUDE.md: no placeholder buttons.
+        RadarOpus slots and order: display, method, families, maps and polarity menus, a separator, the
+        analysis ⇄ polarity switch and the bar list (Bars display), at RadarOpus's positions and pitch.
       */}
-      <button className="an-tb-btn an-menu-btn an-ic-layout" {...trigger('layout')} aria-label="Display and remedies shown" title={`Display: ${view} · ${limitLabel(limit)}`}>
-        <Copy size={ICON} strokeWidth={1.6} /><span className="an-caret" aria-hidden="true" />
+      <button className="an-tb-btn an-menu-btn" {...trigger('layout')} aria-label="Display and remedies shown" title={`Display: ${view} · ${limitLabel(limit)}`}>
+        <WindowsIcon size={ICON} /><span className="an-caret" aria-hidden="true" />
       </button>
-      <button className="an-tb-btn an-menu-btn an-strategy an-ic-strategy" {...trigger('strategy')} aria-label={`Analysis method: ${info.name}`} title={`${info.name}: ${info.description}`}>
-        <ChessPawn size={ICON} strokeWidth={2} /><span className="an-caret" aria-hidden="true" />
+      <button className="an-tb-btn an-menu-btn an-strategy" {...trigger('strategy')} aria-label={`Analysis method: ${info.name}`} title={`${info.name}: ${info.description}`}>
+        <KingIcon size={ICON} /><span className="an-caret" aria-hidden="true" />
       </button>
       <button className={`an-tb-btn an-menu-btn an-ic-tree${ops.hasFilter(o) ? ' on' : ''}`} {...trigger('filter')} aria-label="Remedy filters" title={familyDialog ? 'Families: limit or highlight families, include or exclude remedies' : 'Limit, exclude or highlight remedies'}>
-        <TreeDeciduous size={ICON + 2} strokeWidth={1.6} /><span className="an-caret" aria-hidden="true" />
+        <TreeIcon size={ICON + 6} /><span className="an-caret" aria-hidden="true" />
       </button>
-      <button className="an-tb-btn an-menu-btn an-ic-clip" {...trigger('clipboards')} aria-label={`Analysed clipboards: ${chosen.map(c => c.name).join(', ') || 'none'}`} title="Analysed clipboards">
-        <ClipboardList size={ICON} strokeWidth={1.6} /><span className="an-caret" aria-hidden="true" />
+      <button className="an-tb-btn an-menu-btn an-ic-maps" {...trigger('maps')} aria-label="Maps" title="Maps: show this analysis on the periodic table or across the kingdoms">
+        <MapsIcon size={ICON + 1} /><span className="an-caret" aria-hidden="true" />
       </button>
-      <button className="an-tb-btn an-menu-btn an-ic-export" {...trigger('export')} aria-label="Export and print" title="Export CSV / PNG, print"><Download size={ICON} strokeWidth={1.6} /><span className="an-caret" aria-hidden="true" /></button>
+      <button className={`an-tb-btn an-menu-btn an-ic-polarity${polar ? ' on' : ''}`} {...trigger('polarity')} aria-label="Polarity" title="Polarity analysis and its options">
+        <YinYangIcon size={ICON} /><span className="an-caret mid" aria-hidden="true" />
+      </button>
       <div className="an-sep" />
-      <button className="an-tb-btn an-tb-wide an-ic-compare" aria-label="Compare remedies" title="Compare remedies" onClick={() => ops.openCompare(undefined, cid)}><GitCompare size={ICON - 2} strokeWidth={1.6} /></button>
-      <button className="an-tb-btn an-toggle an-ic-eye" aria-pressed={!!o.showExcluded} aria-label="Show excluded remedies in position" title="Show excluded remedies greyed in their position" onClick={() => ops.setOptions({ showExcluded: !o.showExcluded }, cid)}>{o.showExcluded ? <Eye size={ICON - 2} strokeWidth={1.6} /> : <EyeOff size={ICON - 2} strokeWidth={1.6} />}</button>
+      <button className="an-tb-btn an-tb-wide an-toggle" aria-pressed={polar} aria-label="Switch between the analysis and the polarity analysis" title={polar ? `Back to ${back}` : 'Switch to the polarity analysis'} onClick={() => togglePolarity(cid, o.strategy)}><SwapPolarityIcon size={ICON + 1} /></button>
+      <button className="an-tb-btn an-toggle" aria-pressed={bars} aria-label="Show the analysis as bars" title={bars ? 'Show the grid' : 'Show the analysis as bars (B)'} onClick={() => actions.updateTab<AnalysisTab>(tab.id, { view: bars ? 'grid' : 'bars', symptomsOnly: false })}><BarListIcon size={ICON} /></button>
       <label className="an-tb-field an-viewlimit">
         <span className="an-tb-label">Limit the analysis to a view:</span>
         <span className="an-select-wrap">
@@ -639,8 +676,8 @@ function Toolbar({ live, tab, view, limit, onReveal, onFound, paramsOpen, onTogg
       <div className="an-spacer" />
       {/* the gear: the method's parameters when it has any, otherwise the analysis settings (default method, result limit) */}
       {hasParams(o.strategy)
-        ? <button className="an-tb-btn an-round" aria-pressed={paramsOpen} aria-label="Strategy parameters" title={`${info.name}: parameters`} onClick={onToggleParams}><Settings size={17} /></button>
-        : <button className="an-tb-btn an-round" aria-haspopup="dialog" aria-label="Analysis settings" title="Analysis settings" onClick={() => actions.openDialog(SETTINGS_DIALOG, { tab: 'analysis' })}><Settings size={17} /></button>}
+        ? <button className="an-tb-btn an-round" aria-pressed={paramsOpen} aria-label="Strategy parameters" title={`${info.name}: parameters`} onClick={onToggleParams}><DoubleGearIcon size={18} /></button>
+        : <button className="an-tb-btn an-round" aria-haspopup="dialog" aria-label="Analysis settings" title="Analysis settings" onClick={() => actions.openDialog(SETTINGS_DIALOG, { tab: 'analysis' })}><DoubleGearIcon size={18} /></button>}
       <button className="an-tb-btn an-round" aria-label="Keyboard shortcuts" title="Help: keyboard shortcuts (F1)" onClick={() => runCommand('help.shortcuts')}><CircleHelp size={18} /></button>
       {menu && (
         <MenuList items={menuItems[menu.kind]} x={menu.x} y={menu.y} label={MENU_LABEL[menu.kind]} onClose={closeMenu} />
@@ -733,23 +770,19 @@ function SearchRemedy({ result, catalog, onPick, onFound, onDone }: {
 }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
-  const [k, setK] = useState(0)
+  const [k, setK] = useState(-1)
   const ref = useRef<HTMLInputElement>(null)
   const { matches, all } = useMemo(() => {
     // the columns print "calc.": a typed final dot still matches "Calc"
     const s = q.trim().toLowerCase().replace(/\.$/, '')
     if (!s || !result) return { matches: [] as AnalysisRow[], all: null }
-    const starts: AnalysisRow[] = [], contains: AnalysisRow[] = []
+    // RadarOpus completes on the abbreviation's start only ("pu" → "puls."), in rank order
+    const starts: AnalysisRow[] = []
     for (const r of result.all.length === result.total ? [...result.all, ...result.excludedRows] : result.all) {
-      const rem = catalog.remedy(r.remedyId)
-      const a = rem.abbrev.toLowerCase(), n = rem.name.toLowerCase()
-      if (a.startsWith(s) || n.startsWith(s)) starts.push(r)
-      else if (a.includes(s) || n.includes(s)) contains.push(r)
+      if (catalog.remedy(r.remedyId).abbrev.toLowerCase().startsWith(s)) starts.push(r)
     }
-    // the columns marked are the list's best matches (prefix matches when there are any), both in rank
-    // order: the column scrolled into view is the list's first entry
-    const marked = starts.length ? starts : contains
-    return { matches: [...starts, ...contains].slice(0, 12), all: marked.length ? new Set(marked.map(r => r.remedyId)) : null }
+    // the columns marked are the list's matches: the column scrolled into view is the list's first entry
+    return { matches: starts.slice(0, 12), all: starts.length ? new Set(starts.map(r => r.remedyId)) : null }
   }, [q, result, catalog])
   useEffect(() => { onFound(all) }, [all, onFound])
   const pick = (r: AnalysisRow | undefined) => {
@@ -772,26 +805,27 @@ function SearchRemedy({ result, catalog, onPick, onFound, onDone }: {
           aria-autocomplete="list"
           value={q}
           data-analysis-remedy-box
-          onChange={e => { setQ(e.target.value); setOpen(true); setK(0) }}
+          onChange={e => { setQ(e.target.value); setOpen(true); setK(-1) }}
           onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 120)}
           onKeyDown={e => {
             if (e.key === 'ArrowDown') { e.preventDefault(); setK(x => Math.min(matches.length - 1, x + 1)) }
             else if (e.key === 'ArrowUp') { e.preventDefault(); setK(x => Math.max(0, x - 1)) }
-            else if (e.key === 'Enter') { e.preventDefault(); pick(matches[k]) }
+            // like a native completer nothing is highlighted until an arrow key; Enter takes the first entry
+            else if (e.key === 'Enter') { e.preventDefault(); pick(matches[Math.max(0, k)]) }
             else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setQ(''); setOpen(false); onDone() }
           }}
         />
-        {open && q.trim() && (
-          <div className="an-rbox-list" id="an-rbox-list" role="listbox">
-            {matches.length === 0 && <div className="an-rbox-empty">Not in this analysis</div>}
+        {open && q.trim() && matches.length > 0 && (
+          <div className="an-rbox-list an-rbox-plain" id="an-rbox-list" role="listbox">
             {matches.map((r, i) => {
               const rem = catalog.remedy(r.remedyId)
               return (
-                <div key={r.remedyId} role="option" aria-selected={i === k} className={`an-rbox-opt${i === k ? ' active' : ''}`} onMouseDown={e => { e.preventDefault(); pick(r) }} onMouseEnter={() => setK(i)}>
-                  <span className="an-rbox-rank">{r.rank || '–'}</span>
-                  <strong>{rem.abbrev}</strong>
-                  <span className="an-muted">{rem.name}</span>
+                <div
+                  key={r.remedyId} role="option" aria-selected={i === k} aria-label={`${columnAbbrev(rem.abbrev)} ${rem.name}${r.rank ? `, rank ${r.rank}` : ''}`}
+                  title={rem.name} className={`an-rbox-opt${i === k ? ' active' : ''}`} onMouseDown={e => { e.preventDefault(); pick(r) }} onMouseEnter={() => setK(i)}
+                >
+                  {columnAbbrev(rem.abbrev)}
                 </div>
               )
             })}

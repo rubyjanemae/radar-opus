@@ -178,11 +178,20 @@ export const NEAR_ROWS = 1500
  * a column (after the gutter with the selection hand), where the selection band starts, the right
  * padding, the indent per level, and the chapter heading block above a chapter's own remedies.
  */
-export const BOOK = { text: 47, band: 36, right: 40, indent: 10, head: 68 } as const
+export const BOOK = { text: 50, band: 38, right: 40, indent: 10, head: 77 } as const
+
+/**
+ * Indent of a rubric line (px): the first line starts at the rubric's level marker; wrapped lines
+ * hang there too down to level 4, deeper levels (5 and on) wrap at the level-4 indent as in RadarOpus.
+ */
+export function lineIndent(depth: number): { pad: number; first: number } {
+  const hang = Math.min(depth, 4)
+  return { pad: BOOK.text + (hang - 1) * BOOK.indent, first: (depth - hang) * BOOK.indent }
+}
 
 /**
  * Vertical rhythm of the book: wrapped lines are `lineH` apart, but a rubric's first line starts
- * closer to the previous rubric (15px against 18px at zoom 1). Each block's lines are pulled up by
+ * closer to the previous rubric (17px against 20px at zoom 1). Each block's lines are pulled up by
  * `top` and the block ends `bottom` before its last line box, so a block of n lines is
  * n * lineH - top - bottom tall. (RadarOpus sets a rubric's second line 17px below its first; a
  * shorter first line box cannot be had in CSS: `::first-line` line-height does not shrink the
@@ -204,7 +213,9 @@ export function estimateRow(rep: Repertory, rc: RemedyChars, i: number, p: Estim
   if (p.showRemedies && total > 0) {
     rem = near || rc.has(i) ? rc.chars(i, p.names, p.minGrade) : total * rc.average(rep.chapterOf(i), p.names, p.minGrade)
   }
-  const avail = Math.max(120, (p.width || 600) - BOOK.text - BOOK.right)
+  // insets and indents scale with the zoom (z = 1 at 14px), as the view draws them
+  const z = p.fs / 14
+  const avail = Math.max(120, (p.width || 600) - (BOOK.text + BOOK.right) * z)
   // Verdana: about half the font size per character of an abbreviation list (separators included)
   const remW = rem * p.fs * 0.5
   const noteH = note ? p.lineH : 0
@@ -214,9 +225,10 @@ export function estimateRow(rep: Repertory, rc: RemedyChars, i: number, p: Estim
     const lines = total > 0 ? Math.ceil((remW + 6 * p.fs * 0.6) / avail) : 0
     return BOOK.head + (lines ? lines * p.lineH - trim : 0) + noteH
   }
-  // a sub-rubric's lines all hang at its level indent
-  const textW = (rep.text(i).length + (total > 0 ? 7 : 2)) * p.fs * (depth === 1 ? 0.72 : 0.62)
-  const lines = Math.max(1, Math.ceil((textW + remW) / Math.max(80, avail - (depth - 1) * BOOK.indent)))
+  // a sub-rubric's lines hang at its level indent (at most the level-4 indent)
+  const ind = lineIndent(depth)
+  const textW = (rep.text(i).length + (total > 0 ? 7 : 2)) * p.fs * (depth === 1 ? 0.72 : 0.62) + ind.first * z
+  const lines = Math.max(1, Math.ceil((textW + remW) / Math.max(80, avail - (ind.pad - BOOK.text) * z)))
   return lines * p.lineH - trim + noteH
 }
 

@@ -15,16 +15,24 @@ const width = (s: string) => { let w = 0; for (const c of s) w += W[c] ?? W[c.no
 const CUT_WIDTH = 4620
 
 /**
+ * The name a chapter tile shows: "Genitalia male" reads "male Genitalia", so the two genitalia
+ * chapters stay apart ("MALE GE.", "FEMALE ."). The Navigation window's type-ahead matches this
+ * name, so typing M finds the tile captioned "MALE GE.", as in RadarOpus.
+ */
+export function chapterShownName(name: string): string {
+  const n = name.trim().replace(/\s+/g, ' ')
+  const m = /^(.+) (male|female|männlich|weiblich)$/i.exec(n)
+  return m ? `${m[2]} ${m[1]}` : n
+}
+
+/**
  * Short UPPERCASE caption of a chapter tile in the Navigation window, like RadarOpus: names of up
  * to seven characters stay whole ("VERTIGO", "ABDOMEN"); longer ones keep as many of their first
  * seven characters as fit the caption width and end in "." ("RESPIRA.", "EXTERN.", "GENERA.").
  * The cut is taken as it falls, a space included ("FEMALE ."), as RadarOpus does.
  */
 export function chapterCaption(name: string, max = 7): string {
-  let n = name.trim().replace(/\s+/g, ' ').toUpperCase()
-  // "Genitalia male" reads "Male genitalia", so the two genitalia chapters stay apart ("MALE GE.", "FEMALE .")
-  const m = /^(.+) (MALE|FEMALE|MÄNNLICH|WEIBLICH)$/.exec(n)
-  if (m) n = `${m[2]} ${m[1]}`
+  const n = chapterShownName(name).toUpperCase()
   if (n.length <= max) return n
   let k = max
   while (k > 1 && width(n.slice(0, k)) > CUT_WIDTH) k--

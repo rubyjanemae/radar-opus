@@ -1,5 +1,5 @@
 import { startTransition, useEffect, useMemo, useRef, useState } from 'react'
-import { History, Loader2, Pill, Search, SearchCode, X } from 'lucide-react'
+import { History, Loader2, Pill, Search, SearchCode } from 'lucide-react'
 import { formatKeys, isMac } from '../../commands/registry'
 import { useCatalog } from '../../data/CatalogContext'
 import type { Repertory } from '../../data/repertory'
@@ -41,7 +41,13 @@ export function QuickFind() {
     const t = a?.kind === 'repertory' ? a : s.tabs.find(x => x.kind === 'repertory')
     return t?.kind === 'repertory' ? { repertory: t.repertory, rubrics: s.recentRubrics, recent: t.recent, back: t.back } : { repertory: null, rubrics: s.recentRubrics, recent: undefined, back: undefined }
   }))
-  const [query, setQuery] = useState('')
+  const [query, setQueryRaw] = useState('')
+  // RadarOpus keeps the last query in the box (selected when the box takes the focus) until the reader
+  // types over it. Such a kept query is "stale": the dropdown treats the box as empty (recent items).
+  const [stale, setStale] = useState(true)
+  const setQuery = (v: string) => { setQueryRaw(v); setStale(false) }
+  /** Shows the last query run from the box (or the workspace's last search), kept and selected. */
+  const keepLast = (v: string) => { setQueryRaw(v); setStale(true) }
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
   const [version, setVersion] = useState(0)
@@ -64,7 +70,12 @@ export function QuickFind() {
     return () => { alive = false }
   }, [open, tabLike])
 
-  const q = query.trim()
+  // the last search, restored into the box once the workspace has loaded (RadarOpus)
+  const lastSearch = recent[0] ?? ''
+  useEffect(() => {
+    if (stale && document.activeElement !== inputRef.current) setQueryRaw(lastSearch)
+  }, [lastSearch]) // eslint-disable-line react-hooks/exhaustive-deps
+  const q = stale ? '' : query.trim()
   // Nothing is searched in the keystroke's own task: the rubric search runs in ~8 ms slices from the
   // next task on (a newer keystroke aborts it) and keeps only the best RUBRIC_LIMIT hits; the remedy
   // matches are found right after it. The dropdown keeps showing the previous matches meanwhile.
@@ -173,13 +184,13 @@ export function QuickFind() {
     if (item.kind === 'recent') { setQuery(item.query); inputRef.current?.focus(); return }
     if (item.kind === 'search' || how === 'search') {
       actions.addRecentSearch(query)
-      setQuery('')
+      keepLast(query.trim())
       close(false)
       openSearch(query.trim(), { newTab: true, scope: 'all' })
       return
     }
     if (item.kind === 'remedy') {
-      setQuery('')
+      keepLast(lastSearch)
       close(false)
       if (how === 'take') openRemedySearch(item.remedyId, { newTab: true })
       else actions.openTab({ kind: 'remedy', remedyId: item.remedyId })
@@ -188,7 +199,7 @@ export function QuickFind() {
     const ref = item.rep.ref(item.index)
     actions.addRecentSearch(query)
     if (how === 'take') { takeRefs([ref], DEFAULT_TAKE); return }
-    setQuery('')
+    keepLast(query.trim())
     close(false)
     void goToRef(ref).then(focusBook)
   }
@@ -214,8 +225,8 @@ export function QuickFind() {
       else run(flat[active], e.altKey ? 'take' : 'open')
     } else if (e.key === 'Escape') {
       e.preventDefault(); e.stopPropagation()
-      // one Esc closes the dropdown and hands focus back to where it was before Mod+F
-      setQuery('')
+      // one Esc closes the dropdown, puts the last search back and hands focus back to where it was before Mod+F
+      keepLast(lastSearch)
       close(true)
     } else if (!open && e.key.length === 1) setOpen(true)
   }
@@ -225,14 +236,13 @@ export function QuickFind() {
   const optId = (n: number) => `qf-opt-${n}`
 
   return (
-    <div className="qf" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpen(false) }}>
+    <div className={`qf${stale && query ? ' kept' : ''}`} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpen(false) }}>
       <Search size={14} className="qf-icon" aria-hidden />
       <input
         ref={inputRef}
         data-quickfind
         className="qf-input"
         type="text"
-        placeholder="search in English"
         aria-label="Quick find"
         role="combobox"
         aria-expanded={showPop}
@@ -246,15 +256,19 @@ export function QuickFind() {
           const prev = e.relatedTarget as HTMLElement | null
           // a menu that just closed (a toolbar ▾ opened over the field) is not a place to return to
           if (prev && !e.currentTarget.parentElement?.contains(prev) && !prev.closest('.menu-portal, [role="menu"]')) restoreRef.current = prev
+          // a kept query is selected as the box takes the focus (keyboard or pointer), so typing replaces it
+          if (stale) e.currentTarget.select()
           setOpen(true)
         }}
         onMouseDown={() => setOpen(true)}
+        // a kept query is selected as the box takes the focus, so typing replaces it
+        onMouseUp={e => { if (stale && e.currentTarget.selectionStart === e.currentTarget.selectionEnd) e.currentTarget.select() }}
         onChange={e => { setQuery(e.target.value); setOpen(true) }}
         onKeyDown={onKeyDown}
       />
-      {query ? (
-        <button className="qf-clear" aria-label="Clear" tabIndex={-1} onMouseDown={e => e.preventDefault()} onClick={() => { setQuery(''); inputRef.current?.focus() }}><X size={12} /></button>
-      ) : <kbd className="kbd qf-kbd">{formatKeys('Mod+F')}</kbd>}
+      {/* RadarOpus's box has no clear button: a kept query shows selected (white on blue), so typing
+          replaces it; Escape puts the last query back */}
+      {stale && query ? <span className="qf-sel" aria-hidden="true">{query}</span> : <kbd className="kbd qf-kbd">{formatKeys('Mod+F')}</kbd>}
       {showPop && (
         <div className="qf-pop" ref={popRef} role="listbox" id="qf-list" aria-label="Quick find results" onMouseDown={e => e.preventDefault()}>
           {pending.length > 0 && q.length >= 2 && (

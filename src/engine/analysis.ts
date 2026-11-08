@@ -235,17 +235,23 @@ export interface StrategyInfo {
   formula: string
 }
 
+/**
+ * The analysis methods. The first nine are RadarOpus's own methods, in its order and wording (Analysis ›
+ * Select your default analysis method and the analysis window's method menu list them alike); the
+ * engine's further strategies follow. (RadarOpus's Ortega miasmatic and Master Score methods need data
+ * the app does not have.)
+ */
 export const STRATEGIES: StrategyInfo[] = [
-  { id: 'graded-prominence', name: 'Prominence', short: 'Prominence', formula: 'Σ i×V(g), V = 100, 120, 160, 240 for grades 1–4', description: 'Every remedy of a symptom scores by its grade: 100 for grade 1, 120 for grade 2, 160 for grade 3 (RadarOpus scale), times the intensity. The default.' },
-  { id: 'sum-symptoms-degrees', name: 'Sum of symptoms (sort degrees)', short: 'Sympt + Deg', formula: 'rank by Σ i, then Σ i×g', description: 'Most symptoms covered first, then the sum of degrees. The classic default.' },
-  { id: 'sum-symptoms', name: 'Sum of symptoms (ignore degrees)', short: 'Symptoms', formula: 'rank by Σ i', description: 'Counts the symptoms each remedy covers; degrees only break ties.' },
-  { id: 'sum-degrees', name: 'Sum of degrees', short: 'Degrees', formula: 'rank by Σ i×g, then Σ i', description: 'Sum of grades across all symptoms, then symptoms covered.' },
+  { id: 'sum-symptoms-degrees', name: 'Sum of symptoms (sorted degrees)', short: 'Sympt + Deg', formula: 'rank by Σ i, then Σ i×g', description: 'Most symptoms covered first, then the sum of degrees. The classic default.' },
+  { id: 'sum-degrees', name: 'Sum of degrees (sorted symptoms)', short: 'Degrees', formula: 'rank by Σ i×g, then Σ i', description: 'Sum of grades across all symptoms, then symptoms covered.' },
   { id: 'sum-symptoms-plus-degrees', name: 'Sum of symptoms and degrees', short: 'Sym + Deg', formula: 'Σ i×(1 + g) = Σ i + Σ i×g', description: 'Symptoms covered and the sum of degrees added into one score.' },
-  { id: 'weighted', name: 'Weighted (intensity × degree)', short: 'Weighted', formula: 'Σ i×g', description: 'Each grade multiplied by the symptom intensity and summed.' },
-  { id: 'small-rubrics', name: 'Small rubrics (Organon §153)', short: 'Small rub.', formula: 'Σ i×g×f, f = 2 if n ≤ 10 else 1', description: 'Rubrics with 10 remedies or fewer (rare, characteristic symptoms) count double.' },
-  { id: 'small-rubrics-cont', name: 'Small rubrics (continuous)', short: 'Small cont.', formula: 'Σ i×g×w, w = 1 + 29×2^(−(n−1)/10)', description: 'The smaller the rubric, the more it counts: a 1-remedy rubric weighs 30, one with 11 remedies 15.5, large rubrics about 1.' },
+  { id: 'graded-prominence', name: 'Prominence', short: 'Prominence', formula: 'Σ i×V(g), V = 100, 120, 160, 240 for grades 1–4', description: 'Every remedy of a symptom scores by its grade: 100 for grade 1, 120 for grade 2, 160 for grade 3 (RadarOpus scale), times the intensity. The default.' },
   { id: 'remedy-size', name: 'Small remedies', short: 'Small rem.', formula: 'Σ i×g × f(r), f(r) = clamp(√(1000/m), 0.5, 4)', description: 'Corrects for remedy size (m = rubrics the remedy appears in), so lesser-known remedies are not buried by polychrests.' },
-  { id: 'small-remedies', name: 'Small rubrics + small remedies', short: 'Small both', formula: 'f(r) × Σ i×g×f', description: 'Small-rubric weighting and the remedy-size correction together.' },
+  { id: 'small-rubrics', name: 'Small rubrics (SPF)', short: 'Small rub.', formula: 'Σ i×g×f, f = 2 if n ≤ 10 else 1', description: 'Rubrics with 10 remedies or fewer (rare, characteristic symptoms) count double.' },
+  { id: 'small-remedies', name: 'Small remedies and small rubrics', short: 'Small both', formula: 'f(r) × Σ i×g×f', description: 'Small-rubric weighting and the remedy-size correction together.' },
+  { id: 'sum-symptoms', name: 'Sum of symptoms', short: 'Symptoms', formula: 'rank by Σ i', description: 'Counts the symptoms each remedy covers; degrees only break ties.' },
+  { id: 'weighted', name: 'Sum of degrees', short: 'Weighted', formula: 'Σ i×g', description: 'Each grade multiplied by the symptom intensity and summed.' },
+  { id: 'small-rubrics-cont', name: 'Small rubrics (continuous)', short: 'Small cont.', formula: 'Σ i×g×w, w = 1 + 29×2^(−(n−1)/10)', description: 'The smaller the rubric, the more it counts: a 1-remedy rubric weighs 30, one with 11 remedies 15.5, large rubrics about 1.' },
   { id: 'prominence', name: 'Keynotes (top grade)', short: 'Keynotes', formula: 'P = Σ i×g where the remedy has the top grade (≤ 3 share it); then Σ i, Σ i×g', description: 'Counts only the symptoms in which the remedy stands out with the rubric\'s highest grade; remedies without such symptoms follow by symptoms and degrees.' },
   { id: 'kent', name: 'Kent (hierarchy)', short: 'Kent', formula: 'Σ i×g×κ, κ: mind 3, general 2, local 1', description: 'Kent\'s hierarchy: mentals over generals over particulars.' },
   { id: 'boenninghausen', name: 'Bönninghausen (generalisation)', short: 'Bönningh.', formula: 'g′ = max(g, g in linked general rubric); rank by Σ i, then Σ i×g′', description: 'Grand generalisation: a modality or sensation also counts at the grade its remedy has in the matching Generalities rubric.' },
@@ -255,7 +261,10 @@ export const STRATEGIES: StrategyInfo[] = [
   { id: 'elimination', name: 'Elimination', short: 'Elimin.', formula: 'covers all; Σ i×g', description: 'Only remedies covering every symptom remain, ranked by sum of degrees.' },
 ]
 
-export const strategyInfo = (id: StrategyId): StrategyInfo => STRATEGIES.find(s => s.id === id) ?? STRATEGIES[0]
+/** RadarOpus's methods (the first entries of STRATEGIES), in its order. */
+export const RO_METHODS: readonly StrategyId[] = ['sum-symptoms-degrees', 'sum-degrees', 'sum-symptoms-plus-degrees', 'graded-prominence', 'remedy-size', 'small-rubrics', 'small-remedies', 'sum-symptoms', 'weighted']
+
+export const strategyInfo = (id: StrategyId): StrategyInfo => STRATEGIES.find(s => s.id === id) ?? STRATEGIES.find(s => s.id === 'graded-prominence')!
 
 /** Strategies whose primary key is the symptom count (display "CI/DI"). */
 export const COVERAGE_FIRST: ReadonlySet<StrategyId> = new Set<StrategyId>(['sum-symptoms-degrees', 'sum-symptoms', 'boenninghausen'])

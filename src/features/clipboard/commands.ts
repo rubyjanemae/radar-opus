@@ -30,6 +30,7 @@ export function register(catalog: Catalog) {
     { id: 'clipboard.clearAll', title: 'Clear all clipboards', category: 'Case', enabled: ops.hasAnySymptoms, run: async () => { await ops.clearAllClipboards() }, keywords: 'empty remove symptoms' },
     { id: 'clipboard.delete', title: 'Delete clipboard', category: 'Case', enabled: () => ops.clipboards().length > 1, run: async () => { await ops.deleteClipboard() } },
     { id: 'clipboard.selectAll', title: 'Select all symptoms', category: 'Edit', keys: ['Mod+A'], scope: ops.PANEL_SCOPE, enabled: hasCase, run: ops.selectAll },
+    { id: 'clipboard.unselectAll', title: 'Unselect all symptoms', category: 'Edit', enabled: ops.hasSelection, run: ops.unselectAll },
     { id: 'clipboard.deleteSelected', title: 'Remove selected symptoms', category: 'Edit', keys: ['Delete', 'Backspace'], scope: ops.LIST_SCOPE, enabled: ops.hasTarget, run: ops.removeSelected },
     // RadarOpus has no clipboard side pane: F7 (Analysis › Show current analysis with symptoms only) shows the
     // symptoms in the analysis window, without its remedy columns (F8 brings them back). The pane, opt-in from View › Clipboard pane, takes focus when it is open.

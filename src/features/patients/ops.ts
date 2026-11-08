@@ -7,6 +7,7 @@ import type { Consultation, Patient } from '../../state/patients'
 import type { PatientTab } from '../../state/workspace'
 import { downloadBlob, pickFile } from '../../ui/files'
 import { create } from 'zustand'
+import { showTocView, tocChecked, tocShows, toggleTocView } from '../toc/commands'
 import { buildCaseFile, caseFileName, CaseFileError, findExistingPatient, importCaseFile, parseCaseFile } from './casefile'
 import type { CaseFile, ImportMode } from './casefile'
 import { consultationsOf, duplicatePatient, followUpFrom, formatDate, nextFollowUpIndex, patientName, today } from './logic'
@@ -39,7 +40,7 @@ export function contextPatientId(): string | null {
   const s = st()
   const t = selectActiveTab(s)
   if (t?.kind === 'patient' && s.patients[t.patientId]) return t.patientId
-  if (t?.kind === 'patients' && listSelection && s.patients[listSelection]) return listSelection
+  if ((t?.kind === 'patients' || tocShows('patients')) && listSelection && s.patients[listSelection]) return listSelection
   const c = selectActiveConsultation(s)
   return c && s.patients[c.patientId] ? c.patientId : null
 }
@@ -61,33 +62,50 @@ export function contextConsultationId(): string | null {
 // ───────────────────────── navigation ─────────────────────────
 
 /**
- * Show the patients list. Keyboard flow (Mod+3, then type or ↓ and Enter) puts the caret in the
- * search box; `focus: 'table'` focuses the table instead (after a delete, so Ctrl+Z is the app's undo).
- * The request is picked up by the list when it mounts or is shown again (its code may still be
- * loading), or right away when it is already on screen. Switching to the list from the tab strip
- * makes no request, so the list leaves focus to the tab strip.
+ * Show the patients list: RadarOpus docks it in the table of contents (the toolbar's Patients button).
+ * Keyboard flow (Mod+3, then type or ↓ and Enter) puts the caret in the "Look for patient" field;
+ * `focus: 'table'` focuses the table instead (after a delete, so Ctrl+Z is the app's undo).
+ * The request is picked up by the list when it mounts (its code may still be loading), or right away
+ * when it is already on screen.
  */
 export function openPatients(opts: { focus?: 'search' | 'table' } = {}) {
   listFocusRequest = { focus: opts.focus ?? 'search', at: Date.now() }
-  actions.openTab({ kind: 'patients' })
+  if (!tocShows('patients')) showTocView('patients')
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    const list = document.querySelector<HTMLElement>('.tab-doc[data-active] .pt-list')
+    const list = document.querySelector<HTMLElement>('.ptp')
     if (list) applyListFocus(list)
   }))
 }
 
+/** The Patients button (a checkbox, as the other list buttons): unchecks it when its list is in front, else brings the docked list to the front. */
+export function togglePatients() {
+  if (tocShows('patients')) toggleTocView('patients')
+  // a mouse click on the toolbar button (RadarOpus) shows the list and leaves the focus where it was;
+  // the keyboard (Mod+3) puts the caret in "Look for patient"
+  else if (isMouseClick()) showTocView('patients')
+  else openPatients()
+}
+
+function isMouseClick(): boolean {
+  const e = typeof window !== 'undefined' ? window.event : undefined
+  return e instanceof MouseEvent && e.type === 'click' && e.detail > 0
+}
+
+/** The Patients button's checked state: the table of contents shows the patients list. */
+export const patientsPanelShown = () => tocChecked('patients')
+
 /** The pending focus request of openPatients; it lapses after a few seconds (a list that never showed). */
 let listFocusRequest: { focus: 'search' | 'table'; at: number } | null = null
 
-/** Focus the list as the pending openPatients request asked (once); called by PatientsView when shown. */
+/** Focus the list as the pending openPatients request asked (once); called by the list when shown. */
 export function applyListFocus(list: HTMLElement) {
   const req = listFocusRequest
   listFocusRequest = null
   if (!req || Date.now() - req.at > 3000) return
   const want = req.focus
   if (document.querySelector('[role="dialog"]')) return
-  if (want === 'table') list.querySelector<HTMLElement>('.pt-table')?.focus()
-  else if (!list.contains(document.activeElement)) list.querySelector<HTMLElement>('.pt-search-input')?.focus()
+  if (want === 'table') list.querySelector<HTMLElement>('.pt-table, .ptp-table')?.focus()
+  else if (!list.contains(document.activeElement)) list.querySelector<HTMLElement>('.pt-search-input, .ptp-search')?.focus()
 }
 
 export function openPatient(patientId: string, consultationId?: string | null, section?: PatientTab['section']) {
@@ -118,7 +136,7 @@ export function createPatient(fields: Partial<Patient>, startConsultation: boole
     openPatient(id, cid, 'consultations')
     actions.toast(`Patient ${name} created; the first consultation is now the active case`, 'success')
     // the title is already filled in: the next thing to record is the complaint
-    focusLater('.pt-ed-complaint-input')
+    focusLater('.pv-text')
     return id
   }
   const id = actions.createPatient(fields)
@@ -219,7 +237,7 @@ function focusLater(selector: string) {
   requestAnimationFrame(tick)
 }
 
-function focusEditorTitle() { focusLater('.pt-ed-title-input') }
+function focusEditorTitle() { focusLater('.pv-text') }
 
 /**
  * Pending "add prescription" request, read by the consultation editor's prescription form:
@@ -327,6 +345,19 @@ export async function exportCase(patientId = contextPatientId()) {
   const file = buildCaseFile(snap.patient, snap.consultations, { rubricPath, remedyAbbrev: id => catalog().remedy(id).abbrev })
   downloadBlob(new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' }), caseFileName(snap.patient))
   actions.toast(`Exported case file for ${patientName(snap.patient)}`, 'success')
+}
+
+/**
+ * Send current patient to Clificol: Clificol (clinical outcomes database) takes cases through its web site, so
+ * the case file is saved for upload, the Clificol site opens, and the patient is marked "Case sent to Clificol".
+ */
+export async function sendToClificol(patientId = contextPatientId()) {
+  const p = patientId ? st().patients[patientId] : null
+  if (!p || !patientId) { actions.toast('Open or select a patient to send to Clificol.', 'info'); return }
+  window.open('https://www.clificol.org', '_blank', 'noopener,noreferrer')
+  await exportCase(patientId)
+  if (!p.clificol) actions.updatePatient(patientId, { clificol: true })
+  actions.toast(`Case file of ${patientName(p)} saved; upload it on the Clificol site`, 'success')
 }
 
 /**

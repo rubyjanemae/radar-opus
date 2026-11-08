@@ -1,7 +1,7 @@
 import type { RubricRef } from '../data/types'
 import type { StrategyId } from '../engine/model'
 
-export type TabKind = 'repertory' | 'analysis' | 'materia-medica' | 'remedy' | 'patients' | 'patient' | 'search' | 'families' | 'repertories'
+export type TabKind = 'repertory' | 'analysis' | 'materia-medica' | 'remedy' | 'patients' | 'patient' | 'search' | 'families' | 'repertories' | 'maps'
 
 export interface TabBase { id: string; kind: TabKind; pinned?: boolean }
 export interface RepertoryTab extends TabBase {
@@ -26,6 +26,11 @@ export interface AnalysisTab extends TabBase {
   pinnedRemedies?: number[] | null
   /** Analysis › Show current analysis with symptoms only (F7): the symptom pane without remedy columns. */
   symptomsOnly?: boolean
+  /**
+   * The title a window restored at startup carries until it is first shown (RadarOpus restores the
+   * analysis window as "<patient> -"; shown, it takes the analysis heading). Cleared by TabHost.
+   */
+  restoredTitle?: string
 }
 export interface MateriaMedicaTab extends TabBase { kind: 'materia-medica'; remedyId: number | null; query: string }
 export interface RemedyTab extends TabBase { kind: 'remedy'; remedyId: number }
@@ -60,7 +65,16 @@ export interface FamiliesTab extends TabBase {
   remedy?: number | null
 }
 
-export type Tab = RepertoryTab | RepertoriesTab | AnalysisTab | MateriaMedicaTab | RemedyTab | PatientsTab | PatientTab | SearchTab | FamiliesTab
+/** View › Maps: the current analysis on a map (features/maps). */
+export interface MapsTab extends TabBase {
+  kind: 'maps'; map: 'periodic' | 'kingdoms'
+  /** The element or kingdom whose remedies the side list shows. */
+  selected?: string | null
+  /** How many leading remedies count as the analysis's top (default 30). */
+  top?: number
+}
+
+export type Tab = RepertoryTab | RepertoriesTab | AnalysisTab | MateriaMedicaTab | RemedyTab | PatientsTab | PatientTab | SearchTab | FamiliesTab | MapsTab
 
 export interface Bookmark {
   id: string
@@ -100,7 +114,14 @@ export interface Layout {
   tocOpen: string[]
   /** Table of contents: keys of the checked documents. */
   tocChecked: string[]
+  /** File › Save selection as a document mix: named sets of checked documents (features/docmix). */
+  docMixes: DocMix[]
+  /** File › Select a default document mix: the mix checked at startup ('' none). */
+  defaultDocMix: string
 }
+
+/** A named selection of documents of the table of contents (RadarOpus's document mix). */
+export interface DocMix { name: string; keys: string[] }
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'system',
@@ -120,13 +141,16 @@ export const DEFAULT_LAYOUT: Layout = {
   treeWidth: 400,
   clipboardWidth: 340,
   analysisHeight: 300,
-  // RadarOpus starts with the table of contents hidden (status strip: "Show table of contents")
-  showTree: false,
+  // RadarOpus starts with the table of contents on show, on the Patients list (status strip: "Hide the
+  // table of contents (cmd+F2)", "Expand Toc"; the toolbar's Patients button checked)
+  showTree: true,
   // RadarOpus shows clipboards as the left strip and in the analysis window: the clipboard pane is opt-in (F7, View menu)
   showClipboard: false,
   showAnalysisDock: false,
   tocOpen: ['sec:reps', 'sec:fams'],
   tocChecked: [],
+  docMixes: [],
+  defaultDocMix: '',
 }
 
 /** A tab description before it has an id (distributes over the Tab union). */

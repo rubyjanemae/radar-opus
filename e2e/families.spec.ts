@@ -160,7 +160,7 @@ test('Ctrl+F and F2 focus the families search when focus is in the view', async 
   await tree(page).focus()
   await page.keyboard.press('ControlOrMeta+F')
   await expect(search(page)).toBeFocused()
-  await expect(page.getByPlaceholder('search in English')).not.toBeFocused()
+  await expect(page.getByRole('combobox', { name: 'Quick find' })).not.toBeFocused()
 })
 
 test('search matches word starts and lists every matching remedy', async ({ page }) => {

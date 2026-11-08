@@ -1,4 +1,4 @@
-:root { --statusbar-h: 25px; }
+:root { --statusbar-h: 22px; }
 .shell { display: flex; flex-direction: column; height: 100vh; min-width: 0; }
 .shell-header { flex: none; min-width: 0; }
 
@@ -15,14 +15,23 @@
 .boot-bar span { display: block; width: 40%; height: 100%; background: var(--accent); animation: slide 1s ease-in-out infinite; }
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 
-/* ───────── menubar (in place of the desktop app's title bar) ───────── */
+/* ───────── menubar: the macOS menu bar, outside RadarOpus's window ───────── */
+/* It takes no room in the window: hidden above its top edge, it slides in over the toolbar while the pointer
+   is at the top edge or on it, the keyboard is in it (Alt, F10) or one of its menus is open (MenuBar.tsx). */
 .menubar {
-  flex: none; display: flex; align-items: center; gap: 1px; height: 32px; padding: 0 6px;
-  background: var(--ro-title); border-bottom: 1px solid var(--ro-title-line); font: 13px/1 var(--font-chrome); color: var(--ro-tab-fg);
+  position: fixed; top: -26px; left: 0; right: 0; z-index: var(--z-dropdown);
+  display: flex; align-items: center; gap: 1px; height: 24px; padding: 0 6px;
+  background: var(--ro-title); border-bottom: 1px solid var(--ro-title-line); box-shadow: 0 1px 4px rgba(0, 0, 0, .18);
+  font: 13px/1 var(--font-chrome); color: var(--ro-tab-fg); transition: top .12s ease-out;
 }
+.menubar[data-shown] { top: 0; }
+@media (prefers-reduced-motion: reduce) { .menubar { transition: none; } }
+[data-reduce-motion="true"] .menubar { transition: none; }
+/* the application menu's title is bold (macOS) */
+.menubar-item.menubar-app { font-weight: 700; }
 .menubar-nav, .menubar-menus { display: flex; align-items: center; gap: 1px; }
 .menubar-nav { flex: none; }
-.menubar-item { height: var(--ctl-h-sm); padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: inherit; white-space: nowrap; font: inherit; }
+.menubar-item { height: 22px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: inherit; white-space: nowrap; font: inherit; }
 .menubar-item:hover, .menubar-item.open { background: color-mix(in srgb, var(--ro-press) 30%, transparent); }
 .menubar-item.open { background: color-mix(in srgb, var(--ro-press) 50%, transparent); }
 /* keyboard focus is always visible, in both themes, even while the item's menu is open */
@@ -31,7 +40,7 @@
 
 /* ───────── main toolbar: large icons over their labels, grouped by separators ───────── */
 .toolbar {
-  flex: none; display: flex; align-items: center; gap: 0; height: 75px; padding: 0 3px; overflow-x: clip; overflow-y: visible;
+  flex: none; display: flex; align-items: center; gap: 0; height: 74px; padding: 0 4px; overflow-x: clip; overflow-y: visible;
   background: var(--ro-bar); border-bottom: 1px solid var(--ro-bar-line); font-family: var(--font-chrome);
 }
 .tb-item { position: relative; flex: none; display: flex; }
@@ -39,23 +48,31 @@
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; height: 68px; min-width: 40px; padding: 0 7px 1px;
   border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--ro-label); font: 12.5px/15px var(--font-chrome); white-space: nowrap;
 }
-.tb-icon { position: relative; top: -2px; display: grid; place-items: center; width: 38px; height: 38px; color: var(--tone); }
+/* the icon box is narrower than its picture: RadarOpus sizes a button by its label, an icon-wide one (Back, Print) at ~44pt */
+.tb-icon { position: relative; top: -2px; display: grid; place-items: center; width: 28px; height: 38px; color: var(--tone); }
 /* lucide icons are line art: a heavier stroke and a wash of the tone fill them, closer to the desktop app's solid icons */
 .tb-icon svg { fill: color-mix(in srgb, var(--tone) 50%, transparent); }
 /* no hover box: RadarOpus keeps the plain toolbar under a resting pointer (ref 16); a press still shows */
 .tb-btn:active:not(:disabled, [aria-disabled="true"]), .tb-btn[aria-expanded="true"] { background: color-mix(in srgb, var(--ro-press) 40%, transparent); }
 /* a dimmed button is inert: a click on it falls through to the band, which leaves the keyboard in the document (focus.ts) */
+/* a checked toggle (Repertories while the table of contents lists them): a rounded rose fill behind icon and label */
+/* drawn inside the 1px transparent border, so adjacent checked tiles (Repertories | References | Patients) keep a ~2px gap */
+.tb-btn[aria-pressed="true"] { background: var(--ro-checked); background-clip: padding-box; border-radius: 6px; }
 .tb-btn:disabled { opacity: .42; pointer-events: none; }
 .tb-btn:disabled .tb-icon { filter: grayscale(1); }
 /* the ▾ of a menu button sits at the icon's lower right, over the button's own padding */
 .tb-caret {
   position: absolute; top: 29px; left: calc(50% + 19px); display: grid; place-items: center; width: 11px; height: 12px; padding: 0;
   border: 0; border-radius: 2px; background: transparent; color: var(--ro-label);
+  /* on a narrow button (Print) the ▾ reaches past the item: it stays above the next button, so a click on it opens the menu */
+  z-index: 1;
 }
 .tb-caret:hover:not(:disabled) { background: color-mix(in srgb, var(--ro-press) 40%, transparent); }
 .tb-caret:disabled { opacity: .42; }
 /* a fine two-tone rule (RadarOpus): a darker left edge, a lighter core */
-.tb-sep { flex: none; align-self: center; width: 2px; height: 54px; margin: 0 5px; background: var(--ro-sep); box-shadow: inset 1px 0 var(--ro-sep-edge); }
+.tb-sep { flex: none; align-self: center; width: 2px; height: 54px; margin: 0 4px 0 5px; background: var(--ro-sep); box-shadow: inset 1px 0 var(--ro-sep-edge); }
+/* the place of RadarOpus's Shop / Gifts group (left out): keeps Zoom, Print and Screenshot at its positions */
+.tb-gap { flex: none; width: 92px; }
 .tone-blue { --tone: var(--ro-icon-blue); }
 .tone-teal { --tone: var(--ro-icon-teal); }
 .tone-orange { --tone: var(--ro-icon-orange); }
@@ -63,28 +80,56 @@
 .tone-green { --tone: var(--ro-icon-green); }
 .tone-grey { --tone: var(--ro-icon-grey); }
 .tone-ink { --tone: var(--ro-icon-ink); }
-/* History: a slate arc around a blue clock (original two-tone glyph, Toolbar.tsx) */
+/* History: a notebook with a clock (toolbarIcons.tsx draws its own colours) */
 .tone-slate { --tone: var(--ro-icon-ink); }
-.tb-icon svg .tb-hist-face { fill: color-mix(in srgb, var(--ro-icon-blue) 45%, transparent); }
-.tb-icon svg .tb-hist-hands { stroke: var(--ro-icon-blue); }
 /* Zoom in / out: dark rim and handle, a light lens, the sign in the blue accent (Toolbar.tsx) */
 .tb-icon svg .tb-zoom-lens { fill: color-mix(in srgb, var(--ro-icon-blue) 16%, var(--bg-elev)); }
 .tb-icon svg .tb-zoom-sign { stroke: var(--ro-icon-blue); }
-/* the search field ("search in English"): a white rounded box between Search and Analysis */
-.tb-find { flex: none; display: flex; align-items: center; margin: 0 0 0 2px; }
-.toolbar .qf { width: 160px; margin: 0; }
+/* Remedies: a grey glass jar (pale glass, darker lid) holding two amber globules (Toolbar.tsx) */
+/* RadarOpus's jar: a darker grey outline and a solid grey lid */
+.tb-icon svg .tb-jar-glass { fill: color-mix(in srgb, var(--tone) 12%, transparent); stroke: color-mix(in srgb, var(--tone) 70%, var(--ro-icon-ink)); stroke-width: 1.7; }
+.tb-icon svg .tb-jar-lid { fill: color-mix(in srgb, var(--tone) 75%, var(--ro-icon-ink)); stroke: color-mix(in srgb, var(--tone) 70%, var(--ro-icon-ink)); }
+.tb-icon svg .tb-jar-pill { fill: var(--ro-icon-amber); stroke: color-mix(in srgb, var(--ro-icon-orange) 85%, var(--ro-icon-ink)); stroke-width: .9; }
+/* Families: a solid green crown on a brown trunk (Toolbar.tsx) */
+/* RadarOpus's Families tree: a muted grey-green crown without a dark outline */
+.tb-icon svg .tb-tree-crown { fill: color-mix(in srgb, color-mix(in srgb, var(--ro-icon-teal) 88%, var(--tone)) 80%, var(--ro-win)); stroke: color-mix(in srgb, color-mix(in srgb, var(--ro-icon-teal) 88%, var(--tone)) 86%, var(--ro-win)); stroke-width: .6; }
+.tb-icon svg .tb-tree-shade { fill: color-mix(in srgb, var(--ro-icon-teal) 70%, var(--ro-icon-ink)); stroke: none; opacity: .18; }
+/* a tan trunk with a pale rim where it crosses the crown */
+.tb-icon svg .tb-tree-trunk { fill: color-mix(in srgb, color-mix(in srgb, var(--ro-icon-orange) 50%, var(--ro-icon-ink)) 72%, var(--ro-win)); stroke: color-mix(in srgb, var(--ro-win) 70%, transparent); stroke-width: .7; paint-order: stroke; }
+/* References: a light teal outline book, no wash (Toolbar.tsx) */
+.tb-icon svg .tb-refs-book { stroke: color-mix(in srgb, var(--tone) 78%, var(--ro-win)); }
+/* Search area: grey dashed frame, blue magnifier with a pale lens; Search: grey glass on a gold handle (Toolbar.tsx) */
+.tb-icon svg .tb-area-frame { stroke: color-mix(in srgb, var(--ro-icon-grey) 75%, var(--ro-win)); fill: color-mix(in srgb, var(--ro-icon-grey) 8%, transparent); }
+.tb-icon svg .tb-area-handle, .tb-icon svg .tb-glass-handle { fill: none; }
+.tb-icon svg .tb-area-lens { stroke: var(--ro-icon-blue); fill: color-mix(in srgb, var(--ro-icon-blue) 18%, var(--ro-win)); }
+.tb-icon svg .tb-area-handle { stroke: var(--ro-icon-blue); }
+.tb-icon svg .tb-glass-lens { stroke: color-mix(in srgb, var(--ro-icon-grey) 80%, var(--ro-win)); fill: color-mix(in srgb, var(--ro-icon-grey) 10%, var(--ro-win)); }
+.tb-icon svg .tb-glass-handle { stroke: var(--ro-icon-amber); }
+/* the search field: a white rounded box between Search and Analysis */
+/* RadarOpus: ~7pt between Search and the field */
+.tb-find { flex: none; display: flex; align-items: center; margin: 0 0 0 7px; }
+.toolbar .qf { width: 154px; margin: 0; }
 .toolbar .qf-icon { display: none; }
 .toolbar .qf-input {
-  height: 33px; padding: 0 8px; border: 1px solid transparent; border-radius: 9px; background: var(--ro-win);
+  height: 31px; padding: 0 5px; border: 1px solid transparent; border-radius: 8px; background: var(--ro-win);
   font: 13px var(--font-chrome); color: var(--ro-tab-fg);
 }
 .toolbar .qf-input::placeholder { color: color-mix(in srgb, var(--ro-label) 22%, transparent); font-size: 12.5px; }
 .toolbar .qf-kbd { display: none; }
+/* a kept query (the last search) is drawn selected, white on saturated blue, as RadarOpus shows it; focused,
+   the real selection takes the same colours */
+.toolbar .qf-input::selection { background: var(--ro-find-sel); color: var(--ro-find-sel-fg); }
+.toolbar .qf.kept .qf-input:not(:focus) { color: transparent; }
+.toolbar .qf-sel {
+  position: absolute; left: 6px; max-width: calc(100% - 12px); overflow: hidden; white-space: pre; pointer-events: none;
+  background: var(--ro-find-sel); color: var(--ro-find-sel-fg); font: 13px/19px var(--font-chrome);
+}
+.toolbar .qf-input:focus ~ .qf-sel { display: none; }
 /* the results open below the toolbar band, clear of its labels (the field ends 22px above its bottom line) */
 .toolbar .qf-pop { top: calc(100% + 23px); }
 
 /* ───────── the desktop: terracotta behind the table of contents and the document window ───────── */
-.shell-main { flex: 1; display: flex; min-height: 0; padding: 17px 4px 2px 0; background: var(--desk); }
+.shell-main { flex: 1; display: flex; min-height: 0; padding: 13px 4px 2px 0; background: var(--desk); }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-elev); }
 /* side panes and the document window are windows on the desktop: white, a fine border, rounded */
 .pane-left, .pane-right {
@@ -97,7 +142,10 @@
   box-shadow: 0 1px var(--ro-win-foot);
 }
 .pane-left, .pane-right { flex: none; position: relative; }
-.pane-left { margin: 0 12px 0 6px; }
+/* RadarOpus: the table of contents starts a little below the tab strip (~94pt against ~91pt) */
+.pane-left { margin: 7px 12px 0 6px; }
+/* the patients list takes that offset from the pane, not a second time (features/patients .ptp) */
+.pane-left > .ptp { margin-top: 0; }
 /* the table of contents blends straight into the desktop (RadarOpus draws no outline around it) */
 .pane-left { border: 0; box-shadow: none; }
 .pane-right { margin-left: 8px; }
@@ -117,7 +165,8 @@
 }
 .pane-left > .splitter-vertical:hover, .pane-right > .splitter-vertical:hover,
 .pane-left > .splitter-vertical:focus-visible, .pane-right > .splitter-vertical:focus-visible { background: color-mix(in srgb, var(--ro-win) 25%, transparent); box-shadow: none; }
-.doc-window { flex: 1; margin-left: 6px; overflow: hidden; }
+/* the document window's tabs start 4px below the side panes' top (RadarOpus: tabs at 94pt) */
+.doc-window { flex: 1; margin-left: 6px; margin-top: 4px; overflow: hidden; }
 .pane-left + .doc-window { margin-left: 0; }
 .clipstrip + .doc-window { margin-left: 15px; }
 .pane-left + .clipstrip + .doc-window { margin-left: 13px; }
@@ -129,7 +178,7 @@
 
 /* ───────── clipboard strip ───────── */
 .clipstrip { flex: none; display: flex; flex-direction: column; width: 36px; min-height: 0; }
-.clipstrip-slots { display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 0; padding: 7px 0; overflow-y: auto; scrollbar-width: none; }
+.clipstrip-slots { display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 0; padding: 14px 0 7px; overflow-y: auto; scrollbar-width: none; }
 .clipstrip-slots::-webkit-scrollbar { display: none; }
 /* at the desktop's left edge (no table of contents) the slots sit a little in from the edge (RadarOpus) */
 .shell-main > .clipstrip:first-child .clipstrip-slots { padding-left: 4px; }
@@ -137,7 +186,7 @@
   flex: none; display: flex; flex-direction: column; align-items: center; gap: 5px; width: 34px; height: 56px; padding: 2px 0 0;
   border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--ro-clip);
 }
-/* a slim light-amber board, a grey clip with its ring; the active clipboard is marked only by its two blue ticks */
+/* a slim light-amber board, a grey clip with its ring; two blue ticks on a clipboard in the analysis */
 .clip-board { stroke: var(--ro-clip); fill: color-mix(in srgb, var(--ro-clip) 8%, transparent); }
 .clip-board-foot { stroke: var(--ro-clip); }
 .clip-ring { stroke: var(--ro-clip-ring); }
@@ -145,8 +194,9 @@
 .clip-tick { stroke: var(--ro-clip-check); }
 .clip-slot:hover .clip-board { fill: color-mix(in srgb, var(--ro-clip) 26%, transparent); }
 .clip-slot:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
+.clip-slot.active .clip-slot-count { font-weight: 700; }
 .clip-slot.drop { outline: 2px dashed var(--ro-win); outline-offset: -2px; }
-.clip-slot-count { min-height: 15px; font: 700 13px/15px var(--font-chrome); color: var(--desk-fg); font-variant-numeric: tabular-nums; }
+.clip-slot-count { min-height: 15px; font: 400 13px/15px var(--font-chrome); color: var(--desk-fg); font-variant-numeric: tabular-nums; }
 
 /* ───────── document tabs: the window's title strip ───────── */
 /* The strip never grows past the window: the tab list scrolls, tabs shrink to a minimum first. */
@@ -154,17 +204,14 @@
 .tabstrip-list { flex: 1 1 auto; display: flex; align-items: stretch; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; height: 100%; }
 .tabstrip-list::-webkit-scrollbar { display: none; }
 .tab {
-  position: relative; flex: 0 1 591px; display: flex; align-items: center; min-width: 110px; padding: 0 11px 0 0; margin-top: 1px;
+  position: relative; flex: 1 1 0; display: flex; align-items: center; min-width: 110px; padding: 0 11px 0 0; margin-top: 1px;
   border-right: 1px solid color-mix(in srgb, var(--ro-win-line) 35%, transparent); background: var(--ro-tab-off);
   /* an inactive tab has no dark edge: its top shades softly into the desktop */
   box-shadow: inset 0 1px color-mix(in srgb, var(--desk) 55%, var(--ro-tab-off));
   color: var(--ro-tab-fg); font-size: 12.5px; user-select: none; white-space: nowrap;
 }
-/* the last tab runs to the window's right edge, its close box in the corner: it takes the strip's
-   remaining width while the others keep their natural width, which they give up only once it is down to its minimum (RadarOpus) */
-.tabstrip-list > .tab:last-child { flex: 1 1 0; min-width: 160px; border-right: 0; }
-/* ...except when it is the active document: its full title stays readable (ref 10), the inactive tabs give way */
-.tabstrip-list > .tab.active:last-child:not(:first-child) { flex: 1 0 auto; max-width: 70%; }
+/* the tabs share the strip equally (RadarOpus), the last one running to the window's right edge */
+.tabstrip-list > .tab:last-child { border-right: 0; }
 .tab-main { flex: 1 1 auto; display: flex; align-items: center; gap: 13px; min-width: 0; height: 100%; padding: 0 6px 0 10px; }
 .tab-scroll, .tab-all { flex: none; align-self: center; width: 20px; height: 20px; min-width: 0; margin: 0 1px; }
 .tab-scroll:disabled { opacity: .35; }
@@ -177,9 +224,8 @@
 }
 /* no rule between a tab and the active tab beside it */
 .tab:has(+ .tab.active) { border-right-color: transparent; }
-/* inactive tabs fade their close box (RadarOpus) */
-.tab:not(.active) .tab-close { opacity: .45; }
-.tab:not(.active):hover .tab-close { opacity: .8; }
+/* an inactive tab's close box: a dusty pink filled square with a faint lighter cross (RadarOpus) */
+.tab:not(.active) .tab-close { border-color: var(--ro-close-off); background: var(--ro-close-off); color: var(--ro-close-off-x); }
 .tab.drop-target { box-shadow: inset 2px 0 0 var(--accent); }
 .tab-icon { flex: none; color: var(--ro-icon-blue); fill: color-mix(in srgb, var(--ro-icon-blue) 30%, transparent); }
 /* the solid book of a repertory window (original glyph, TabStrip.tsx) */
@@ -187,36 +233,35 @@
 .tab-book-cover { fill: var(--ro-icon-blue); }
 .tab-book-spine { fill: color-mix(in srgb, var(--ro-icon-blue) 70%, #fff); }
 .tab-book-edge { fill: none; stroke: color-mix(in srgb, var(--ro-icon-blue) 65%, #000); }
-/* the analysis window's bar chart (original glyph, TabStrip.tsx): pale amber bars, blue caps, grey base */
+/* the analysis window's bar chart (features/analysis/AnalysisIcon.tsx colours its own bars) */
 .tab-icon.tab-chart { fill: none; }
-.tab-chart-bar { fill: color-mix(in srgb, var(--ro-icon-amber) 45%, #fff); stroke: color-mix(in srgb, var(--ro-icon-amber) 80%, #000); stroke-width: .5; }
-.tab-chart-cap { fill: var(--ro-icon-blue); }
-.tab-chart-base { fill: var(--ro-icon-grey); }
+/* the patient window's coloured two-people picture (toolbarIcons.tsx colours its own parts) */
+.tab-icon.tab-people { fill: none; }
 .tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* case documents: middle truncation (patient name first), and the kind label ("Analysis") never gives way */
 .tab-title-split { display: inline-flex; flex: 0 1 auto; }
 .tab-title-head { flex: 0 100 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; }
 .tab-title-tail { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* the analysis tab shows its icon only (RadarOpus); the title stays for assistive technology and the tooltip */
-.tab-main[data-kind="analysis"] .tab-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* the small red close box at the tab's right end */
 .tab-close {
-  flex: none; display: grid; place-items: center; width: 10px; height: 10px; margin-left: auto; padding: 0;
-  /* RadarOpus: a filled pink square with a white cross */
-  border: 1px solid var(--ro-close-line); border-radius: 1px; background: color-mix(in srgb, var(--ro-close-x) 65%, var(--ro-close)); color: var(--on-accent);
+  flex: none; display: grid; place-items: center; width: 11px; height: 11px; margin-left: auto; padding: 0;
+  /* RadarOpus: the active tab's box is a pale pink square with a darker pink outline and a pink cross */
+  box-sizing: border-box; border: 1px solid var(--ro-close-edge); border-radius: 1px; background: var(--ro-close); color: var(--ro-close-line);
 }
-.tab-close:hover { background: var(--ro-close-x); border-color: var(--ro-close-x); }
+.tab-close:hover, .tab:not(.active) .tab-close:hover { background: var(--ro-close-x); border-color: var(--ro-close-x); color: var(--on-accent); }
 /* every tab shrinks alike, so all open documents stay side by side; the active one keeps a readable title */
 .tab.active { min-width: 120px; }
 .tab-pin { color: var(--text-3); margin: 0 3px; }
 
 /* ───────── status strip: text links on the desktop's bottom edge ───────── */
 .statusbar {
-  flex: none; display: flex; align-items: center; gap: 0; height: var(--statusbar-h); padding: 0 6px 1px 0;
-  background: var(--desk); color: var(--desk-fg); font: 12.5px/1 var(--font-chrome); white-space: nowrap; min-width: 0; overflow: hidden;
+  flex: none; display: flex; align-items: center; gap: 6px; height: var(--statusbar-h); padding: 0 6px 1px 2px;
+  background: var(--desk); color: var(--ro-tab-fg); font: 13px/1 var(--font-chrome); white-space: nowrap; min-width: 0; overflow: hidden;
 }
-.status-link { flex: none; height: 20px; padding: 0 10px; border: 0; border-radius: 3px; background: transparent; color: inherit; font: inherit; }
-.status-link:hover { text-decoration: underline; }
+/* RadarOpus insets the label ~7pt in its button (button edges unchanged) */
+.status-link { flex: none; height: 20px; padding: 0 1px 0 7px; border: 0; border-radius: 3px; background: transparent; color: inherit; font: inherit; }
+/* borderless push buttons: no hover look (RadarOpus); keyboard focus stays visible */
+.status-link:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .status-spacer { flex: 1; }
 /* RadarOpus's strip holds only its links: the save state is for assistive technology, shown only when saving fails */
 .statusbar .save-ind:not(.save-err) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -242,6 +287,8 @@
   .toolbar .qf-pop { top: calc(100% + 10px); }
   .tb-sep { height: 36px; }
   .tb-find { margin-bottom: 0; }
+  /* no labels, no room to keep: the left-out group's place closes up */
+  .tb-gap, .tb-gap + .tb-sep { display: none; }
 }
 @media (max-width: 760px) {
   .toolbar .tb-low { display: none; }
@@ -259,7 +306,7 @@
 /* an invisible copy of the menu labels, measured to decide how many menus fit (MenuBar.tsx) */
 .menubar-measure { position: absolute; width: 0; height: 0; overflow: hidden; visibility: hidden; pointer-events: none; white-space: nowrap; }
 .menubar-measure > .menubar-item { display: inline-flex; align-items: center; flex: none; }
-.menubar { position: relative; min-width: 0; }
+.menubar { min-width: 0; }
 
 /* one wrapper per mounted document (TabHost.tsx); hidden ones are display:none via <Activity> */
 .tab-doc { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -276,3 +323,16 @@
 /* one line, so the toast stays on the strip; the full text is its title */
 .toasts .toast-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .toasts .toast-action, .toasts .toast-x { flex: none; padding-block: 0; }
+
+/* the toolbar's History popup (RadarOpus): a brown list with white text, "Clear History" over a white rule, a small soft shadow */
+.menu-list.tb-history-menu { width: max-content; min-width: 270px; max-width: calc(100vw - 16px); padding: 0; background: var(--ro-hist); border-color: var(--ro-hist); border-radius: 0; box-shadow: 0 2px 6px color-mix(in srgb, var(--ro-hist-check) 45%, transparent); font: 13px/1 system-ui, -apple-system, "Helvetica Neue", sans-serif; animation: none; }
+/* 23px rows, a narrow gutter for the dark check, the text 16px in and ~32px clear of the right edge (content-sized) */
+.tb-history-menu .menu-item { grid-template-columns: 12px 1fr; gap: 2px; height: 23px; padding: 0 32px 0 2px; border-radius: 0; color: var(--ro-hist-fg); }
+.tb-history-menu .menu-item .menu-text { white-space: pre; }
+/* RadarOpus's check is small, dark brown and hugs the popup's left edge */
+.tb-history-menu .menu-check { position: relative; left: -2px; top: 1px; color: var(--ro-hist-check); font-size: 11px; font-weight: 800; }
+.tb-history-menu .menu-item.active { background: var(--ro-hist-hover); color: var(--ro-hist-fg); }
+.tb-history-menu .menu-item.disabled { color: color-mix(in srgb, var(--ro-hist-fg) 55%, transparent); }
+.tb-history-menu .menu-item.disabled.active { background: var(--ro-hist-hover); color: color-mix(in srgb, var(--ro-hist-fg) 55%, transparent); }
+/* the rule under "Clear History": from the text start to ~20px short of the right edge */
+.tb-history-menu .menu-sep { height: 1px; margin: 0 20px 1px 16px; background: color-mix(in srgb, var(--ro-hist-fg) 80%, var(--ro-hist)); }

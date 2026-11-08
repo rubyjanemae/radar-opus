@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { openApp, settle, waitForSaved, showClipboardPane } from './helpers'
+import { openApp, settle, waitForSaved, showClipboardPane, menubar } from './helpers'
 
 const view = (page: Page) => page.getByTestId('analysis-view')
 const headers = (page: Page) => view(page).locator('.an-hcell')
@@ -98,8 +98,8 @@ test('grid ranks remedies, strategy menu re-ranks and is checked', async ({ page
   const scores = (await headers(page).locator('.an-score').allTextContents()).slice(0, 10).map(Number)
   for (let i = 1; i < scores.length; i++) expect(scores[i - 1]).toBeGreaterThanOrEqual(scores[i])
   expect(scores[0] % 20).toBe(0)
-  // Sum of symptoms (sort degrees) prints two score rows: symptoms, then degrees
-  await toolbarMenu(page, /Analysis method/, /Sum of symptoms \(sort degrees\)/)
+  // Sum of symptoms (sorted degrees) prints two score rows: symptoms, then degrees
+  await toolbarMenu(page, /Analysis method/, /Sum of symptoms \(sorted degrees\)/)
   await expect(first.locator('.an-score2')).toHaveText(/^\d+$/)
   const sym = await headers(page).locator('.an-score').allTextContents()
   const deg = await headers(page).locator('.an-score2').allTextContents()
@@ -107,12 +107,12 @@ test('grid ranks remedies, strategy menu re-ranks and is checked', async ({ page
   for (let i = 1; i < keyed.length; i++) expect(keyed[i - 1][0] * 1000 + keyed[i - 1][1]).toBeGreaterThanOrEqual(keyed[i][0] * 1000 + keyed[i][1])
 
   await view(page).getByRole('button', { name: /Analysis method/ }).click()
-  await page.getByRole('menuitemcheckbox', { name: /Small rubrics \(Organon/ }).click()
+  await page.getByRole('menuitemcheckbox', { name: /Small rubrics \(SPF\)/ }).click()
   await expect(view(page).getByRole('button', { name: /Analysis method: Small rubrics \(Organon/ })).toBeVisible()
   await expect(first.locator('.an-score2')).toHaveCount(0)
-  await expect(view(page).locator('.an-fstrategy')).toContainText('Small rubrics (Organon §153)')
+  await expect(view(page).locator('.an-fstrategy')).toContainText('Small rubrics (SPF)')
   await view(page).getByRole('button', { name: /Analysis method/ }).click()
-  await expect(page.getByRole('menuitemcheckbox', { name: /Small rubrics \(Organon/ })).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByRole('menuitemcheckbox', { name: /Small rubrics \(SPF\)/ })).toHaveAttribute('aria-checked', 'true')
   await page.keyboard.press('Escape')
 
   // undo restores the previous strategy (options are case data)
@@ -122,19 +122,26 @@ test('grid ranks remedies, strategy menu re-ranks and is checked', async ({ page
 
 test('Analysis › Select your default analysis method sets the default for new analyses', async ({ page }) => {
   await analysedCase(page, RUBRICS.slice(0, 2))
-  await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'Analysis' }).click()
-  await page.getByRole('menuitem', { name: 'Select your default analysis method' }).click()
-  await page.getByRole('menuitemcheckbox', { name: /^Kent \(hierarchy\)/ }).click()
+  await (await menubar(page)).getByRole('menuitem', { name: 'Analysis' }).click()
+  // a submenu of RadarOpus's methods; choosing one makes it the default
+  await page.getByRole('menuitem', { name: 'Select your default analysis method' }).hover()
+  const methods = page.getByRole('menu', { name: 'Select your default analysis method' })
+  await methods.getByRole('menuitemcheckbox', { name: 'Small rubrics (SPF)', exact: true }).click()
   // the current analysis switches too
-  await expect(view(page).locator('.an-fstrategy')).toHaveText('Kent (hierarchy)')
+  await expect(view(page).locator('.an-fstrategy')).toHaveText('Small rubrics (SPF)')
   // a new case starts with it (its analysis opens in a tab of its own)
   await newCase(page)
   await dropRubrics(page, RUBRICS.slice(0, 1))
   await page.keyboard.press('F8')
-  await expect(page.locator('[data-testid="analysis-view"]:visible .an-fstrategy')).toHaveText('Kent (hierarchy)')
-  await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'Analysis' }).click()
-  await page.getByRole('menuitem', { name: 'Select your default analysis method' }).click()
-  await expect(page.getByRole('menuitemcheckbox', { name: /^Kent \(hierarchy\)/ })).toHaveAttribute('aria-checked', 'true')
+  await expect(page.locator('[data-testid="analysis-view"]:visible .an-fstrategy')).toHaveText('Small rubrics (SPF)')
+  await (await menubar(page)).getByRole('menuitem', { name: 'Analysis' }).click()
+  await page.getByRole('menuitem', { name: 'Select your default analysis method' }).hover()
+  await expect(methods.getByRole('menuitemcheckbox', { name: 'Small rubrics (SPF)', exact: true })).toHaveAttribute('aria-checked', 'true')
+  // Escape changes nothing
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
+  await expect(methods).toBeHidden()
+  await expect(page.locator('[data-testid="analysis-view"]:visible .an-fstrategy')).toHaveText('Small rubrics (SPF)')
 })
 
 test('keyboard grid navigation and drill-down panel', async ({ page }) => {
@@ -260,7 +267,8 @@ test('symptom row highlights remedies in it; Search remedy marks columns and jum
 
   const box = view(page).getByRole('combobox', { name: 'Search remedy' })
   await box.fill('lyc')
-  await expect(view(page).locator('#an-rbox-list').getByRole('option').first()).toContainText('Lyc')
+  // RadarOpus's completer lists the column abbreviation ("lyc."), matched on its start
+  await expect(view(page).locator('#an-rbox-list').getByRole('option').first()).toHaveText('lyc.')
   // typing marks the matching columns
   await expect(view(page).locator('.an-hcell.found .an-abbrev').first()).toHaveText('lyc.')
   await box.press('Enter')
@@ -276,7 +284,8 @@ test('exclude, show in position, intensity toggle and filters', async ({ page })
   await page.getByTestId('remedy-panel').getByRole('button', { name: 'Exclude' }).click()
   await expect(view(page).locator('.an-pill')).toContainText('1 excluded')
   await expect(headers(page).first().locator('.an-abbrev')).not.toHaveText(top!)
-  await view(page).getByRole('button', { name: 'Show excluded remedies in position' }).click()
+  await view(page).getByRole('button', { name: /Analysis method/ }).click()
+  await page.getByRole('menuitemcheckbox', { name: /Show excluded remedies in position/ }).click()
   await expect(headers(page).first().locator('.an-abbrev')).toHaveText(top!)
   await expect(headers(page).first()).toHaveClass(/excl/)
   await expect(headers(page).first().locator('.an-rank')).toHaveText('–')
@@ -387,7 +396,7 @@ test('bars and cards views, keyboard view switching', async ({ page }) => {
 test('export CSV and print', async ({ page }) => {
   await analysedCase(page)
   const dl = page.waitForEvent('download')
-  await view(page).getByRole('button', { name: 'Export and print' }).click()
+  await view(page).getByRole('button', { name: 'Display and remedies shown' }).click()
   await page.getByRole('menuitem', { name: 'Export analysis as CSV' }).click()
   const file = await dl
   expect(file.suggestedFilename()).toMatch(/^Keller-Anna-.*\.csv$/)
@@ -412,7 +421,8 @@ test('export CSV and print', async ({ page }) => {
 
 test('compare remedies and the analysis dock', async ({ page }) => {
   await analysedCase(page)
-  await view(page).getByRole('button', { name: 'Compare remedies' }).click()
+  await view(page).getByRole('button', { name: 'Display and remedies shown' }).click()
+  await page.getByRole('menuitem', { name: 'Compare remedies…' }).click()
   const dialog = page.getByRole('dialog', { name: 'Compare remedies' })
   await expect(dialog.locator('.an-pill')).toHaveCount(4)
   await expect(dialog.locator('tbody tr')).toHaveCount(9)
@@ -493,13 +503,13 @@ test('an analysis tab of another case says so; F8 opens the active case', async 
   await dialog.getByLabel('First name').fill('Ben')
   await dialog.getByLabel('Last name').fill('Meier')
   await dialog.getByRole('button', { name: 'Create case' }).click()
-  await page.getByRole('tab', { name: /Keller · First consultation Analysis/ }).click()
+  await page.getByRole('tab', { name: / - \d+ -\s+Anna Keller/ }).click()
   const banner = view(page).getByTestId('analysis-other-case')
   await expect(banner).toContainText('Keller, Anna')
   await expect(banner).toContainText('Meier, Ben')
   // the toolbar keeps acting on this tab's case: its strategy changes, the active case's does not
   await view(page).getByRole('button', { name: /Analysis method/ }).click()
-  await page.getByRole('menuitemcheckbox', { name: /Small rubrics \(Organon/ }).click()
+  await page.getByRole('menuitemcheckbox', { name: /Small rubrics \(SPF\)/ }).click()
   await expect(view(page).getByRole('button', { name: /Analysis method: Small rubrics/ })).toBeVisible()
   await banner.getByRole('button', { name: 'Switch to active case' }).click()
   await expect(view(page).getByTestId('analysis-other-case')).toHaveCount(0)
@@ -508,7 +518,7 @@ test('an analysis tab of another case says so; F8 opens the active case', async 
   await expect(page.getByRole('tab', { name: /Analysis/ })).toHaveCount(1)
 })
 
-test('many clipboards: one menu lists them, the toolbar keeps one 40px row', async ({ page }) => {
+test('many clipboards: the display menu lists them, the toolbar keeps one 37px row', async ({ page }) => {
   await analysedCase(page, RUBRICS.slice(0, 3))
   for (let i = 0; i < 11; i++) {
     await runPalette(page, 'New clipboard')
@@ -518,13 +528,15 @@ test('many clipboards: one menu lists them, the toolbar keeps one 40px row', asy
   }
   const toolbar = view(page).locator('.an-toolbar')
   expect((await toolbar.boundingBox())!.height).toBeLessThanOrEqual(41)
-  const button = view(page).getByRole('button', { name: /^Analysed clipboards/ })
+  const button = view(page).getByRole('button', { name: 'Display and remedies shown' })
   await button.click()
-  const menu = page.getByRole('menu', { name: 'Analysed clipboards' })
-  await expect(menu.getByRole('menuitemcheckbox')).toHaveCount(13)
+  const menu = page.getByRole('menu', { name: 'Display' })
+  await expect(menu.getByRole('menuitemcheckbox', { name: /^(\d+\. Clipboard|All clipboards)/ })).toHaveCount(13)
   await expect(menu.getByRole('menuitemcheckbox', { name: /^1\. Clipboard 1 \(3\)/ })).toHaveAttribute('aria-checked', 'true')
   await menu.getByRole('menuitemcheckbox', { name: 'All clipboards' }).click()
-  await expect(button).toHaveAttribute('aria-label', /Clipboard 1/)
+  await button.click()
+  await expect(page.getByRole('menu', { name: 'Display' }).getByRole('menuitemcheckbox', { name: /^1\. Clipboard 1 \(3\)/ })).toHaveAttribute('aria-checked', 'true')
+  await page.keyboard.press('Escape')
   // every toolbar button shares one height
   const shown = (els: Element[]) => els.filter(e => e.getClientRects().length).map(e => Math.round(e.getBoundingClientRect().height))
   for (const h of await toolbar.locator('.an-tb-btn:not(.an-round)').evaluateAll(shown)) expect(h).toBe(34)
@@ -632,7 +644,7 @@ test('toolbar menus return focus: Esc to the button, a choice to the grid; aria-
   await expect(more).toHaveAttribute('aria-expanded', 'true')
   await page.keyboard.press('Escape')
   await expect(more).toBeFocused()
-  const exportBtn = view(page).getByRole('button', { name: 'Export and print' })
+  const exportBtn = view(page).getByRole('button', { name: 'Polarity' })
   await exportBtn.click()
   await page.keyboard.press('Escape')
   await expect(exportBtn).toBeFocused()
@@ -653,7 +665,7 @@ test('at 1152px the toolbar keeps one row, the clipboard pane folds away; the sy
   // symptom pane >= 200px; the remedy columns scroll sideways
   const g = await view(page).getByRole('grid').evaluate(el => ({ w: el.clientWidth, label: parseFloat(getComputedStyle(el).getPropertyValue('--an-label')), sw: el.scrollWidth }))
   expect(g.label).toBeGreaterThanOrEqual(200)
-  expect(g.label).toBeLessThanOrEqual(334)
+  expect(g.label).toBeLessThanOrEqual(326)
   expect(g.sw).toBeGreaterThan(g.w)
   // the analysis describes itself in its own footer; the desktop's status strip holds only its links (RadarOpus)
   await expect(page.locator('.statusbar')).not.toContainText('Sympt + Deg')
@@ -837,12 +849,26 @@ test('RadarOpus layout: rank and score rows, grade badges with their number, fou
   const bar = (await view(page).getByTestId('analysis-hscroll').boundingBox())!
   expect(Math.abs(bar.x - label)).toBeLessThanOrEqual(1)
   // its arrow steps one remedy column
-  await view(page).locator('.an-hbar-btn.right').click()
+  await view(page).getByTestId('analysis-hscroll').locator('.an-hbar-btn.right').click()
   await expect.poll(() => view(page).getByRole('grid').evaluate(el => el.scrollLeft)).toBe(25)
   await expect(boxes.nth(2)).toHaveText('No limitation')
   await expect(boxes.nth(3)).toHaveText('All remedies')
   // a small fixed thumb, as in RadarOpus
-  expect(Math.round((await view(page).locator('.an-hbar-thumb').boundingBox())!.width)).toBe(27)
+  expect(Math.round((await view(page).getByTestId('analysis-hscroll').locator('.an-hbar-thumb').boundingBox())!.width)).toBe(27)
+  // RadarOpus draws the vertical scrollbar and the symptom pane's own one only while the lines overflow
+  const overflows = await view(page).getByRole('grid').evaluate(el => el.scrollHeight - el.clientHeight > 1)
+  await expect(view(page).getByTestId('analysis-vscroll')).toHaveCount(overflows ? 1 : 0)
+  await expect(view(page).getByTestId('analysis-symptom-hscroll')).toHaveCount(overflows ? 1 : 0)
+  if (overflows) {
+    // the symptom pane's scrollbar sits left of the divider; its arrow slides the symptom texts
+    const sbar = (await view(page).getByTestId('analysis-symptom-hscroll').boundingBox())!
+    expect(sbar.x + sbar.width).toBeLessThanOrEqual(label)
+    await view(page).getByTestId('analysis-symptom-hscroll').locator('.an-hbar-btn.right').click()
+    await expect.poll(() => view(page).getByRole('grid').evaluate(el => parseFloat(getComputedStyle(el).getPropertyValue('--an-lx') || '0'))).toBeGreaterThan(0)
+    // the vertical scrollbar runs down beside both horizontal ones
+    const vb = (await view(page).getByTestId('analysis-vscroll').boundingBox())!
+    expect(Math.abs(vb.y + vb.height - (bar.y + bar.height))).toBeLessThanOrEqual(1)
+  }
   // the symptom line has a spoken name with its parts separated
   await expect(first).toHaveAttribute('aria-label', /^1\. MIND - .+, \d+ remedies, intensity \d/)
   // Prominence has no parameters: the gear opens the analysis settings instead

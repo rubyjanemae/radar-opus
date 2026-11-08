@@ -1,25 +1,38 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarPlus, ChevronLeft, ChevronRight, Download, MoreHorizontal, UserX } from 'lucide-react'
-import { useCatalog } from '../../data/CatalogContext'
-import { analyze } from '../../engine/analysis'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import { UserX } from 'lucide-react'
+import { runCommand } from '../../commands/registry'
 import { actions, useApp } from '../../state/store'
-import type { Consultation } from '../../state/patients'
+import type { Consultation, Patient } from '../../state/patients'
 import type { PatientTab } from '../../state/workspace'
 import { useContextMenu } from '../../ui/Menu'
 import type { MenuItem } from '../../ui/Menu'
-import { analysisViewGrade, repertoriesOf, useRepertoriesLoaded } from '../analysis/useAnalysis'
-import { sourceFor } from '../analysis/source'
-import { ConsultationEditor } from './ConsultationEditor'
-import { analysisFilterNotes, consultationsOf, formatAge, formatDate, formatScoreSigned, ghhosLabel, initials, KIND_LABEL, patientName, relativeDate, SEX_LABEL, symptomCount } from './logic'
+import { HelpGlyph } from '../toc/glyphs'
+import { ResponseCard, TextField, Prescriptions } from './ConsultationEditor'
+import { consultationsOf, KIND_LABEL } from './logic'
+import { ageYmd, consultationsOldestFirst, ddmmyyyy } from './panel'
 import { PatientDetails } from './PatientDetails'
+import { RichTextEditor } from './RichTextEditor'
+import type { RichTextHandle } from './RichTextEditor'
+import {
+  AdminTabGlyph, BalanceGlyph, CaduceusGlyph, ConsultTabGlyph, DoubleChevronGlyph, FlaskGlyph, FreeFieldsGlyph, GridGlyph, JarGlyph,
+  NewConsultGlyph, PencilGlyph, SaveGlyph, SyringeGlyph,
+} from './glyphs'
 import * as ops from './ops'
 import './patients.css'
+import './patient-view.css'
+
+/**
+ * The patient (case) tab, after RadarOpus: the "Administrative" and "Consultations" sub-tabs; the
+ * consultation toolbar; the "Last consultation (n) on the … at age …" line with the consultation
+ * chooser; the rich-text consultation editor on its page; prescriptions and free fields on demand.
+ */
+
+/** Toolbar toggles that outlive a tab switch (the view unmounts when another tab is shown). */
+const remembered = { editing: true, prescriptions: false, freeFields: false }
 
 export function PatientView({ tab }: { tab: PatientTab }) {
   const patient = useApp(s => s.patients[tab.patientId] ?? null)
-  const all = useApp(s => s.consultations)
-  const list = useMemo(() => consultationsOf(all, tab.patientId), [all, tab.patientId])
-  const cm = useContextMenu()
 
   if (!patient) {
     return (
@@ -36,177 +49,152 @@ export function PatientView({ tab }: { tab: PatientTab }) {
   }
 
   const section = tab.section ?? 'consultations'
-  const shown = list.find(c => c.id === tab.consultationId) ?? list[0] ?? null
-  const age = formatAge(patient.birthDate)
-  const more: MenuItem[] = [
-    { label: 'Duplicate patient', run: () => ops.duplicate(patient.id) },
-    { label: 'Export case file…', run: () => void ops.exportCase(patient.id) },
-    { label: 'Patient details', run: () => actions.updateTab<PatientTab>(tab.id, { section: 'details' }) },
-    { type: 'separator' },
-    { label: 'Delete patient…', danger: true, run: () => ops.confirmDeletePatient(patient.id) },
+  const show = (s: 'consultations' | 'details') => actions.updateTab<PatientTab>(tab.id, { section: s })
+  const tabs = [['details', 'Administrative', <AdminTabGlyph key="a" />], ['consultations', 'Consultations', <ConsultTabGlyph key="c" />]] as const
+  return (
+    <div className="pv" data-testid="patient-view">
+      <div className="pv-subtabs" role="tablist" aria-label="Patient sections"
+        onKeyDown={e => {
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+          e.preventDefault()
+          const next = section === 'details' ? 'consultations' : 'details'
+          show(next)
+          requestAnimationFrame(() => document.getElementById(`pv-subtab-${tab.id}-${next}`)?.focus())
+        }}>
+        {tabs.map(([key, label, icon]) => (
+          <button key={key} id={`pv-subtab-${tab.id}-${key}`} role="tab" aria-selected={section === key} tabIndex={section === key ? 0 : -1}
+            className={`pv-subtab${section === key ? ' on' : ''}`} onClick={() => show(key)}>
+            {icon}<span>{label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="pv-body" role="tabpanel" aria-label={section === 'details' ? 'Administrative' : 'Consultations'}>
+        {section === 'details'
+          ? <div className="pv-admin"><PatientDetails key={patient.id} patient={patient} /></div>
+          : <Consultations tab={tab} patient={patient} />}
+      </div>
+    </div>
+  )
+}
+
+function Consultations({ tab, patient }: { tab: PatientTab; patient: Patient }) {
+  const all = useApp(s => s.consultations)
+  const activeId = useApp(s => s.activeConsultationId)
+  const newest = useMemo(() => consultationsOf(all, patient.id), [all, patient.id])
+  const oldest = useMemo(() => consultationsOldestFirst(all, patient.id), [all, patient.id])
+  const shown: Consultation | null = newest.find(c => c.id === tab.consultationId) ?? newest[0] ?? null
+  const number = shown ? oldest.findIndex(c => c.id === shown.id) + 1 : 0
+  const [editing, setEditing] = useState(remembered.editing)
+  const [showRx, setShowRx] = useState(remembered.prescriptions)
+  const [free, setFree] = useState(remembered.freeFields)
+  // RadarOpus draws Save dull until the text has unsaved changes
+  const [unsaved, setUnsaved] = useState(false)
+  useEffect(() => { remembered.editing = editing; remembered.prescriptions = showRx; remembered.freeFields = free }, [editing, showRx, free])
+  const editor = useRef<RichTextHandle>(null)
+  const chooser = useContextMenu()
+  // "Add prescription" (ops.openPrescription) needs the prescriptions form on screen
+  const rxRequest = ops.usePrescriptionRequest(s => (shown && s.request?.consultationId === shown.id ? s.request : null))
+  if (rxRequest && !showRx) setShowRx(true)
+
+  const isActive = !!shown && shown.id === activeId
+  const save = useCallback(() => {
+    editor.current?.flush()
+    actions.toast('Patient information saved', 'success')
+  }, [])
+  const chooseItems = (): MenuItem[] => [
+    ...newest.map(c => {
+      const n = oldest.findIndex(o => o.id === c.id) + 1
+      return { label: `(${n}) ${ddmmyyyy(c.date)}  ${c.title || KIND_LABEL[c.kind]}`, checked: c.id === shown?.id, run: () => ops.selectConsultation(tab.id, c.id) }
+    }),
+    ...(shown ? [
+      { type: 'separator' } as const,
+      { label: 'New follow-up from this consultation', run: () => ops.newFollowUp(shown.id) },
+      { label: 'Delete this consultation…', danger: true, run: () => ops.confirmDeleteConsultation(shown.id) },
+    ] : []),
   ]
+  const at = shown ? ageAt(patient.birthDate, shown.date) : ''
 
   return (
-    <div className="pt-patient" data-testid="patient-view">
-      <header className="pt-head">
-        <div className="pt-avatar" aria-hidden>{initials(patient)}</div>
-        <div className="pt-head-main">
-          <h1 className="pt-head-name">{patientName(patient)}</h1>
-          <div className="pt-head-meta">
-            {[age && (/mo/.test(age) ? age : `${age} years`), patient.sex && SEX_LABEL[patient.sex], patient.occupation, patient.birthDate && `born ${formatDate(patient.birthDate)}`].filter(Boolean).join(' · ') || 'No personal data yet'}
-            {patient.tags.map(t => <span key={t} className="pt-tag sm">{t}</span>)}
-          </div>
-        </div>
-        <div className="pt-head-actions">
-          <button className="btn btn-primary" onClick={() => ops.newConsultation(patient.id)} aria-label="New consultation" title="New consultation"><CalendarPlus size={14} /><span className="btn-label">New consultation</span></button>
-          <button className="btn" onClick={() => void ops.exportCase(patient.id)} aria-label="Export" title="Export case file (JSON)"><Download size={14} /><span className="btn-label">Export</span></button>
-          <button className="icon-btn" aria-label="More patient actions" title="More" onClick={e => cm.openAt(e.currentTarget, more)}><MoreHorizontal size={16} /></button>
-        </div>
-      </header>
-      <div className="pt-seg" role="tablist" aria-label="Patient sections">
-        <button role="tab" aria-selected={section === 'consultations'} className={section === 'consultations' ? 'on' : ''} onClick={() => actions.updateTab<PatientTab>(tab.id, { section: 'consultations' })}>
-          Consultations <span className="badge">{list.length}</span>
+    <div className="pv-cons">
+      <div className="pv-tb" role="toolbar" aria-label="Consultation">
+        <TbButton title="Save patient information" className={unsaved ? 'pv-save-dirty' : 'pv-save'} onClick={save} disabled={!shown}><SaveGlyph /></TbButton>
+        <TbButton title="Edit the consultation text" pressed={editing} onClick={() => setEditing(e => !e)} disabled={!shown}><PencilGlyph /></TbButton>
+        <TbButton title="Prescriptions of this consultation" pressed={showRx} onClick={() => setShowRx(v => !v)} disabled={!shown}><JarGlyph /></TbButton>
+        <TbButton title={isActive ? 'Active case: the clipboards and analysis work on this consultation' : 'Make this consultation the active case'}
+          onClick={() => { if (shown) ops.makeActive(shown.id) }} disabled={!shown}><CaduceusGlyph /></TbButton>
+        <TbButton title="Open the analysis of this consultation" onClick={() => shown && actions.openTab({ kind: 'analysis', consultationId: shown.id })} disabled={!shown}><BalanceGlyph /></TbButton>
+        <TbButton title="Case report" onClick={() => shown && ops.openReport(shown.id)} disabled={!shown}><GridGlyph /></TbButton>
+        <span className="pv-tb-sep" aria-hidden="true" />
+        <button className="pv-tbtn pv-tbtn-label" title="Create a new consultation" onClick={() => ops.newConsultation(patient.id)}>
+          <NewConsultGlyph /><span>New consultation</span>
         </button>
-        <button role="tab" aria-selected={section === 'details'} className={section === 'details' ? 'on' : ''} onClick={() => actions.updateTab<PatientTab>(tab.id, { section: 'details' })}>
-          Details
+        <span className="pv-grow" />
+        <TbButton title="Prescribe a remedy" onClick={() => { if (shown) { setShowRx(true); ops.openPrescription(shown.id) } }} disabled={!shown}><SyringeGlyph /></TbButton>
+        <TbButton title="New follow-up with a copy of the clipboards" onClick={() => shown && ops.newFollowUp(shown.id)} disabled={!shown}><FlaskGlyph /></TbButton>
+        <button className={`pv-tbtn pv-tbtn-label${free ? ' on' : ''}`} aria-pressed={free} title="Consultation free fields: title, date, kind, complaint, assessment"
+          onClick={() => setFree(v => !v)} disabled={!shown}>
+          <FreeFieldsGlyph /><span>Consultation free fields</span>
         </button>
+        <button className="pv-help" title="Keyboard shortcuts (F1)" aria-label="Keyboard shortcuts" onClick={() => runCommand('help.shortcuts')}><HelpGlyph /></button>
       </div>
-      {section === 'details' ? (
-        <div className="pt-body-scroll"><PatientDetails key={patient.id} patient={patient} /></div>
+
+      {shown ? (
+        <>
+          <div className="pv-line">
+            <b>{shown.id === newest[0]?.id ? 'Last consultation' : 'Consultation'} ({number})</b>
+            <button className="pv-choose" aria-haspopup="menu" aria-expanded={chooser.isOpen} title="Choose another consultation" aria-label="Choose another consultation"
+              onClick={e => chooser.openAt(e.currentTarget, chooseItems())}
+              onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); chooser.openAt(e.currentTarget, chooseItems()) } }}>
+              <DoubleChevronGlyph />
+            </button>
+            <span>on the {ddmmyyyy(shown.date)}{at && <> at age {at}</>}</span>
+          </div>
+          <RichTextEditor ref={editor} key={shown.id} consultation={shown} editable={editing} onDirty={setUnsaved}>
+            {free && (
+              <section className="pv-free" aria-label="Consultation free fields">
+                <div className="pv-free-row">
+                  <TextField key={`t${shown.id}`} label="Title" className="pt-ed-title" value={shown.title} onCommit={v => actions.updateConsultation(shown.id, { title: v })} placeholder="Consultation title" />
+                  <label className="field pt-field pt-ed-date">
+                    <span>Date</span>
+                    <input type="date" className="input" value={shown.date} onChange={e => { if (e.target.value) actions.updateConsultation(shown.id, { date: e.target.value }) }} />
+                  </label>
+                  <label className="field pt-field pt-ed-kind">
+                    <span>Kind</span>
+                    <select className="select" value={shown.kind} onChange={e => actions.updateConsultation(shown.id, { kind: e.target.value as Consultation['kind'] })}>
+                      {Object.entries(KIND_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <TextField key={`c${shown.id}`} label="Chief complaint" className="pt-ed-complaint" value={shown.complaint} onCommit={v => actions.updateConsultation(shown.id, { complaint: v })} placeholder="Main complaint in the patient's words" />
+                <TextField key={`a${shown.id}`} label="Assessment" multiline rows={3} value={shown.assessment} onCommit={v => actions.updateConsultation(shown.id, { assessment: v })} placeholder="Analysis of the case, differential, plan" />
+                <ResponseCard consultation={shown} />
+              </section>
+            )}
+            {showRx && <div className="pv-rx"><Prescriptions consultation={shown} /></div>}
+          </RichTextEditor>
+          {chooser.element}
+        </>
       ) : (
-        <div className="pt-split">
-          <Timeline tab={tab} list={list} selectedId={shown?.id ?? null} onMenu={(e, c) => cm.open(e, timelineMenu(c))} onMenuAt={(el, c) => cm.openAt(el, timelineMenu(c))} />
-          {shown ? <ConsultationEditor key={shown.id} consultation={shown} /> : (
-            <div className="empty-state">
-              <CalendarPlus size={26} aria-hidden />
-              <strong>No consultations yet</strong>
-              <span>Record the first consultation to start the case: notes, clipboards, analysis and prescriptions.</span>
-              <button className="btn btn-primary" onClick={() => ops.newConsultation(patient.id)}>New consultation</button>
-            </div>
-          )}
+        <div className="pv-none">
+          <p>{patient.firstName || patient.lastName ? `${[patient.firstName, patient.lastName].filter(Boolean).join(' ')} has no consultations yet.` : 'No consultations yet.'}</p>
+          <button className="btn" onClick={() => ops.newConsultation(patient.id)}>Create a new consultation</button>
         </div>
       )}
-      {cm.element}
     </div>
   )
 }
 
-function timelineMenu(c: Consultation): MenuItem[] {
-  const active = useApp.getState().activeConsultationId === c.id
-  return [
-    { label: 'Make active case', disabled: active, run: () => ops.makeActive(c.id) },
-    { label: 'Open analysis', run: () => actions.openTab({ kind: 'analysis', consultationId: c.id }) },
-    { label: 'New follow-up from this', run: () => ops.newFollowUp(c.id) },
-    { label: 'Case report…', run: () => ops.openReport(c.id) },
-    { type: 'separator' },
-    { label: 'Delete consultation…', danger: true, keys: 'Delete', run: () => ops.confirmDeleteConsultation(c.id) },
-  ]
-}
-
-function Timeline({ tab, list, selectedId, onMenu, onMenuAt }: {
-  tab: PatientTab; list: Consultation[]; selectedId: string | null
-  onMenu: (e: React.MouseEvent, c: Consultation) => void; onMenuAt: (el: HTMLElement, c: Consultation) => void
-}) {
-  const catalog = useCatalog()
-  const activeId = useApp(s => s.activeConsultationId)
-  const ref = useRef<HTMLDivElement>(null)
-  const reps = useMemo(() => repertoriesOf(list.flatMap(c => c.clipboards)), [list])
-  const load = useRepertoriesLoaded(catalog, reps)
-  const tops = useMemo(() => {
-    const src = sourceFor(catalog)
-    const m = new Map<string, string[]>()
-    for (const c of list) {
-      if (!symptomCount(c)) continue
-      const res = analyze(src, c.clipboards, { ...c.analysis, limit: 3 }, { minGrade: analysisViewGrade(c.analysis) })
-      m.set(c.id, res.rows.filter(r => !r.excluded).slice(0, 3).map(r => catalog.remedy(r.remedyId).abbrev))
-    }
-    return m
-  }, [list, catalog, load.version]) // eslint-disable-line react-hooks/exhaustive-deps
-  const filterNote = (c: Consultation) => { const n = analysisFilterNotes(c.analysis, id => catalog.remedy(id).abbrev); return n.length ? `: ${n.join(', ')}` : '' }
-  // narrow panes lay the timeline out as a horizontal strip: show where more cards are hidden
-  const [more, setMore] = useState({ left: false, right: false })
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const update = () => {
-      const left = el.scrollLeft > 1, right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
-      setMore(m => (m.left === left && m.right === right ? m : { left, right }))
-    }
-    update()
-    el.addEventListener('scroll', update, { passive: true })
-    const ro = new ResizeObserver(update)
-    ro.observe(el)
-    return () => { el.removeEventListener('scroll', update); ro.disconnect() }
-  }, [list.length])
-  const page = (d: 1 | -1) => {
-    const el = ref.current
-    if (!el) return
-    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    el.scrollBy({ left: d * el.clientWidth * 0.8, behavior: reduce ? 'auto' : 'smooth' })
-  }
-  const index = list.findIndex(c => c.id === selectedId)
-  const select = (i: number) => {
-    const c = list[Math.max(0, Math.min(list.length - 1, i))]
-    if (!c) return
-    ops.selectConsultation(tab.id, c.id)
-    requestAnimationFrame(() => ref.current?.querySelector<HTMLElement>(`[data-cid="${c.id}"]`)?.scrollIntoView({ block: 'nearest' }))
-  }
-
+function TbButton({ title, pressed, disabled, onClick, children, className }: { title: string; pressed?: boolean; disabled?: boolean; onClick: () => void; children: ReactNode; className?: string }) {
   return (
-    <div className={`pt-tl-wrap${more.left ? ' more-left' : ''}${more.right ? ' more-right' : ''}`}>
-    {more.left && <button className="icon-btn pt-tl-page prev" tabIndex={-1} aria-label="Show earlier cards" title="Scroll back" onClick={() => page(-1)}><ChevronLeft size={16} /></button>}
-    {more.right && <button className="icon-btn pt-tl-page next" tabIndex={-1} aria-label="Show more consultations" title={`More consultations (${list.length} in all)`} onClick={() => page(1)}><ChevronRight size={16} /></button>}
-    <div
-      ref={ref} className="pt-timeline" role="listbox" aria-label="Consultations" tabIndex={0}
-      aria-activedescendant={selectedId ? `pt-c-${selectedId}` : undefined}
-      onKeyDown={e => {
-        const c = list[index]
-        if (e.key === 'ArrowDown' || e.key === 'ArrowRight') { e.preventDefault(); select(index + 1) }
-        else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') { e.preventDefault(); select(index - 1) }
-        else if (e.key === 'Home') { e.preventDefault(); select(0) }
-        else if (e.key === 'End') { e.preventDefault(); select(list.length - 1) }
-        else if (e.key === 'Enter' && c) { e.preventDefault(); (document.querySelector('.pt-editor textarea, .pt-editor input') as HTMLElement | null)?.focus() }
-        else if (e.key === 'Delete' && c) { e.preventDefault(); ops.confirmDeleteConsultation(c.id) }
-        else if ((e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) && c) {
-          e.preventDefault()
-          const el = ref.current?.querySelector<HTMLElement>(`[data-cid="${c.id}"]`)
-          if (el) onMenuAt(el, c)
-        }
-      }}
-    >
-      {list.length === 0 && <div className="pt-card-empty">No consultations</div>}
-      {list.map((c, i) => {
-        const n = symptomCount(c)
-        const top = tops.get(c.id)
-        const year = c.date.slice(0, 4)
-        return (
-          <div key={c.id} className="pt-tl-group">
-            {(i === 0 || list[i - 1].date.slice(0, 4) !== year) && <div className="pt-tl-year">{year}</div>}
-            <div
-              id={`pt-c-${c.id}`} data-cid={c.id} role="option" aria-selected={c.id === selectedId}
-              className={`pt-tl-item k-${c.kind}${c.id === selectedId ? ' selected' : ''}`}
-              onMouseDown={() => ops.selectConsultation(tab.id, c.id)}
-              onDoubleClick={() => ops.makeActive(c.id)}
-              onContextMenu={e => { ops.selectConsultation(tab.id, c.id); onMenu(e, c) }}
-            >
-              <div className="pt-tl-line1">
-                <span className="pt-tl-date">{formatDate(c.date)}</span>
-                <span className={`pt-kind k-${c.kind}`}>{KIND_LABEL[c.kind]}</span>
-                {c.id === activeId && <span className="pt-active-pill" title="Active case: the clipboards show this consultation">Active</span>}
-              </div>
-              <div className="pt-tl-title">{c.title || 'Consultation'}</div>
-              <div className="pt-tl-meta">
-                <span title="Symptoms on the clipboards">{n} symptom{n === 1 ? '' : 's'}</span>
-                {c.response?.score != null && <span className={`pt-tl-resp ${c.response.score > 0 ? 'pos' : c.response.score < 0 ? 'neg' : 'zero'}`} title={`Response to the previous remedy: ${ghhosLabel(c.response.score)}`}>{formatScoreSigned(c.response.score)}</span>}
-                {c.prescriptions.length > 0 && <span className="pt-tl-rx" title="Prescribed">{c.prescriptions.map(p => `${catalog.remedy(p.remedyId).abbrev} ${p.potency}`).join(', ')}</span>}
-              </div>
-              {top && top.length > 0 && <div className="pt-tl-top" title={`Top remedies of the analysis${filterNote(c)}`}>↳ {top.join(' · ')}{filterNote(c) && <span className="pt-dim"> (filtered)</span>}</div>}
-              <div className="pt-tl-rel">{relativeDate(c.date)}</div>
-            </div>
-          </div>
-        )
-      })}
-    </div>
-    </div>
+    <button className={`pv-tbtn${pressed ? ' on' : ''}${className ? ` ${className}` : ''}`} title={title} aria-label={title} aria-pressed={pressed} disabled={disabled} onClick={onClick}>
+      {children}
+    </button>
   )
+}
+
+/** Age (years.months.days) on the consultation date. */
+function ageAt(birthDate: string | null, date: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(date)
+  if (!m) return ''
+  return ageYmd(birthDate, new Date(+m[1], +m[2] - 1, +m[3], 12).getTime())
 }
