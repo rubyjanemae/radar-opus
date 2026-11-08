@@ -168,3 +168,5 @@
   padding: 5px 8px; border-radius: var(--radius); font-size: var(--fs-sm); color: var(--text);
   background: color-mix(in srgb, var(--accent) 9%, var(--bg-elev)); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
 }
+/* the footer is a RadarOpus window footer: pale terracotta, icon buttons (find.css .rfind-btn) */
+.dialog[data-dialog="repertory.take"] .dialog-foot { gap: 6px; padding: 8px 10px; border-top: 0; background: var(--nw-peach); }

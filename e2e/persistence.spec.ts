@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { openApp, waitForSaved } from './helpers'
+import { openApp, waitForSaved, menubar } from './helpers'
 
 const SHOTS = process.env.SHOTS_DIR
 
@@ -158,9 +158,9 @@ test('toast actions are reachable with Alt+N and stay while focused', async ({ p
 test('workspace restore asks first, rejects invalid files and can be undone', async ({ page }) => {
   await openApp(page)
   const menu = async () => {
-    await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'Tools', exact: true }).click()
+    await (await menubar(page)).getByRole('menuitem', { name: 'Tools', exact: true }).click()
     await page.getByRole('menu').getByRole('menuitem', { name: 'Database management' }).hover()
-    await page.getByRole('menuitem', { name: 'Restore workspace backup…' }).click()
+    await page.getByRole('menuitem', { name: 'Restore', exact: true }).click()
   }
   // invalid file: error toast, nothing changes
   let chooser = page.waitForEvent('filechooser')
@@ -189,9 +189,9 @@ test('a restored workspace survives an immediate reload (no stale autosave lands
   await openApp(page)
   const file = { format: 'radar-opus-workspace', version: 1, state: legacyState({ settings: { theme: 'dark' } }) }
   const chooser = page.waitForEvent('filechooser')
-  await page.getByRole('menubar', { name: 'Main menu' }).getByRole('menuitem', { name: 'Tools', exact: true }).click()
+  await (await menubar(page)).getByRole('menuitem', { name: 'Tools', exact: true }).click()
   await page.getByRole('menu').getByRole('menuitem', { name: 'Database management' }).hover()
-  await page.getByRole('menuitem', { name: 'Restore workspace backup…' }).click()
+  await page.getByRole('menuitem', { name: 'Restore', exact: true }).click()
   await (await chooser).setFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) })
   await page.getByRole('dialog', { name: 'Restore workspace backup' }).getByRole('button', { name: 'Replace workspace' }).click()
   // the success toast appears only once the restored workspace is written

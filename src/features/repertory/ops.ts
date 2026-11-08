@@ -179,7 +179,7 @@ export function ensureConsultation(opts: { quiet?: boolean } = {}): string {
  * Resolve a 1-based clipboard number (null = active), creating clipboards up to that number.
  * Everything it creates (an unsaved case, clipboards) is one undo step, or part of the caller's.
  */
-export function ensureClipboard(n: number | null, opts: { quiet?: boolean } = {}): { id: string; name: string } | null {
+export function ensureClipboard(n: number | null, opts: { quiet?: boolean; inAnalysis?: boolean } = {}): { id: string; name: string } | null {
   return actions.transaction(() => {
     ensureConsultation(opts)
     let s = st()
@@ -191,7 +191,7 @@ export function ensureClipboard(n: number | null, opts: { quiet?: boolean } = {}
     const keep = s.activeClipboardId
     let c = selectActiveConsultation(s)
     while (c && c.clipboards.length < target) {
-      if (!actions.addClipboard()) break
+      if (!actions.addClipboard({ inAnalysis: opts.inAnalysis })) break
       s = st()
       c = selectActiveConsultation(s)
     }
@@ -538,7 +538,7 @@ export function rubricMenu(ref: RubricRef): MenuItem[] {
       const n = r ? r.rep.remedyCount(r.index) : 0
       return n ? { label: `Remedies (${n})`, submenu: remedyMenuItems(ref) } : { label: 'Remedies', disabled: true }
     })(),
-    // a chapter heading with remedies of its own: the book folds them away under its "(n)" expander
+    // a chapter heading with remedies of its own: the book folds them away (RadarOpus prints only the name)
     ...(() => {
       const r = resolve(ref)
       if (!r || r.rep.depth(r.index) !== 0 || !r.rep.remedyCount(r.index)) return []

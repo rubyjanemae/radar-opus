@@ -121,28 +121,27 @@ test('remedy tooltips follow the pointer only, never the keyboard', async ({ pag
   expect(under).toBe('none')
 })
 
-test('a chapter heading folds its own remedies under "(n)"; the first rubric follows the band in column 1', async ({ page }) => {
+test('a chapter heading shows only its picture and name; its own remedies unfold from the context menu', async ({ page }) => {
   await openBook(page)
   await go(page, 0)
   const head = page.locator(`${doc} .rv-row.rv-chapter`).first()
-  const more = head.locator('.rv-chrems')
-  await expect(more).toHaveText(/^\(\d+\)$/)
-  await expect(more).toHaveAttribute('aria-expanded', 'false')
+  // as RadarOpus: no count, no expander after the chapter name
+  await expect(head.locator('.rv-count, button')).toHaveCount(0)
   await expect(head.locator('.rv-chline')).toHaveCount(0)
   // the first level-1 rubric starts right under the heading band, in column 1
   const next = page.locator(`${doc} .rv-col1 .rv-row[data-rubric="1"]`)
   await expect(next).toBeVisible()
   const hb = (await head.boundingBox())!, nb = (await next.boundingBox())!
   expect(nb.y - (hb.y + hb.height)).toBeLessThan(4)
-  await more.click()
-  await expect(more).toHaveAttribute('aria-expanded', 'true')
-  await expect(head.locator('.rv-chline .rv-rem').first()).toBeVisible()
-  // the heading's "(n)" counts the list once: the paragraph starts with the remedies
-  await expect(head.locator('.rv-chline .rv-count')).toHaveCount(0)
-  // the context menu toggles it from the keyboard
+  // the context menu toggles the heading's own remedies from the keyboard
   await page.locator(`${doc} .rv-scroll`).focus()
   await page.keyboard.press('Shift+F10')
   const item = page.getByRole('menuitemcheckbox', { name: 'Show chapter remedies in the book' })
+  await expect(item).toHaveAttribute('aria-checked', 'false')
+  await item.click()
+  await expect(head.locator('.rv-chline .rv-rem').first()).toBeVisible()
+  await page.locator(`${doc} .rv-scroll`).focus()
+  await page.keyboard.press('Shift+F10')
   await expect(item).toHaveAttribute('aria-checked', 'true')
   await item.click()
   await expect(head.locator('.rv-chline')).toHaveCount(0)
@@ -191,7 +190,7 @@ test('Kent: a reference the data cut off is muted, and Return on it says why it 
   await expect(page.locator(`${doc} .rv-row`).first()).toBeVisible()
   await go(page, 1710)
   const see = page.locator(`${doc} .rv-row.rv-current .rv-see`)
-  await expect(see).toHaveText('(siehe … )')
+  await expect(see).toHaveText('(Siehe ... )')
   await expect(see).toHaveClass(/rv-see-dead/)
   await expect(see).toHaveAttribute('title', 'Reference target not in this repertory')
   const grey = await see.evaluate(e => getComputedStyle(e).color)

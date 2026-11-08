@@ -237,3 +237,11 @@
 @media (max-width: 1180px) {
   .brand-name { display: none; }
 }
+
+/* ───────── View › List of authors and documents ───────── */
+.ws-authors { max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 4px; }
+.ws-authors table { width: 100%; border-collapse: collapse; font-size: var(--fs); }
+.ws-authors th { position: sticky; top: 0; padding: 0; background: var(--chrome); border-bottom: 1px solid var(--border); text-align: left; font-weight: 600; }
+.ws-authors th > button, .ws-authors th:last-child { display: block; width: 100%; height: var(--row); padding: 0 8px; border: 0; background: transparent; color: var(--text); font: inherit; font-weight: 600; text-align: left; line-height: var(--row); }
+.ws-authors th > button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.ws-authors td { height: var(--row); padding: 0 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }

@@ -75,8 +75,20 @@ export function clearFamilyFilter(mode: FilterMode | 'both', consultationId = ta
   })
 }
 
+/**
+ * Analysis › Limit to a family: RadarOpus's family classifications, in its order and wording. Each opens the
+ * family chooser on that classification's groups of this app's families data.
+ */
+export const FAMILY_SETS: { id: string; label: string; tops: string[] }[] = [
+  { id: 'minerals', label: 'IMPONDERABLES + MINERALS and CHEMICALS', tops: ['k:impon', 'k:mineral', 'k:other'] },
+  { id: 'plants', label: 'Plants APG2', tops: ['k:plant', 'k:fungus'] },
+  { id: 'animals', label: 'Animals + Analogic groups', tops: ['k:animal', 'k:sarcode'] },
+  { id: 'periodic', label: 'Periodic Table (Classical)', tops: ['mineral:periods', 'mineral:pgroups'] },
+  { id: 'nosodes', label: 'Nosodes families', tops: ['k:nosode', 'k:bacteria'] },
+]
+
 /** Open the family filter dialog for the target case. */
-export function openFilterDialog(props: { groups?: string[]; mode?: FilterMode } = {}) {
+export function openFilterDialog(props: { groups?: string[]; mode?: FilterMode; tops?: string[]; title?: string } = {}) {
   const id = targetConsultationId()
   if (!id) { noCase(); return }
   void loadFamilies().catch(() => { /* the dialog shows the error */ })

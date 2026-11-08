@@ -1,13 +1,13 @@
 import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
-import { FRESH, SEEDED, showToc, installRenderCounter, openApp, settle, takeRenders, waitForSaved, showClipboardPane } from './helpers'
+import { FRESH, SEEDED, showToc, installRenderCounter, openApp, settle, takeRenders, waitForSaved, showClipboardPane, menubar } from './helpers'
 
 /** The app labels shortcuts the Mac way (⌘, ⌥, Meta) when the browser runs on macOS. */
 const MAC = process.platform === 'darwin'
 
 test('shell boots with menubar, toolbar, tabs and status bar', async ({ page }) => {
   await openApp(page)
-  await expect(page.getByRole('menubar', { name: 'Main menu' })).toBeVisible()
+  await expect((await menubar(page))).toBeVisible()
   await expect(page.getByRole('toolbar', { name: 'Main toolbar' })).toBeVisible()
   await expect(page.getByRole('tablist', { name: 'Open documents' })).toBeVisible()
   await expect(page.getByLabel('Status')).toContainText('table of contents')
@@ -58,7 +58,7 @@ test('tab strip: tabs shrink and scroll inside the document pane; close lives ou
 
 test('menubar: one tab stop, Escape and chosen items give focus back', async ({ page }) => {
   await freshApp(page)
-  const bar = page.getByRole('menubar', { name: 'Main menu' })
+  const bar = (await menubar(page))
   expect(await bar.locator('[role=menuitem][tabindex="0"]').count()).toBe(1)
   // only menuitems inside the menubar
   expect(await bar.locator('> :not([role=menuitem])').count()).toBe(0)
@@ -69,13 +69,14 @@ test('menubar: one tab stop, Escape and chosen items give focus back', async ({ 
   expect(before.inNav).toBe(true)
 
   await page.keyboard.press('F10')
-  await expect(bar.getByRole('menuitem', { name: 'File' })).toBeFocused()
+  // the first menu is the application menu (macOS)
+  await expect(bar.getByRole('menuitem', { name: 'RadarOpus' })).toBeFocused()
   await page.keyboard.press('Escape')
   expect(await activeInfo(page)).toEqual(before)
 
   await page.keyboard.press('F10')
   await page.keyboard.press('ArrowDown')
-  const menu = page.getByRole('menu', { name: 'File' })
+  const menu = page.getByRole('menu', { name: 'RadarOpus' })
   await expect(menu).toBeVisible()
   // the active item is exposed to assistive technology
   const activeId = await menu.getAttribute('aria-activedescendant')
@@ -86,10 +87,10 @@ test('menubar: one tab stop, Escape and chosen items give focus back', async ({ 
   expect(await activeInfo(page)).toEqual(before)
 
   // a chosen item runs after focus is back: About opens, and closing it restores focus again
+  // (RadarOpus › About RadarOpus, the application menu's first item)
   await page.keyboard.press('F10')
-  await page.keyboard.press('End')
   await page.keyboard.press('ArrowDown')
-  await page.keyboard.press('End')
+  await page.keyboard.press('Home')
   await page.keyboard.press('Enter')
   await expect(page.getByRole('dialog', { name: /About/ })).toBeVisible()
   await page.keyboard.press('Escape')
@@ -118,8 +119,8 @@ test('Take menu follows ticked search results', async ({ page }) => {
   await box.waitFor({ timeout: 20_000 })
   await box.click()
   // ticking a result only changes the search feature's selection store: the Take menu still follows it
-  await page.getByRole('menubar').getByRole('menuitem', { name: 'Take', exact: true }).click()
-  await expect(page.getByRole('menu', { name: 'Take' }).getByRole('menuitem', { name: 'Take with intensity 1 (+1)' })).toBeEnabled()
+  await (await menubar(page)).getByRole('menuitem', { name: 'Take', exact: true }).click()
+  await expect(page.getByRole('menu', { name: 'Take' }).getByRole('menuitem', { name: 'Take with intensity 1', exact: true })).toBeEnabled()
 })
 
 test('status strip holds only its links (RadarOpus); shortcuts reference hides reserved chords', async ({ page }) => {
@@ -130,8 +131,9 @@ test('status strip holds only its links (RadarOpus); shortcuts reference hides r
   // no rubric path, clipboard summary or "Saved" badge: the save state is kept for assistive technology only
   await expect(status.locator('.save-ind')).toHaveAttribute('data-state', /idle|saved|pending|saving/)
   expect((await status.locator('.save-ind').boundingBox())!.width).toBeLessThanOrEqual(1)
-  // TOC hidden at boot: no "Expand Toc"
-  await expect(status.getByRole('button')).toHaveCount(2)
+  // TOC on show at boot (RadarOpus): its "Expand Toc" link is the third
+  await expect(status.getByRole('button')).toHaveCount(3)
+  await expect(status.getByRole('button', { name: 'Expand Toc' })).toBeVisible()
   await page.keyboard.press('F1')
   const dlg = page.getByRole('dialog', { name: 'Keyboard shortcuts' })
   await expect(dlg).toBeVisible()
@@ -194,13 +196,16 @@ test('clipboard strip: three slots, the active one pressed, its count under the 
     const count = await slots.nth(i).locator('.clip-slot-count').boundingBox()
     if (count && (await slots.nth(i).locator('.clip-slot-count').textContent())) expect(count.y).toBeGreaterThanOrEqual(icon.y + icon.height - 1)
   }
-  // selecting the second clipboard makes it the active one: two ticks on its icon, none on the others
+  // selecting the second clipboard makes it the active one: its count turns bold, the first's regular;
+  // the ticks mark the clipboards in the analysis (both, as a new clipboard joins the analysis)
   await page.locator('.rv-scroll').first().focus()
   await slots.nth(1).click()
   await expect(slots.nth(1)).toHaveAttribute('aria-pressed', 'true')
   await expect(slots.nth(0)).toHaveAttribute('aria-pressed', 'false')
+  await expect(slots.nth(1).locator('.clip-slot-count')).toHaveCSS('font-weight', '700')
+  await expect(slots.nth(0).locator('.clip-slot-count')).toHaveCSS('font-weight', '400')
   await expect(slots.nth(1).locator('.clip-tick')).toHaveCount(1)
-  await expect(slots.nth(0).locator('.clip-tick')).toHaveCount(0)
+  await expect(slots.nth(0).locator('.clip-tick')).toHaveCount(1)
   // like a toolbar button, the click leaves the keyboard in the document
   await expect.poll(async () => (await activeInfo(page)).inDoc).toBe(true)
   // from the keyboard, arrows move between the slots
@@ -212,13 +217,15 @@ test('clipboard strip: three slots, the active one pressed, its count under the 
 test('status strip links toggle the table of contents and the toolbars and clipboards', async ({ page }) => {
   await freshApp(page)
   const status = page.getByLabel('Status')
-  // RadarOpus starts with the table of contents hidden
-  await expect(page.locator('.pane-left')).toHaveCount(0)
-  await status.getByRole('button', { name: /^Show table of contents/ }).click()
+  // RadarOpus starts with the table of contents on show
   await expect(page.locator('.pane-left')).toBeVisible()
   await status.getByRole('button', { name: /^Hide the table of contents/ }).click()
   await expect(page.locator('.pane-left')).toHaveCount(0)
   await expect(status.getByRole('button', { name: 'Expand Toc' })).toHaveCount(0)
+  await status.getByRole('button', { name: /^Show table of contents/ }).click()
+  await expect(page.locator('.pane-left')).toBeVisible()
+  await page.keyboard.press('ControlOrMeta+F2')
+  await expect(page.locator('.pane-left')).toHaveCount(0)
   await page.keyboard.press('ControlOrMeta+F2')
   await expect(page.locator('.pane-left')).toBeVisible()
   // Expand Toc widens the table of contents; Reduce Toc gives the old width back
@@ -230,7 +237,7 @@ test('status strip links toggle the table of contents and the toolbars and clipb
   await status.getByRole('button', { name: 'Hide toolbars and clipboards' }).click()
   await expect(page.getByRole('toolbar', { name: 'Main toolbar' })).toHaveCount(0)
   await expect(page.getByRole('toolbar', { name: 'Clipboards' })).toHaveCount(0)
-  await status.getByRole('button', { name: 'Show toolbars and clipboards' }).click()
+  await status.getByRole('button', { name: 'Show toolbars and clipboard icons' }).click()
   await expect(page.getByRole('toolbar', { name: 'Main toolbar' })).toBeVisible()
   await expect(page.getByRole('toolbar', { name: 'Clipboards' })).toBeVisible()
   // the opt-in clipboard pane goes with them, and the links leave the keyboard in the document
@@ -238,8 +245,8 @@ test('status strip links toggle the table of contents and the toolbars and clipb
   await expect(page.getByTestId('clipboard-panel')).toBeVisible()
   await status.getByRole('button', { name: 'Hide toolbars and clipboards' }).click()
   await expect(page.getByTestId('clipboard-panel')).toHaveCount(0)
-  await expect(status.getByRole('button', { name: 'Show toolbars and clipboards' })).not.toBeFocused()
-  await status.getByRole('button', { name: 'Show toolbars and clipboards' }).click()
+  await expect(status.getByRole('button', { name: 'Show toolbars and clipboard icons' })).not.toBeFocused()
+  await status.getByRole('button', { name: 'Show toolbars and clipboard icons' }).click()
   await expect(page.getByTestId('clipboard-panel')).toBeVisible()
 })
 
@@ -273,8 +280,9 @@ test('a toolbar button that switches documents moves focus off a tab left focuse
   await expect(page.locator('.menu-list')).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(tab).toBeFocused()
-  await page.getByRole('toolbar', { name: 'Main toolbar' }).getByRole('button', { name: 'References', exact: true }).click()
-  await expect(page.locator('.tabstrip [role=tab][aria-selected=true]')).toContainText('Materia medica')
+  // (References, Remedies, ... are list buttons that switch the table of contents; Patients opens a document)
+  await page.getByRole('toolbar', { name: 'Main toolbar' }).getByRole('button', { name: 'Patients', exact: true }).click()
+  await expect(page.locator('.tabstrip [role=tab][aria-selected=true]')).toContainText('Patients')
   await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('.tab-doc[data-active]'))).toBe(true)
 })
 
@@ -311,10 +319,11 @@ test('Window menu lists the open documents and switches to one', async ({ page }
   await freshApp(page)
   await page.keyboard.press('ControlOrMeta+3')
   await expect(page.locator('.pt-list').first()).toBeVisible()
-  await page.getByRole('menubar').getByRole('menuitem', { name: 'Window', exact: true }).click()
+  await (await menubar(page)).getByRole('menuitem', { name: 'Window', exact: true }).click()
   const menu = page.getByRole('menu', { name: 'Window' })
   await expect(menu.getByRole('menuitem', { name: 'Close all windows' })).toBeVisible()
-  const first = menu.locator('[role^=menuitem]', { hasText: /\b1\. / })
+  // one entry per open document, by its tab title (RadarOpus): the first tab's comes right after the rule
+  const first = menu.locator('[role=separator] ~ [role^=menuitem]').first()
   await expect(first).toBeVisible()
   await first.click()
   await expect(page.locator('.tabstrip [role=tab]').first()).toHaveAttribute('aria-selected', 'true')
@@ -387,11 +396,13 @@ test('claimed keys never reach the browser: Alt+Left, F3, F6, Ctrl+D, Ctrl+Shift
 
 test('Ctrl+1..5 are shown as shortcuts in menus', async ({ page }) => {
   await freshApp(page)
-  await page.getByRole('menubar').getByRole('menuitem', { name: 'View', exact: true }).click()
+  await (await menubar(page)).getByRole('menuitem', { name: 'View', exact: true }).click()
   const item = page.getByRole('menuitem', { name: 'Open list of repertories' })
   await expect(item).toHaveAttribute('aria-keyshortcuts', MAC ? 'Meta+1' : 'Control+1')
   await expect(item.locator('.menu-keys')).toHaveText(MAC ? '⌘1' : 'Ctrl+1')
-  await expect(page.getByRole('menuitem', { name: 'Open list of references', exact: true })).toHaveAttribute('aria-keyshortcuts', MAC ? 'Meta+2' : 'Control+2')
+  // "Open list of references" is the toolbar References list (table of contents), not the Ctrl+2 book tab
+  await page.getByRole('menuitem', { name: 'Open list of references', exact: true }).click()
+  await expect(page.locator('.toolbar').getByRole('button', { name: 'References', exact: true })).toHaveAttribute('aria-pressed', 'true')
 })
 
 test('recently visited documents stay mounted: switching back does not remount the book', async ({ page }) => {
@@ -530,19 +541,17 @@ test('menus: aria-expanded on menu buttons, names without glyphs, focus returns 
   await page.keyboard.press('Escape')
   await expect(patients).toBeFocused()
 
-  await page.getByRole('menubar').getByRole('menuitem', { name: 'Analysis' }).click()
-  const method = page.getByRole('menuitem', { name: 'Select your default analysis method' })
-  await expect(method).toHaveAttribute('aria-expanded', 'false')
-  await method.hover()
-  await expect(method).toHaveAttribute('aria-expanded', 'true')
-  await expect(page.getByRole('menu', { name: 'Select your default analysis method' })).toBeVisible()
-  // the check glyph and shortcut are not part of the name
-  await expect(page.getByRole('menuitemcheckbox', { name: 'Kent (hierarchy)', exact: true }).or(page.getByRole('menuitemradio', { name: 'Kent (hierarchy)', exact: true })).or(page.getByRole('menuitem', { name: 'Kent (hierarchy)', exact: true }))).toBeVisible()
+  await (await menubar(page)).getByRole('menuitem', { name: 'Analysis' }).click()
+  // Select your default analysis method is a submenu of the methods (RadarOpus); Escape closes it
+  await page.getByRole('menuitem', { name: 'Select your default analysis method' }).hover()
+  const methodMenu = page.getByRole('menu', { name: 'Select your default analysis method' })
+  await expect(methodMenu.getByRole('menuitemcheckbox', { name: 'Prominence', exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
+  await expect(methodMenu).toBeHidden()
   await page.keyboard.press('Escape')
 
   // File: one Print entry for Ctrl+P
-  await page.getByRole('menubar').getByRole('menuitem', { name: 'File' }).click()
+  await (await menubar(page)).getByRole('menuitem', { name: 'File' }).click()
   await expect(page.getByRole('menu', { name: 'File' }).locator(`[aria-keyshortcuts="${MAC ? 'Meta' : 'Control'}+P"]`)).toHaveCount(1)
   await expect(page.getByRole('menuitem', { name: 'Print', exact: true })).toBeVisible()
 })
@@ -592,7 +601,7 @@ test('dropping a rubric on a clipboard slot is a standard take: announced, count
 test('360x640: menus fold into "More menus", no horizontal page scroll', async ({ page }) => {
   await freshApp(page, 360, 640)
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
-  const more = page.getByRole('menubar').getByRole('menuitem', { name: 'More menus' })
+  const more = (await menubar(page)).getByRole('menuitem', { name: 'More menus' })
   await expect(more).toBeVisible()
   await more.click()
   await page.getByRole('menuitem', { name: 'Help' }).hover()
@@ -628,7 +637,7 @@ test('context menus, toasts and dialogs sit in labelled landmarks (axe region, l
 test('File menu offers the patient export; the toolbar Print menu the case report', async ({ page }) => {
   // the case report needs an open case
   await openApp(page, SEEDED)
-  await page.getByRole('menubar').getByRole('menuitem', { name: 'File' }).click()
+  await (await menubar(page)).getByRole('menuitem', { name: 'File' }).click()
   const menu = page.getByRole('menu', { name: 'File' })
   await expect(menu.getByRole('menuitem', { name: 'Export patient information' })).toBeVisible()
   await page.keyboard.press('Escape')
@@ -637,11 +646,15 @@ test('File menu offers the patient export; the toolbar Print menu the case repor
   await expect(page.getByRole('dialog')).toBeVisible()
 })
 
-test('a fresh profile boots like RadarOpus: TOC hidden, one book tab, empty clipboards with clipboard 1 marked', async ({ page }) => {
+test('a fresh profile boots like RadarOpus: Patients TOC, one book tab, empty clipboards with clipboard 1 marked', async ({ page }) => {
   await openApp(page, FRESH)
   const status = page.getByLabel('Status')
-  await expect(page.locator('.pane-left')).toHaveCount(0)
-  await expect(status.getByRole('button', { name: /^Show table of contents/ })).toBeVisible()
+  // the table of contents on show, on the Patients list (its toolbar button checked)
+  await expect(page.locator('.pane-left')).toBeVisible()
+  await expect(page.getByLabel('Look for patient:')).toBeVisible()
+  await expect(page.getByRole('toolbar', { name: 'Main toolbar' }).getByRole('button', { name: 'Patients', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(status.getByRole('button', { name: /^Hide the table of contents/ })).toBeVisible()
+  await expect(status.getByRole('button', { name: 'Expand Toc' })).toBeVisible()
   // a single document tab, the repertory, whose close box sits at the window's right edge
   await expect(page.locator('.tabstrip .tab')).toHaveCount(1)
   const win = (await page.locator('.doc-window').boundingBox())!
@@ -652,8 +665,11 @@ test('a fresh profile boots like RadarOpus: TOC hidden, one book tab, empty clip
   for (let i = 0; i < 3; i++) await expect(slots.nth(i).locator('.clip-slot-count')).toHaveText('')
   await expect(slots.nth(0)).toHaveAttribute('aria-pressed', 'true')
   await expect(slots.nth(0).locator('.clip-tick')).toHaveCount(1)
-  // cmd+F2 opens the table of contents
+  // cmd+F2 hides and shows the table of contents
   await page.locator('.rv-scroll').first().focus()
+  await page.keyboard.press('ControlOrMeta+F2')
+  await expect(page.locator('.pane-left')).toHaveCount(0)
+  await expect(status.getByRole('button', { name: /^Show table of contents/ })).toBeVisible()
   await page.keyboard.press('ControlOrMeta+F2')
   await expect(page.locator('.pane-left')).toBeVisible()
   await expect(status.getByRole('button', { name: /^Hide the table of contents/ })).toBeVisible()
@@ -684,14 +700,17 @@ test('toolbar Back from the analysis returns to the book and its rubric', async 
   await expect(page.locator('.tabstrip .tab')).toHaveCount(2)
 })
 
-test('Alt+Left from the analysis grid does what the toolbar Back does; Back and Forward dim when they lead nowhere', async ({ page }) => {
+test('Alt+Left from the analysis grid does what the toolbar Back does; Back and Forward stay full colour when they lead nowhere', async ({ page }) => {
   await openApp(page, FRESH)
   const tbar = page.getByRole('toolbar', { name: 'Main toolbar' })
-  // a fresh book has no history: both arrows are disabled and drawn dimmed
+  // a fresh book has no history: RadarOpus still draws both arrows in full colour, and a click does nothing
+  const start = (await page.getByRole('navigation', { name: 'Symptom path' }).innerText()).replace(/\s+/g, ' ')
   for (const name of ['Back', 'Forward']) {
     const btn = tbar.getByRole('button', { name, exact: true })
-    await expect(btn).toBeDisabled()
-    expect(Number(await btn.evaluate(e => getComputedStyle(e).opacity))).toBeLessThan(1)
+    await expect(btn).toBeEnabled()
+    expect(Number(await btn.evaluate(e => getComputedStyle(e).opacity))).toBe(1)
+    await btn.click()
+    expect((await page.getByRole('navigation', { name: 'Symptom path' }).innerText()).replace(/\s+/g, ' ')).toBe(start)
   }
   await page.locator('.rv-scroll').first().focus()
   await page.keyboard.press('ArrowDown')
@@ -701,8 +720,9 @@ test('Alt+Left from the analysis grid does what the toolbar Back does; Back and 
   await page.keyboard.press('Insert')
   await page.keyboard.press('F8')
   await expect(page.locator('.tab.active')).not.toContainText('Repertorium')
-  // nothing lies ahead of the analysis: Forward is disabled there (it never does what Back does)
-  await expect(tbar.getByRole('button', { name: 'Forward', exact: true })).toBeDisabled()
+  // nothing lies ahead of the analysis: Forward does nothing there (it never does what Back does)
+  await tbar.getByRole('button', { name: 'Forward', exact: true }).click()
+  await expect(page.locator('.tab.active')).not.toContainText('Repertorium')
   await expect(tbar.getByRole('button', { name: 'Back', exact: true })).toBeEnabled()
   await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('.an-grid, .analysis, [class^="an-"]'))).toBe(true)
   await page.keyboard.press('Alt+ArrowLeft')
@@ -714,7 +734,45 @@ test('Alt+Left from the analysis grid does what the toolbar Back does; Back and 
   await expect(fwd).toBeEnabled()
   await fwd.click()
   await expect(page.locator('.tab.active')).not.toContainText('Repertorium')
-  await expect(fwd).toBeDisabled()
+})
+
+test('History lists the book visit log newest first, with duplicates; Back and Forward move its check mark', async ({ page }) => {
+  await openApp(page, FRESH)
+  await page.locator('.rv-scroll').first().focus()
+  const path = page.getByRole('navigation', { name: 'Symptom path' })
+  const go = (i: number) => page.evaluate(async i => {
+    const { useApp, actions, selectActiveTab } = await (window as any).__radarModules.store()
+    actions.navigateRubric(selectActiveTab(useApp.getState()).id, i)
+  }, i)
+  for (const i of [0, 1500, 0, 2400]) await go(i)
+  const tbar = page.getByRole('toolbar', { name: 'Main toolbar' })
+  const hist = tbar.getByRole('button', { name: 'History', exact: true })
+  const box = (await hist.boundingBox())!
+  await hist.click({ position: { x: 20, y: 20 } })
+  const menu = page.locator('.tb-history-menu')
+  // opens in the document window (RadarOpus), below the toolbar, its left edge at ~45% of the window
+  const mb = (await menu.boundingBox())!
+  expect(mb.y).toBeGreaterThan(box.y + box.height)
+  expect(Math.abs(mb.x - page.viewportSize()!.width * 0.45)).toBeLessThan(2)
+  const rows = menu.locator('.menu-item')
+  await expect(rows).toHaveCount(5)
+  await expect(rows.first()).toHaveText('Clear History')
+  await expect(rows.nth(1)).toHaveAttribute('aria-checked', 'true')
+  // two spaces before the last segment; the oldest and third entries are the same chapter top
+  expect(await rows.nth(1).locator('.menu-text').textContent()).toMatch(/ - {2}\S/)
+  expect(await rows.nth(2).locator('.menu-text').textContent()).toBe(await rows.nth(4).locator('.menu-text').textContent())
+  await page.keyboard.press('Escape')
+  await tbar.getByRole('button', { name: 'Back', exact: true }).click()
+  await hist.click({ position: { x: 20, y: 20 } })
+  await expect(rows.nth(2)).toHaveAttribute('aria-checked', 'true')
+  await expect(rows.nth(1)).toHaveAttribute('aria-checked', 'false')
+  // choosing the oldest entry moves there without reordering the log
+  await rows.nth(4).click()
+  await hist.click({ position: { x: 20, y: 20 } })
+  await expect(rows).toHaveCount(5)
+  await expect(rows.nth(4)).toHaveAttribute('aria-checked', 'true')
+  await page.keyboard.press('Escape')
+  await expect(path).not.toContainText(' - ')
 })
 
 test('choosing a clipboard in the strip with no case open shows no toast', async ({ page }) => {
@@ -740,7 +798,7 @@ test('Expand Toc leaves the whole repertory sub-toolbar visible', async ({ page 
 
 test('a menu opened with the mouse highlights no item; the keyboard starts on the first', async ({ page }) => {
   await openApp(page, FRESH)
-  const bar = page.getByRole('menubar')
+  const bar = (await menubar(page))
   await bar.getByRole('menuitem', { name: 'Analysis' }).click()
   const menu = page.getByRole('menu', { name: 'Analysis' })
   await expect(menu).toBeVisible()

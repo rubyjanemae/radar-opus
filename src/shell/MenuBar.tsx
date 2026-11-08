@@ -6,23 +6,20 @@ import { actions, useApp } from '../state/store'
 import { MenuList } from '../ui/Menu'
 import type { MenuCloseReason, MenuItem } from '../ui/Menu'
 import { isModalOpen } from '../ui/modal'
-import { buildMenus, HISTORY } from './menus'
-import { historyItems } from './history'
+import { APP_MENU, buildMenus } from './menus'
 import { tabTitle } from './tabTitle'
 import { focusDocument } from '../features/workspace/panes'
 
 /**
- * Menu contents read when a menu opens: View › History lists the current history, and the Window menu
- * lists one entry per open document after "Close all windows" (RadarOpus).
+ * Menu contents read when a menu opens: the Window menu lists one entry per open document, by its tab title, after "Close all windows" (RadarOpus).
  */
 function withLive(menu: { label: string; items: MenuItem[] }, catalog: ReturnType<typeof useCatalog>): MenuItem[] {
-  if (menu.label === 'View') return menu.items.map(it => ('submenu' in it && it.submenu === HISTORY ? { ...it, submenu: historyItems() } : it))
   if (menu.label !== 'Window') return menu.items
   const s = useApp.getState()
   if (!s.tabs.length) return menu.items
-  const windows = s.tabs.map((t, i): MenuItem => {
+  const windows = s.tabs.map((t): MenuItem => {
     const { title, subtitle } = tabTitle(t, catalog, s)
-    return { label: `${i + 1}. ${subtitle && subtitle !== title && t.kind !== 'repertory' ? `${title} - ${subtitle}` : title}`, checked: t.id === s.activeTabId, run: () => actions.activateTab(t.id) }
+    return { label: subtitle && subtitle !== title && t.kind !== 'repertory' && t.kind !== 'analysis' ? `${title} - ${subtitle}` : title, checked: t.id === s.activeTabId, run: () => actions.activateTab(t.id) }
   })
   const at = menu.items.findIndex(it => 'command' in it && it.command === 'window.closeAll')
   if (at < 0) return [...menu.items, { type: 'separator' }, ...windows]
@@ -54,6 +51,18 @@ export const MenuBar = memo(function MenuBar() {
   const rootRef = useRef<HTMLDivElement>(null)
   /** Where focus was before the menubar was entered; menus give it back when they close. */
   const returnTo = useRef<HTMLElement | null>(null)
+
+  // RadarOpus's menus live in the macOS menu bar, outside its window: here the bar takes no room in the
+  // window either. It slides in over the toolbar while the pointer is at the window's top edge or on the
+  // bar, while the keyboard is in it (Alt, F10, Tab) and while one of its menus is open.
+  const [hover, setHover] = useState(false)
+  const [focused, setFocused] = useState(false)
+  useEffect(() => {
+    const move = (e: MouseEvent) => { if (e.clientY <= 3 && e.clientY >= 0 && !isModalOpen()) setHover(true) }
+    window.addEventListener('mousemove', move, { passive: true })
+    return () => window.removeEventListener('mousemove', move)
+  }, [])
+  const shown = hover || focused || open !== null
 
   const remember = (from: Element | null = document.activeElement) => {
     if (from instanceof HTMLElement && from !== document.body && !inMenus(from)) returnTo.current = from
@@ -128,15 +137,22 @@ export const MenuBar = memo(function MenuBar() {
 
   const closeMenu = (reason?: MenuCloseReason) => {
     setOpen(null)
+    // a chosen item or a click elsewhere: the bar slides away again unless the pointer comes back to it
+    if (reason !== 'escape') setHover(false)
     // keyboard closes and a chosen item hand focus back; a click elsewhere keeps its own focus
     if (reason === 'escape' || reason === 'tab' || reason === 'select') giveBackFocus()
     else returnTo.current = null
   }
 
   return (
-    <div className="menubar" data-menubar ref={rootRef}>
+    <div className="menubar" data-menubar data-shown={shown || undefined} ref={rootRef}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={e => { if (!rootRef.current?.contains(e.relatedTarget as Node | null)) setFocused(false) }}
+    >
       <div className="menubar-measure" ref={measureRef} aria-hidden="true">
-        {allMenus.map(m => <span key={m.label} className="menubar-item">{m.label}</span>)}
+        {allMenus.map(m => <span key={m.label} className={`menubar-item${m.label === APP_MENU ? ' menubar-app' : ''}`}>{m.label}</span>)}
         <span className="menubar-item">…</span>
       </div>
       <nav className="menubar-nav" aria-label="Application" ref={navRef}>
@@ -157,7 +173,7 @@ export const MenuBar = memo(function MenuBar() {
               tabIndex={i === current ? 0 : -1}
               aria-haspopup="menu"
               aria-expanded={open === i}
-              className={`menubar-item${open === i ? ' open' : ''}`}
+              className={`menubar-item${open === i ? ' open' : ''}${m.label === APP_MENU ? ' menubar-app' : ''}`}
               onFocus={() => setCurrent(i)}
               onMouseDown={e => { e.preventDefault(); if (open === null) remember(); setCurrent(i); setOpen(open === i ? null : i) }}
               onMouseEnter={() => { if (open !== null) { setCurrent(i); setOpen(i) } }}

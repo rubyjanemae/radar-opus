@@ -1,7 +1,8 @@
 import type { Catalog } from '../data/catalog'
 import type { AppState } from '../state/store'
 import type { Tab } from '../state/workspace'
-import { patientName } from '../features/patients/logic'
+import { ageYmd, fullName } from '../features/patients/panel'
+import { analysisTitle } from '../features/analysis/saved'
 
 /** "Vladimir Polony" -> "POLONY V.", "J. T. Kent" -> "KENT J. T." (surname in capitals, then initials). */
 export function authorShort(author: string): string {
@@ -27,11 +28,12 @@ export function tabTitle(tab: Tab, catalog: Catalog, s: Pick<AppState, 'patients
     case 'analysis': {
       const c = s.consultations[tab.consultationId]
       const p = c ? s.patients[c.patientId] : null
-      // the case is what tells two analysis tabs apart: it leads, the kind follows (the icon shows it too)
       if (!c || !p) return { title: 'Missing case', subtitle: 'Analysis' }
-      const who = p.lastName.trim() || p.firstName.trim() || 'Unnamed patient'
-      // an unsaved case's patient and consultation share one name: say it once
-      return { title: c.title && c.title !== who ? `${who} · ${c.title}` : who, subtitle: 'Analysis' }
+      if (tab.restoredTitle) return { title: tab.restoredTitle, subtitle: fullName(p) }
+      // RadarOpus titles the analysis tab with the consultation's analysis heading,
+      // "<consultation no> - <date> - <analysis no> - <analysis name>" ("1 - Sun Nov 1 11:37:07 2026 - 1 -");
+      // the patient's name is in the tooltip
+      return { title: analysisTitle(c, s.consultations), subtitle: fullName(p) }
     }
     case 'materia-medica':
       // short: the open remedy's abbreviation, not its full name (which is in the reader header and the tooltip)
@@ -42,13 +44,18 @@ export function tabTitle(tab: Tab, catalog: Catalog, s: Pick<AppState, 'patients
       return { title: 'Patients' }
     case 'patient': {
       const p = s.patients[tab.patientId]
-      return { title: p ? patientName(p) : 'Deleted patient' }
+      if (!p) return { title: 'Deleted patient' }
+      // RadarOpus titles the patient window "<First Last> (Age: y.m.d)"
+      const age = ageYmd(p.birthDate)
+      return { title: age ? `${fullName(p)} (Age: ${age})` : fullName(p) }
     }
     case 'search':
       if (tab.mode === 'remedy') return tab.remedyId != null ? { title: catalog.remedy(tab.remedyId).abbrev, subtitle: 'Remedy search' } : { title: 'Remedy search' }
       return tab.query ? { title: `“${tab.query}”`, subtitle: 'Search' } : { title: 'Search' }
     case 'families':
       return { title: 'Families & kingdoms' }
+    case 'maps':
+      return { title: tab.map === 'kingdoms' ? 'Maps - Kingdoms' : 'Maps - Periodic table' }
   }
 }
 
@@ -58,7 +65,7 @@ export function tabTitle(tab: Tab, catalog: Catalog, s: Pick<AppState, 'patients
  */
 export function splitTabTitle(kind: Tab['kind'], title: string): [string, string] | null {
   if (kind !== 'analysis') return null
-  const i = title.indexOf(' · ')
+  const i = title.indexOf(' - ')
   // the tail's leading space is a no-break space: a flex item drops ordinary leading whitespace
-  return i > 0 ? [title.slice(0, i), `\u00a0·\u00a0${title.slice(i + 3)}`] : null
+  return i > 0 ? [title.slice(0, i), `\u00a0-\u00a0${title.slice(i + 3)}`] : title.endsWith(' -') ? [title.slice(0, -2), '\u00a0-'] : null
 }

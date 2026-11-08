@@ -9,7 +9,7 @@ import { exclusionText } from './labels'
 import { COL_BLOCK, computeViewport, fitScore, gridLabelWidth, gridLines } from './gridLayout'
 import type { Geom, GridLine, Viewport } from './gridLayout'
 import { GradeMark, GroupMark } from '../../ui/marks'
-import { columnAbbrev, paneDetail, paneLabel, paneSymptomName } from './paneLabel'
+import { columnAbbrev, paneDetail, paneLabel, paneSymptomName, paneTooltip } from './paneLabel'
 import { setCopyCursor } from './copyItem'
 import type { CopyItem } from './copyItem'
 import { rubricPlainText } from '../repertory/take'
@@ -61,21 +61,24 @@ export interface GridProps {
 
 /* Compact (dock) columns are as wide as the main grid's, so a score like "16/29" is never clipped. */
 /*
- * Main grid: the RadarOpus layout. A ~330px symptom pane, 25px remedy columns, 19px lines; the header has
- * the rotated abbreviations (ABBREV_H) over a rank row and one or two score rows (SCORE_ROW each).
+ * Main grid: the RadarOpus layout. A ~330px symptom pane, 42px remedy columns, 21px lines; the header has
+ * the rotated abbreviations (ABBREV_H) over a rank row and one or two score rows (SCORE_ROW each): 121px in
+ * all, as in RadarOpus.
  */
 const SIZES = {
-  normal: { label: 334, col: 25, head: 0, row: 19 },
+  normal: { label: 326, col: 42, head: 0, row: 21 },
   compact: { label: 230, col: 36, head: 78, row: 20 },
 }
-const ABBREV_H = 66
-const SCORE_ROW = 17
+const ABBREV_H = 80
+const SCORE_ROW = 20
 /** The header's bottom rule is 2px (RadarOpus): the head grows by the second pixel. */
 const HEAD_RULE = 1
 /** Room after the last column for its rotated abbreviation, which leans right past its own column. */
-const ABBREV_PAD = 56
+const ABBREV_PAD = 64
 /** Fixed-size scrollbar thumb (RadarOpus draws a small thumb whatever the number of remedies). */
 const THUMB_W = 27
+/** Width of the drawn vertical scrollbar at the main grid's right edge (.an-vbar). */
+const VBAR_W = 14
 /** Narrowest the symptom pane shrinks to in a narrow window. */
 const LABEL_MIN = 200
 /** The symptom pane keeps its width while at least this many remedy columns still fit beside it. */
@@ -128,6 +131,26 @@ function PaneSymptom({ s, n, text, open }: { s: ResolvedSymptom; n: number; text
       <span className={`an-weight w${w}`} title={w === 0 ? 'Intensity 0: ignored in the analysis' : `Intensity ${w}`}>{w}</span>
     </>
   )
+}
+
+/**
+ * Whether the lines overflow the grid vertically. RadarOpus shows the grid's vertical scrollbar and the
+ * symptom pane's horizontal one only then: with every line in view neither is drawn, and the remedy
+ * scrollbar runs to the right edge.
+ */
+function useVerticalOverflow(ref: React.RefObject<HTMLDivElement | null>): boolean {
+  const [over, setOver] = useState(false)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const update = () => setOver(el.scrollHeight - el.clientHeight > 1)
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    if (el.firstElementChild) ro.observe(el.firstElementChild)
+    return () => ro.disconnect()
+  }, [ref])
+  return over
 }
 
 const sameViewport = (v: Viewport, n: Viewport) => v.width === n.width && v.height === n.height && v.c0 === n.c0 && v.c1 === n.c1 && v.r0 === n.r0
@@ -320,7 +343,8 @@ const GridRow = memo(function GridRow(p: RowProps) {
       <div className="an-label" role="rowheader" aria-colindex={1} data-cell={`${p.r}:-1`} tabIndex={p.activeC === -1 ? 0 : -1}
         aria-expanded={p.n !== undefined ? !!p.open : undefined}
         aria-label={p.n !== undefined ? paneSymptomName(s, p.n, p.text ?? s.label) : undefined}
-        title={`${p.text ?? s.label}\n${s.size} remedies${s.role === 'ignored' ? ' · ignored (intensity 0)' : s.role === 'excluding' ? ' · excluding' : ''}`}>
+        // the main grid shows RadarOpus's info panel on hover (SymptomTip) instead of a native tooltip
+        title={p.n !== undefined ? undefined : `${s.label}\n${s.size} remedies${s.role === 'ignored' ? ' · ignored (intensity 0)' : s.role === 'excluding' ? ' · excluding' : ''}`}>
         {p.n !== undefined ? <PaneSymptom s={s} n={p.n} text={p.text ?? s.label} open={!!p.open} /> : <SymptomLabel s={s} color={p.color} />}
       </div>
       {/* cells flow after the label: this gap stands for the columns scrolled out on the left */}
@@ -438,8 +462,8 @@ const HeadCells = memo(function HeadCells(p: HeadCellsProps) {
             <span className="an-abbrev">{columnAbbrev(rem.abbrev)}</span>
             {pinned && <span className="sr-only">pinned beyond the limit</span>}
             <span className="an-rank">{row.rank || '–'}</span>
-            <span className={`an-score${fitScore(s1).length > 3 ? ' n4' : ''}`}>{fitScore(s1)}</span>
-            {s2 !== undefined && <span className={`an-score2${fitScore(s2).length > 3 ? ' n4' : ''}`}>{fitScore(s2)}</span>}
+            <span className="an-score">{fitScore(s1)}</span>
+            {s2 !== undefined && <span className="an-score2">{fitScore(s2)}</span>}
           </>
         ) : (
           <>
@@ -588,6 +612,176 @@ function RemedyScrollbar({ grid, col, label, nc, dragging, onRelease }: {
   )
 }
 
+/** Step of the symptom pane's scrollbar arrows (about one character of the label font). */
+const LABEL_STEP = 16
+
+/**
+ * The symptom pane's horizontal scrollbar (main grid), under the symptom labels beside RemedyScrollbar
+ * (RadarOpus scrolls the two panes separately). It slides the symptom texts sideways, so the end of a long
+ * rubric path cut by the pane edge can be read: the offset is the grid's CSS variable --an-lx (the label text
+ * is indented by it), and the range is the widest rendered text's overflow. Arrows step, the track pages,
+ * the thumb drags.
+ */
+function SymptomScrollbar({ grid, label }: { grid: React.RefObject<HTMLDivElement | null>; label: number }) {
+  const track = useRef<HTMLDivElement>(null)
+  const thumb = useRef<HTMLDivElement>(null)
+  const lx = useRef(0)
+  // the widest overflow of the label texts now rendered (their own width, whatever the indent)
+  const range = useCallback(() => {
+    const el = grid.current
+    if (!el) return 0
+    let max = 0
+    const r = document.createRange()
+    for (const t of el.querySelectorAll<HTMLElement>('.an-label-text')) {
+      r.selectNodeContents(t)
+      max = Math.max(max, r.getBoundingClientRect().width - t.clientWidth)
+    }
+    return Math.max(0, Math.ceil(max))
+  }, [grid])
+  const set = useCallback((x: number) => {
+    const el = grid.current, t = thumb.current, tr = track.current
+    if (!el || !t || !tr) return
+    const max = range()
+    lx.current = Math.max(0, Math.min(max, x))
+    el.style.setProperty('--an-lx', `${lx.current}px`)
+    const w = Math.min(tr.clientWidth, THUMB_W)
+    t.style.width = `${w}px`
+    t.style.transform = `translateX(${max > 0 ? ((tr.clientWidth - w) * lx.current) / max : 0}px)`
+  }, [grid, range])
+  useLayoutEffect(() => {
+    const el = grid.current
+    if (!el) return
+    const update = () => set(lx.current)
+    update()
+    // rows mount while scrolling vertically and texts change with the analysis: the range follows
+    el.addEventListener('scroll', update, { passive: true })
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    if (el.firstElementChild) ro.observe(el.firstElementChild)
+    const mo = new MutationObserver(update)
+    mo.observe(el, { childList: true, subtree: true, characterData: true })
+    // unmounted (every line fits again): the texts slide back
+    return () => { el.removeEventListener('scroll', update); ro.disconnect(); mo.disconnect(); el.style.removeProperty('--an-lx') }
+  }, [grid, set])
+  const repeat = (e: React.PointerEvent, step: () => void) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    step()
+    let timer = setTimeout(function tick() { step(); timer = setTimeout(tick, 60) }, 350)
+    const stop = () => { clearTimeout(timer); window.removeEventListener('pointerup', stop); window.removeEventListener('pointercancel', stop) }
+    window.addEventListener('pointerup', stop)
+    window.addEventListener('pointercancel', stop)
+  }
+  const onThumb = (e: React.PointerEvent<HTMLDivElement>) => {
+    const tr = track.current
+    if (!tr || e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    const max = range(), w = Math.min(tr.clientWidth, THUMB_W)
+    const x0 = e.clientX, s0 = lx.current, k = max / Math.max(1, tr.clientWidth - w)
+    const move = (m: PointerEvent) => set(s0 + (m.clientX - x0) * k)
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up) }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+  }
+  const onTrack = (e: React.PointerEvent<HTMLDivElement>) => {
+    const t = thumb.current
+    if (!t || e.target !== e.currentTarget) return
+    const right = e.clientX > t.getBoundingClientRect().left
+    repeat(e, () => {
+      const r = t.getBoundingClientRect()
+      if (right ? e.clientX > r.right : e.clientX < r.left) set(lx.current + (right ? 1 : -1) * Math.max(LABEL_STEP, label / 2))
+    })
+  }
+  return (
+    <div className="an-hbar an-hbar-sym" aria-hidden="true" data-testid="analysis-symptom-hscroll">
+      <button type="button" className="an-hbar-btn left" tabIndex={-1} title="Scroll the symptoms left" onPointerDown={e => repeat(e, () => set(lx.current - LABEL_STEP))} />
+      <div ref={track} className="an-hbar-track" onPointerDown={onTrack}>
+        <div ref={thumb} className="an-hbar-thumb" onPointerDown={onThumb} />
+      </div>
+      <button type="button" className="an-hbar-btn right" tabIndex={-1} title="Scroll the symptoms right" onPointerDown={e => repeat(e, () => set(lx.current + LABEL_STEP))} />
+    </div>
+  )
+}
+
+/**
+ * The grid's vertical scrollbar (main grid), drawn like RemedyScrollbar at the grid's right edge (RadarOpus);
+ * shown only while the lines overflow (useVerticalOverflow): arrows step one line, the track pages, the thumb drags.
+ * It mirrors the grid's scrollTop and is as tall as the grid; the keyboard and the wheel scroll the grid itself.
+ */
+function LineScrollbar({ grid, row, head }: { grid: React.RefObject<HTMLDivElement | null>; row: number; head: number }) {
+  const bar = useRef<HTMLDivElement>(null)
+  const track = useRef<HTMLDivElement>(null)
+  const thumb = useRef<HTMLDivElement>(null)
+  const geom = useCallback(() => {
+    const el = grid.current, tr = track.current
+    if (!el || !tr) return null
+    const max = Math.max(0, el.scrollHeight - el.clientHeight)
+    const th = tr.clientHeight
+    return { el, max, th, h: Math.min(th, THUMB_W) }
+  }, [grid])
+  const update = useCallback(() => {
+    const g = geom(), t = thumb.current, b = bar.current
+    if (!g || !t || !b) return
+    // it runs down beside the horizontal scrollbars too (RadarOpus: its ▾ sits next to their ▸)
+    const foot = g.el.parentElement?.querySelector<HTMLElement>(':scope > .an-hbar-row')
+    b.style.height = `${g.el.offsetHeight + (foot?.offsetHeight ?? 0)}px`
+    t.style.height = `${g.h}px`
+    t.style.transform = `translateY(${g.max > 0 ? ((g.th - g.h) * g.el.scrollTop) / g.max : 0}px)`
+  }, [geom])
+  useLayoutEffect(() => {
+    const el = grid.current
+    if (!el) return
+    update()
+    el.addEventListener('scroll', update, { passive: true })
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    if (el.firstElementChild) ro.observe(el.firstElementChild)
+    return () => { el.removeEventListener('scroll', update); ro.disconnect() }
+  }, [grid, update])
+  const by = (dy: number) => { const el = grid.current; if (el) el.scrollTop += dy }
+  const repeat = (e: React.PointerEvent, step: () => void) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    step()
+    let timer = setTimeout(function tick() { step(); timer = setTimeout(tick, 60) }, 350)
+    const stop = () => { clearTimeout(timer); window.removeEventListener('pointerup', stop); window.removeEventListener('pointercancel', stop) }
+    window.addEventListener('pointerup', stop)
+    window.addEventListener('pointercancel', stop)
+  }
+  const onThumb = (e: React.PointerEvent<HTMLDivElement>) => {
+    const g = geom()
+    if (!g || e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    const y0 = e.clientY, s0 = g.el.scrollTop, k = g.max / Math.max(1, g.th - g.h)
+    const move = (m: PointerEvent) => { g.el.scrollTop = s0 + (m.clientY - y0) * k }
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up) }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+  }
+  const onTrack = (e: React.PointerEvent<HTMLDivElement>) => {
+    const g = geom(), t = thumb.current
+    if (!g || !t || e.target !== e.currentTarget) return
+    const down = e.clientY > t.getBoundingClientRect().top
+    repeat(e, () => {
+      const r = t.getBoundingClientRect()
+      if (down ? e.clientY > r.bottom : e.clientY < r.top) by((down ? 1 : -1) * Math.max(row, g.el.clientHeight - head - row))
+    })
+  }
+  return (
+    <div ref={bar} className="an-vbar" aria-hidden="true" data-testid="analysis-vscroll">
+      <button type="button" className="an-vbar-btn up" tabIndex={-1} title="Previous line" onPointerDown={e => repeat(e, () => by(-row))} />
+      <div ref={track} className="an-vbar-track" onPointerDown={onTrack}>
+        <div ref={thumb} className="an-hbar-thumb an-vbar-thumb" onPointerDown={onThumb} />
+      </div>
+      <button type="button" className="an-vbar-btn down" tabIndex={-1} title="Next line" onPointerDown={e => repeat(e, () => by(row))} />
+    </div>
+  )
+}
+
 /**
  * Remedy × symptom grid: rows are symptoms, columns ranked remedies. Both axes are virtualised
  * (absolute cells; only the visible block range plus the focused row and column render), headers
@@ -598,11 +792,13 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
   const { result, rows, catalog } = p
   const ro = !p.compact
   const pair = !!rows[0] && formatScore(result.strategy, rows[0]).includes('/')
-  const base = useMemo(() => (p.compact ? SIZES.compact : { ...SIZES.normal, head: ABBREV_H + SCORE_ROW * (pair ? 3 : 2) + HEAD_RULE }), [p.compact, pair])
+  // symptoms only (F7): no remedy columns, so no header band above the symptom list either
+  const base = useMemo(() => (p.compact ? SIZES.compact : { ...SIZES.normal, head: p.symptomsOnly ? 0 : ABBREV_H + SCORE_ROW * (pair ? 3 : 2) + HEAD_RULE }), [p.compact, p.symptomsOnly, pair])
   const lines = useMemo(() => gridLines(result.symptoms, ro, p.collapsed, p.expanded), [result.symptoms, ro, p.collapsed, p.expanded])
   const nr = lines.length
   const nc = rows.length
   const scrollRef = useRef<HTMLDivElement>(null)
+  const vOver = useVerticalOverflow(scrollRef)
   const colBand = useRef<HTMLDivElement>(null)
   const rowBand = useRef<HTMLDivElement>(null)
   // scroller's box as of the last hover entry: hover tracking reads it (and the scroll offsets) instead of forcing layout
@@ -703,7 +899,9 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
   const keyedAtMenu = useRef(false)
   const fromMenu = (t: EventTarget | null) => !!(t instanceof Element && t.closest('.menu-list'))
 
-  const r0 = Math.min(Math.max(-1, active.r), nr - 1)
+  // without the header band (symptoms only) the cursor stays on the symptom lines
+  const minR = p.symptomsOnly && nr > 0 ? 0 : -1
+  const r0 = Math.min(Math.max(minR, active.r), nr - 1)
   const c0 = Math.min(Math.max(-1, active.c), nc - 1)
   // a clipboard header or detail line has no remedy cells: the focus sits on its label (and keeps its column for the next move)
   const fc = lines[r0]?.kind === 'sym' || !lines[r0] ? c0 : -1
@@ -732,7 +930,11 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
       return it && { ...it, text: symText(line.i) }
     }
     const n = rows.filter(x => x.grades[line.i] > 0).length
-    return { full: symFull(line.i), text: symText(line.i), what: `Copied symptom with ${n} remed${n === 1 ? 'y' : 'ies'}` }
+    const i = line.i
+    // Edit › Delete selection: the same as Del on the symptom's label
+    const remove = p.onRemoveSymptom ? () => p.onRemoveSymptom!(i) : undefined
+    const cut = remove ? { clipboardId: result.symptoms[i].clipboardId, symptoms: result.symptoms[i].members } : undefined
+    return { full: symFull(i), text: symText(i), what: `Copied symptom with ${n} remed${n === 1 ? 'y' : 'ies'}`, remove, cut }
   }
   useEffect(() => {
     if (!ro) return
@@ -817,7 +1019,7 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
   }, [p.found])
 
   const move = (r: number, c: number) => {
-    const nr2 = Math.max(-1, Math.min(nr - 1, r))
+    const nr2 = Math.max(minR, Math.min(nr - 1, r))
     const nc2 = Math.max(-1, Math.min(nc - 1, c))
     setActive({ r: nr2, c: nc2 })
     ensureVisible(nr2, nc2)
@@ -933,9 +1135,51 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
     return { r: r >= nr ? -2 : r, c: c >= nc ? -2 : c }
   }
 
+  /*
+   * Main grid, pointer over a symptom line: RadarOpus outlines the line (no cross-hair) and, after a short
+   * rest, shows its info panel. The outline is a class on the line's label, set directly (rows are memoised).
+   */
+  const hovLabel = useRef<HTMLElement | null>(null)
+  const tipTimer = useRef(0)
+  const [tip, setTip] = useState<{ i: number; x: number; y: number } | null>(null)
+  const clearHover = () => {
+    hovLabel.current?.classList.remove('an-hov')
+    hovLabel.current = null
+    window.clearTimeout(tipTimer.current)
+    setTip(t => (t ? null : t))
+  }
+  useEffect(() => () => window.clearTimeout(tipTimer.current), [])
+  // scrolling moves the lines under the pointer: the outline and the panel go
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!ro || !el) return
+    const off = () => { if (hovLabel.current) { hovLabel.current.classList.remove('an-hov'); hovLabel.current = null }; window.clearTimeout(tipTimer.current); setTip(null) }
+    el.addEventListener('scroll', off, { passive: true })
+    return () => el.removeEventListener('scroll', off)
+  }, [ro])
+
   const onMouseMove = (e: ReactMouseEvent) => {
     if (performance.now() - scrolledAt.current < 200) return
     const { r, c } = locate(e)
+    if (ro) {
+      const line = r >= 0 && c === -1 ? lines[r] : undefined
+      const el = line?.kind === 'sym' ? (e.target as HTMLElement).closest<HTMLElement>('.an-label') : null
+      if (el && line?.kind === 'sym') {
+        if (colBand.current) colBand.current.style.display = 'none'
+        if (rowBand.current) rowBand.current.style.display = 'none'
+        const rect = boxRect.current!
+        const x = e.clientX - rect.left, y = e.clientY - rect.top
+        if (hovLabel.current !== el) {
+          clearHover()
+          el.classList.add('an-hov')
+          hovLabel.current = el
+          const i = line.i
+          tipTimer.current = window.setTimeout(() => setTip({ i, x, y }), 700)
+        }
+        return
+      }
+      if (hovLabel.current) clearHover()
+    }
     if (colBand.current) {
       colBand.current.style.display = c >= 0 && r !== -2 ? 'block' : 'none'
       colBand.current.style.transform = `translateX(${S.label + c * S.col}px)`
@@ -948,6 +1192,7 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
   const onMouseLeave = () => {
     if (colBand.current) colBand.current.style.display = 'none'
     if (rowBand.current) rowBand.current.style.display = 'none'
+    clearHover()
   }
 
   const cellAt = (e: { target: EventTarget }): { r: number; c: number } | null => {
@@ -961,7 +1206,7 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
     <div className={`an-grid-wrap${p.compact ? ' compact' : ' ro'}`}>
       <div
         ref={scrollRef}
-        className={`an-grid${p.compact ? ' compact' : ' ro'}`}
+        className={`an-grid${p.compact ? ' compact' : ' ro'}${vOver ? '' : ' vfit'}`}
         role="grid"
         aria-label={p.label ?? 'Analysis grid'}
         aria-rowcount={nr + 1}
@@ -987,7 +1232,7 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
         onMouseEnter={() => { boxRect.current = null }}
         onMouseMove={onMouseMove}
         onMouseLeave={onMouseLeave}
-        onMouseDown={e => { const at = cellAt(e); if (at) setActive(at); setKbd(false) }}
+        onMouseDown={e => { if (tip) setTip(null); window.clearTimeout(tipTimer.current); const at = cellAt(e); if (at) setActive(at); setKbd(false) }}
         onClick={e => {
           const at = cellAt(e)
           if (!at) return
@@ -1007,11 +1252,11 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
         }}
       >
         <div className="an-grid-inner" style={{ width, height }}>
-          <GridHead
+          {!p.symptomsOnly && <GridHead
             result={result} rows={rows} spans={spans} catalog={catalog} label={S.label} col={S.col} width={width}
             selectedRemedy={p.selectedRemedy} selectedSymptom={symSel} highlight={p.highlight} pinned={p.pinned}
             activeC={r0 === -1 ? c0 : null} ro={ro} found={p.found}
-          />
+          />}
           {rowIdx.map(r => {
             const line: GridLine = lines[r]
             if (line.kind === 'clip') {
@@ -1045,12 +1290,14 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
       </div>
       {/* outside the grid element: the menu's keys, focus and clicks must not reach the grid's handlers */}
       {cm.element}
+      {ro && tip && result.symptoms[tip.i] && <SymptomTip fields={paneTooltip(catalog, result.symptoms[tip.i])} x={tip.x} y={tip.y} box={boxRect.current} />}
       {ro && !p.symptomsOnly && (
-        <div className="an-hbar-row" style={{ ['--an-label' as string]: `${S.label}px`, paddingRight: vp.sbw }}>
-          <div className="an-hbar-pad" aria-hidden="true" />
+        <div className="an-hbar-row" style={{ ['--an-label' as string]: `${S.label}px`, paddingRight: vp.sbw + (vOver ? VBAR_W : 0) }}>
+          <div className="an-hbar-pad">{vOver && <SymptomScrollbar grid={scrollRef} label={S.label} />}</div>
           <RemedyScrollbar grid={scrollRef} col={S.col} label={S.label} nc={nc} dragging={barDriven} onRelease={snap} />
         </div>
       )}
+      {ro && vOver && <LineScrollbar grid={scrollRef} row={S.row} head={S.head} />}
       {!ro && vp.canRight && <div className="an-grid-fade" style={{ right: vp.sbw, height: vp.height }} aria-hidden="true" />}
       {!ro && vp.hiddenRight > 0 && (
         <div className="an-grid-foot">
@@ -1071,3 +1318,21 @@ export const AnalysisGrid = memo(function AnalysisGrid(p: GridProps) {
     </div>
   )
 })
+
+/**
+ * RadarOpus's symptom info panel: a translucent pink panel over the grid, labels on the left and values on
+ * the right, shown while the pointer rests on a symptom line. Pointer-transparent, so hover tracking goes on.
+ */
+function SymptomTip({ fields, x, y, box }: { fields: [string, string][]; x: number; y: number; box: DOMRect | null }) {
+  const W = 500
+  const w = box?.width ?? 1000, h = box?.height ?? 600
+  const left = Math.max(4, Math.min(x + 14, w - W - 18))
+  const top = y + 18 + 170 > h ? Math.max(4, y - 176) : y + 18
+  return (
+    <div className="an-symtip" role="tooltip" style={{ left, top, width: W }}>
+      {fields.map(([k, v]) => (
+        <div key={k} className="an-symtip-row"><span className="an-symtip-k">{k}</span><span className="an-symtip-v">{v}</span></div>
+      ))}
+    </div>
+  )
+}

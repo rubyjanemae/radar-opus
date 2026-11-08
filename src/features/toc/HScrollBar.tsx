@@ -37,6 +37,7 @@ export function HScrollBar({ target, deps }: { target: RefObject<HTMLElement | n
     const el = target.current
     if (!el) return
     el.scrollLeft = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, x))
+    el.dataset.scrollX = String(el.scrollLeft)
     measure.current()
   }
 

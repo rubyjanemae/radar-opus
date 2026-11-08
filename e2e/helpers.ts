@@ -109,9 +109,25 @@ export async function showClipboardPane(page: Page) {
   await expect(page.getByTestId('clipboard-panel')).toBeVisible()
 }
 
-/** The table of contents is hidden on a fresh start (RadarOpus): open it from the status strip. */
+/**
+ * Show the table of contents on the repertories list. A fresh start shows it on the Patients list
+ * (RadarOpus): the toolbar's Repertories button switches it (and opens it when hidden).
+ */
 export async function showToc(page: Page) {
-  if (await page.locator('.pane-left').count()) return
-  await page.getByLabel('Status').getByRole('button', { name: /^Show table of contents/ }).click()
-  await expect(page.locator('.pane-left')).toBeVisible()
+  const reps = page.getByRole('toolbar', { name: 'Main toolbar' }).getByRole('button', { name: 'Repertories', exact: true })
+  if (await page.getByRole('tree', { name: 'Table of contents' }).count()) return
+  // Repertories starts unchecked (Patients is the checked one): one click shows its list
+  await reps.click()
+  await expect(page.getByRole('tree', { name: 'Table of contents' })).toBeVisible()
+}
+
+/**
+ * The menu bar (RadarOpus's menus sit in the macOS menu bar, outside its window): it takes no room in the
+ * window and slides in while the pointer is at the window's top edge. Moves the pointer there and returns it.
+ */
+export async function menubar(page: Page) {
+  await page.mouse.move(300, 1)
+  const bar = page.getByRole('menubar', { name: 'Main menu' })
+  await expect(bar).toBeInViewport()
+  return bar
 }

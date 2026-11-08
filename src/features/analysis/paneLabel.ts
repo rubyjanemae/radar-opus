@@ -60,3 +60,32 @@ export function paneSymptomName(s: ResolvedSymptom, n: number, text: string): st
   ].filter(Boolean)
   return `${n}. ${text}, ${s.size} remedies, ${w === 0 ? 'intensity 0 (ignored)' : `intensity ${w}`}${flags.length ? `, ${flags.join(', ')}` : ''}`
 }
+
+/**
+ * The info panel RadarOpus shows when the pointer rests on a symptom line: label / value pairs in its order
+ * (Rubric text, Origin, Intensity, Qualification, Degrees considered, Grouping, Other rubrics, Combining).
+ */
+export function paneTooltip(
+  catalog: Pick<Catalog, 'repertoryInfos' | 'resolve'>,
+  s: Pick<ResolvedSymptom, 'symptom' | 'members' | 'eliminative'>,
+): [string, string][] {
+  const sym = s.symptom
+  const refs = s.members.flatMap(m => m.rubrics)
+  const reps = [...new Set(refs.map(r => r.slice(0, r.lastIndexOf(':'))))]
+  const quals = [s.eliminative && 'Eliminative', sym.exclusive && 'Excluding', sym.causal && 'Causal'].filter(Boolean) as string[]
+  const pathOf = (ref: string) => {
+    const r = catalog.resolve(ref)
+    return r ? panePath(r.rep.lineage(r.index).map(i => r.rep.text(i))) : ref
+  }
+  const others = refs.slice(1).map(pathOf)
+  return [
+    ['Rubric text', sym.label || (refs[0] ? pathOf(refs[0]) : '')],
+    ['Origin', reps.map(a => catalog.repertoryInfos.find(r => r.abbrev === a)?.title ?? a).join(', ')],
+    ['Intensity', String(sym.weight)],
+    ['Qualification', quals.length ? quals.join(', ') : 'None'],
+    ['Degrees considered', 'All'],
+    ['Grouping', sym.group ? sym.group.toUpperCase() : ''],
+    ['Other rubrics', others.length ? others.join('; ') : 'None'],
+    ['Combining', refs.length > 1 ? (sym.combine === 'intersection' ? 'Intersection' : 'Union') : 'None'],
+  ]
+}

@@ -6,6 +6,7 @@ import { registerRubricSource } from '../repertory/ops'
 import { bookIfLoaded, loadBook } from './book'
 import { activeMMTab, activeRemedyTab, canHistory, contextRemedy, historyMove, installTabStateCleanup, keepMMFocus, openMM, openRemedy, printMonograph, selectedRemedyRubric, setMMCatalog, toggleList, toggleShowAbbrevs, useMMUi } from './ops'
 import { warmRemedyIndex } from './remedyIndexAccess'
+import { showTocView } from '../toc/commands'
 
 export const REMEDY_PICKER = 'mm.remedyPicker'
 
@@ -35,8 +36,19 @@ export function register(catalog: Catalog) {
       },
     },
     {
+      // View › "Open list of references": the same list the toolbar's References checkbox opens (the
+      // table of contents' References page), brought to the front; it never closes it
+      id: 'mm.listReferences', title: 'Open list of references', category: 'View', allowInInput: true, keywords: 'references toc table of contents materia medica books documents',
+      run: () => showTocView('references'),
+    },
+    {
       id: 'mm.search', title: 'Search materia medica…', category: 'Tools', keys: ['Mod+Alt+M'], allowInInput: true, keywords: 'full text boericke find words',
       run: () => openMM(undefined, { focusSearch: true }),
+    },
+    {
+      // Search › "Search text in the current document": the open book's own text search
+      id: 'mm.findInDocument', title: 'Search text in the current document', category: 'Search', allowInInput: true, keywords: 'materia medica find text words book',
+      enabled: () => !!activeMMTab(), run: () => useMMUi.setState({ focusSearch: Date.now() }),
     },
     {
       id: 'remedy.open', title: 'Remedies…', category: 'Tools', keys: ['Mod+4', 'Alt+Shift+4'], allowInInput: true, keywords: 'remedy list information picker lookup riw',

@@ -230,11 +230,11 @@ describe('crumbSegments', () => {
 
 describe('see references', () => {
   it('splits the reference off the rubric name', () => {
-    expect(splitSee('wund beißend (siehe brennend)')).toEqual({ name: 'wund beißend', see: '(siehe … )', target: 'brennend' })
+    expect(splitSee('wund beißend (siehe brennend)')).toEqual({ name: 'wund beißend', see: '(Siehe ... )', target: 'brennend' })
     // cut off by the data: the reference has no target
-    expect(splitSee('Grobheit (siehe')).toEqual({ name: 'Grobheit', see: '(siehe … )', target: '' })
+    expect(splitSee('Grobheit (siehe')).toEqual({ name: 'Grobheit', see: '(Siehe ... )', target: '' })
     // in the middle of the text: the rest stays with the name
-    expect(splitSee('Wassersucht (siehe Anschwellung), Aszites')).toEqual({ name: 'Wassersucht, Aszites', see: '(siehe … )', target: 'Anschwellung' })
+    expect(splitSee('Wassersucht (siehe Anschwellung), Aszites')).toEqual({ name: 'Wassersucht, Aszites', see: '(Siehe ... )', target: 'Anschwellung' })
     expect(splitSee('see, he can')).toBeNull()
     expect(splitSee('auf See')).toBeNull()
     expect(rubricName('Grobheit (siehe')).toBe('Grobheit')

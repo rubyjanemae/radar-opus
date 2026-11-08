@@ -2,7 +2,7 @@ import type { RubricRef } from '../data/types'
 import { DEFAULT_PARAMS, STRATEGY_IDS, normalizeWeight } from '../engine/model'
 import type { AnalysisOptions, Clipboard, StrategyParamsPatch, Symptom, Weight } from '../engine/model'
 import { uid } from './ids'
-import type { Consultation, Patient, Prescription } from './patients'
+import type { Consultation, Patient, Prescription, SavedAnalysis } from './patients'
 import { CLIPBOARD_COLORS, DEFAULT_ANALYSIS } from './store'
 import type { AppState } from './store'
 import { DEFAULT_LAYOUT, DEFAULT_SETTINGS } from './workspace'
@@ -50,7 +50,7 @@ const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is
 const numbers = (v: unknown): number[] => (Array.isArray(v) ? v.filter((x): x is number => typeof x === 'number' && Number.isFinite(x)) : [])
 function oneOf<T extends string | number>(v: unknown, allowed: readonly T[], d: T): T { return allowed.includes(v as T) ? (v as T) : d }
 
-const TAB_KINDS: readonly TabKind[] = ['repertory', 'analysis', 'materia-medica', 'remedy', 'patients', 'patient', 'search', 'families', 'repertories']
+const TAB_KINDS: readonly TabKind[] = ['repertory', 'analysis', 'materia-medica', 'remedy', 'patients', 'patient', 'search', 'families', 'repertories', 'maps']
 
 /** Run migrations up to SCHEMA_VERSION. Unversioned data is version 1. */
 export function migrate(raw: Raw): Raw {
@@ -89,7 +89,11 @@ export function sanitizeSettings(saved: unknown): Settings {
 export function sanitizeLayout(saved: unknown): Layout {
   const out = mergeDefaults(DEFAULT_LAYOUT, saved)
   const keys = (v: unknown, d: string[]) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : d)
-  return { ...out, tocOpen: keys(out.tocOpen, DEFAULT_LAYOUT.tocOpen), tocChecked: keys(out.tocChecked, DEFAULT_LAYOUT.tocChecked) }
+  const mixes = Array.isArray(out.docMixes)
+    ? out.docMixes.filter((m): m is { name: string; keys: string[] } => isObj(m) && typeof m.name === 'string' && !!m.name.trim()).map(m => ({ name: m.name, keys: keys(m.keys, []) }))
+    : []
+  const defaultDocMix = mixes.some(m => m.name === out.defaultDocMix) ? out.defaultDocMix : ''
+  return { ...out, tocOpen: keys(out.tocOpen, DEFAULT_LAYOUT.tocOpen), tocChecked: keys(out.tocChecked, DEFAULT_LAYOUT.tocChecked), docMixes: mixes, defaultDocMix }
 }
 
 function sanitizePatient(raw: unknown, key: string): Patient | null {
@@ -227,6 +231,19 @@ function sanitizeConsultation(raw: unknown, key: string, patients: Record<string
     createdAt: num(raw.createdAt, now), updatedAt: num(raw.updatedAt, num(raw.createdAt, now)),
   }
   if (isObj(raw.response)) out.response = { score: typeof raw.response.score === 'number' ? raw.response.score : null, note: str(raw.response.note) }
+  if (typeof raw.notesHtml === 'string' && raw.notesHtml) out.notesHtml = raw.notesHtml
+  if (Array.isArray(raw.savedAnalyses)) {
+    const saved = raw.savedAnalyses.map((x, i): SavedAnalysis | null => {
+      if (!isObj(x)) return null
+      const sw = `${where} saved analysis ${i + 1}`
+      const cbs = (Array.isArray(x.clipboards) ? x.clipboards : []).map((cb, j) => sanitizeClipboard(cb, j, sw, repairs)).filter((y): y is Clipboard => !!y)
+      if (!cbs.length) return null
+      return { id: str(x.id) || uid('an'), name: str(x.name), savedAt: num(x.savedAt, now), clipboards: cbs, analysis: sanitizeAnalysis(x.analysis, cbs, sw, repairs) }
+    }).filter((x): x is SavedAnalysis => !!x)
+    if (saved.length) out.savedAnalyses = saved
+    const cur = str(raw.currentAnalysisId)
+    if (cur && saved.some(x => x.id === cur)) out.currentAnalysisId = cur
+  }
   return out
 }
 
@@ -239,7 +256,7 @@ function sanitizeTab(raw: unknown, s: Pick<PersistedState, 'patients' | 'consult
       if (typeof raw.repertory !== 'string') return null
       return { ...base, kind: 'repertory', repertory: raw.repertory, rubric: Math.max(0, Math.trunc(num(raw.rubric, 0))), back: numbers(raw.back), forward: numbers(raw.forward), recent: raw.recent === undefined ? undefined : numbers(raw.recent) } as Tab
     case 'analysis':
-      return typeof raw.consultationId === 'string' && s.consultations[raw.consultationId] ? ({ ...base, kind: 'analysis', consultationId: raw.consultationId } as Tab) : null
+      return typeof raw.consultationId === 'string' && s.consultations[raw.consultationId] ? ({ ...base, kind: 'analysis', consultationId: raw.consultationId, ...(typeof raw.restoredTitle === 'string' && raw.restoredTitle ? { restoredTitle: raw.restoredTitle } : {}) } as Tab) : null
     case 'patient': {
       if (typeof raw.patientId !== 'string' || !s.patients[raw.patientId]) return null
       const cid = typeof raw.consultationId === 'string' && s.consultations[raw.consultationId]?.patientId === raw.patientId ? raw.consultationId : null
@@ -253,6 +270,8 @@ function sanitizeTab(raw: unknown, s: Pick<PersistedState, 'patients' | 'consult
       return { ...base, kind: 'search', query: str(raw.query), repertories: strings(raw.repertories) } as Tab
     case 'families':
       return { ...base, kind: 'families', group: strOrNull(raw.group) } as Tab
+    case 'maps':
+      return { ...base, kind: 'maps', map: raw.map === 'kingdoms' ? 'kingdoms' : 'periodic', selected: strOrNull(raw.selected), top: typeof raw.top === 'number' && Number.isFinite(raw.top) ? raw.top : undefined } as Tab
     case 'patients': case 'repertories':
       return { ...base, kind: raw.kind } as Tab
   }

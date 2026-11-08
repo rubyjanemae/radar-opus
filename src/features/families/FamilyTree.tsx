@@ -123,7 +123,8 @@ export function FamilyTree({ index, rows, active, onActivate, onToggle, checked,
         if (!row) return
         if (row.expanded && row.hasChildren) { onToggle(row.id, false); return }
         const parent = index.get(row.id)?.parent
-        if (parent) onActivate(parent)
+        // (a dialog scoped to one classification hides the groups above it)
+        if (parent && rows.some(r => r.id === parent)) onActivate(parent)
         return
       }
       case '*': {

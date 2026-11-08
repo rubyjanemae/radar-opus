@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Symptom } from '../../engine/model'
-import { columnAbbrev, paneDetail, paneLabel, panePath, paneSymptomName } from './paneLabel'
+import { columnAbbrev, paneDetail, paneLabel, panePath, paneSymptomName, paneTooltip } from './paneLabel'
 
 const sym = (patch: Partial<Symptom>): Symptom => ({
   id: 's', rubrics: ['publicum:3'], combine: 'union', weight: 1, eliminatory: false, exclusive: false, group: null, causal: false, addedAt: 0, ...patch,
@@ -45,5 +45,23 @@ describe('symptom pane labels (RadarOpus form)', () => {
     expect(paneSymptomName({ symptom: s, members: [s], size: 4 } as never, 1, 'MIND - ABRUPT')).toBe('1. MIND - ABRUPT, 4 remedies, intensity 1')
     const z = sym({ weight: 0, causal: true })
     expect(paneSymptomName({ symptom: z, members: [z], size: 12 } as never, 2, 'MIND - ABSENT-MINDED')).toBe('2. MIND - ABSENT-MINDED, 12 remedies, intensity 0 (ignored), causal')
+  })
+})
+
+describe('symptom info panel', () => {
+  it('lists the RadarOpus fields in order', () => {
+    const one = sym({ rubrics: ['publicum:2'], weight: 2 })
+    expect(paneTooltip(catalog, { symptom: one, members: [one], eliminative: false })).toEqual([
+      ['Rubric text', 'MIND - ABSENT-MINDED - morning'], ['Origin', 'Repertorium Publicum'], ['Intensity', '2'], ['Qualification', 'None'],
+      ['Degrees considered', 'All'], ['Grouping', ''], ['Other rubrics', 'None'], ['Combining', 'None'],
+    ])
+  })
+  it('qualifiers, group and combined rubrics', () => {
+    const c = sym({ rubrics: ['publicum:3', 'publicum:1'], combine: 'intersection', exclusive: true, group: 'b' })
+    const t = Object.fromEntries(paneTooltip(catalog, { symptom: c, members: [c], eliminative: true }))
+    expect(t['Qualification']).toBe('Eliminative, Excluding')
+    expect(t['Grouping']).toBe('B')
+    expect(t['Other rubrics']).toBe('MIND - ABSENT-MINDED')
+    expect(t['Combining']).toBe('Intersection')
   })
 })

@@ -44,29 +44,43 @@ describe('menus', () => {
     expect(missing).toEqual([])
   })
 
-  it('has menu entries for the analysis methods', () => {
-    expect(refs.some(r => r.id.startsWith('analysis.default.'))).toBe(true)
+  it('lists RadarOpus\'s methods in the Analysis › Select your default analysis method submenu', () => {
+    const analysis = menus.find(m => m.label === 'Analysis')!.items
+    const it2 = analysis.find(i => i.type !== 'separator' && i.type !== 'label' && i.label === 'Select your default analysis method')
+    const sub = it2 && 'submenu' in it2 ? it2.submenu ?? [] : []
+    expect(sub.map(i => ('label' in i ? i.label : undefined))).toEqual([
+      'Sum of symptoms (sorted degrees)', 'Sum of degrees (sorted symptoms)', 'Sum of symptoms and degrees', 'Prominence',
+      'Small remedies', 'Small rubrics (SPF)', 'Small remedies and small rubrics', 'Sum of symptoms', 'Sum of degrees',
+    ])
+    for (const i of sub) expect('command' in i ? i.command : '').toMatch(/^analysis\.default\./)
+  })
+
+  it('opens the History popup from View › History (a plain item, no submenu)', () => {
+    const view = menus.find(m => m.label === 'View')!.items
+    const h = view.find(i => i.type !== 'separator' && i.type !== 'label' && i.label === 'History')
+    expect(h && 'command' in h ? h.command : null).toBe('view.history')
   })
 
   it('uses the RadarOpus menu titles in their order', () => {
-    expect(menus.map(m => m.label)).toEqual(['File', 'Edit', 'Additions', 'View', 'Search', 'Take', 'Analysis', 'Tools', 'Window', 'Help'])
+    expect(menus.map(m => m.label)).toEqual(['RadarOpus', 'File', 'Edit', 'Additions', 'View', 'Search', 'Take', 'Analysis', 'Tools', 'Window', 'Help'])
   })
 
-  it('lists only RadarOpus items, in RadarOpus wording (the macOS Help menu aside)', () => {
+  it('lists only RadarOpus items, in RadarOpus wording and order', () => {
     // RadarOpus 4.2.7's menu items (menu titles and item wording; the clone shows those it can perform)
     const RO: Record<string, string[]> = {
-      File: ['Create a new patient', 'Create a new consultation', 'Save patient information', 'Export patient information', 'Print', 'Print preview', 'Print setup'],
-      Edit: ['Undo', 'Copy', 'Paste', 'Copy symptom text only', 'Copy analysis', 'Delete selection', 'Select all', 'Unselect all'],
-      Additions: ['Add or modify a symptom note', 'Remove a symptom note'],
-      View: ['Table of contents', 'Clipboard pane', 'Open list of repertories', 'Open list of references', 'Open list of patients', 'List of remedies', 'List of families', 'Bookmarks', 'Go back', 'Go forward', 'History'],
-      Search: ['Find a rubric', 'Find a rubric starting from the current rubric', 'Search text in the current document', 'Search', 'Advanced search'],
-      Take: ['Take with intensity 1 (+1)', 'Take with intensity 2 (+2)', 'Take with intensity 3 (+3)', 'Take with intensity 4 (+4)', 'Take with default options', 'Take and specify the options'],
-      Analysis: ['Show current analysis with symptoms only', 'Show current analysis with symptoms and remedies', 'Limit to a family', 'Start a new analysis (clear all clipboards)', 'Select your default analysis method'],
-      Tools: ['User accounts', 'Database management'],
+      RadarOpus: ['About RadarOpus', 'Preferences...', 'Services', 'Hide RadarOpus', 'Hide Others', 'Show All', 'Quit RadarOpus'],
+      File: ['Open FreeNotes', 'News', 'Shop', 'Save selection as a document mix', 'Recall a document mix', 'Select a default document mix', 'Unselect current default document mix', 'Create a new patient', 'Create a new consultation', 'Save patient information', 'Export patient information', 'Send current patient to Clificol', 'Create a new repertory', 'Create a new reference', 'Delete personal repertory and references', 'Print', 'Print preview', 'Print setup'],
+      Edit: ['Undo', 'Cut...', 'Copy', 'Paste', 'Copy symptom text only', 'Copy analysis', 'Delete selection', 'Select all', 'Unselect all', 'Open pick list of current field', 'Insert the default value', 'Repeat last prescription'],
+      Additions: ['Add a remedy including source information', 'Add a remedy', 'Modify the degree of a remedy', 'Remove a remedy', 'Add a symptom level below the current symptom', 'Modify the current symptom level', 'Remove the current symptom level', 'Add a cross-reference', 'Remove a cross-reference', 'Refer the current symptom to another symptom', 'Remove the referral', 'Add or modify a symptom note', 'Remove a symptom note', 'Add or modify a veterinary symptom note', 'Remove a veterinary symptom note', 'Export additions', 'Import additions'],
+      View: ['Table of contents', 'Open list of repertories', 'Open list of references', 'Open list of patients', 'List of remedies', 'List of families', 'Bookmarks', 'Go to the open repertories window', 'Go to the open references window', 'Go to the patient window', 'Go back', 'Go forward', 'History', 'Patient administration', 'Patient consultations', 'List of authors and documents', 'Maps'],
+      Search: ['Find a rubric', 'Find a rubric starting from the current rubric', 'Search text in the current document', 'Search', 'Advanced search', 'Search in the patient file', 'Family finder', 'EKAPGPS'],
+      Take: ['Take with intensity 1', 'Take with intensity 2', 'Take with intensity 3', 'Take with intensity 4', 'Take with default options', 'Take and specify the options'],
+      Analysis: ['Show current analysis with symptoms only', 'Show current analysis with symptoms and remedies', 'Limit to a family', 'Save current analysis', 'Recall an existing analysis', 'Start a new analysis (clear all clipboards)', 'Send current analysis by email', 'Show old analysis with old Remedy', 'Select your default analysis method'],
+      Tools: ['Deactivate tooltips', 'User accounts', 'AI Homeopathic Partner', 'Database management', 'Take a screenshot'],
       Window: ['Zoom in', 'Zoom out', 'Next window', 'Previous window', 'Close current window', 'Close all windows'],
     }
+    RO.Help = ['RadarOpus manual', 'Advised settings manual', 'Shortcuts list', 'Learning center and videos', 'Ask for support', 'Check for program updates (live update)', 'Check for new content (documents, freenotes, additions)', 'Update your license', 'License information', 'Provings.com', 'Clificol', 'Visit RadarOpus.com', 'Contact us', 'Sign up to newsletter', 'Join our Facebook (meta) private group', 'Welcome page', "What's new in this version"]
     for (const m of menus) {
-      if (m.label === 'Help') continue
       const labels = m.items.filter(i => i.type !== 'separator' && i.type !== 'label').map(i => i.label ?? i.command)
       const allowed = RO[m.label]
       expect(labels.filter(l => !allowed.includes(l!)), m.label).toEqual([])

@@ -1,5 +1,6 @@
 import { Activity, Suspense, useEffect, useLayoutEffect, useState } from 'react'
-import { useApp } from '../state/store'
+import { actions, useApp } from '../state/store'
+import type { AnalysisTab } from '../state/workspace'
 import { RepertoryView } from '../features/repertory/RepertoryView'
 import { ErrorBoundary } from '../ui/ErrorBoundary'
 import { lazyRetry } from '../ui/lazyRetry'
@@ -15,6 +16,7 @@ const RemedyView = lazyRetry(() => import('../features/mm/RemedyView'), m => m.R
 const PatientsView = lazyRetry(() => import('../features/patients/PatientsView'), m => m.PatientsView)
 const PatientView = lazyRetry(() => import('../features/patients/PatientView'), m => m.PatientView)
 const SearchView = lazyRetry(() => import('../features/search/SearchView'), m => m.SearchView)
+const MapsView = lazyRetry(() => import('../features/maps/MapsView'), m => m.MapsView)
 const FamiliesView = lazyRetry(() => import('../features/families/FamiliesView'), m => m.FamiliesView)
 
 /**
@@ -178,6 +180,9 @@ export function TabDeck({ activeTabId }: { activeTabId: string }) {
 export function TabHost({ tabId }: { tabId: string }) {
   const tab = useApp(s => s.tabs.find(t => t.id === tabId) ?? null)
   useEffect(preloadAnalysisWhenIdle, [])
+  // a window restored under its saved title takes its live title once shown (tabTitle.ts)
+  const restored = tab?.kind === 'analysis' && !!tab.restoredTitle
+  useEffect(() => { if (restored) actions.updateTab<AnalysisTab>(tabId, { restoredTitle: undefined }) }, [restored, tabId])
 
   // runs on mount and each time <Activity> shows the document again
   useEffect(() => {
@@ -197,6 +202,7 @@ export function TabHost({ tabId }: { tabId: string }) {
         {tab.kind === 'patient' && <PatientView tab={tab} />}
         {tab.kind === 'search' && <SearchView tab={tab} />}
         {tab.kind === 'families' && <FamiliesView tab={tab} />}
+        {tab.kind === 'maps' && <MapsView tab={tab} />}
       </Suspense>
     </ErrorBoundary>
   )

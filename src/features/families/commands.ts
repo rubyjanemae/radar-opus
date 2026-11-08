@@ -5,7 +5,7 @@ import { registerLazyDialog } from '../../shell/dialogs'
 import { registerRemedyFamilyProvider } from '../mm/ops'
 import { familiesIfLoaded, loadFamilies } from './api'
 import { systemLabel } from './model'
-import { activeFamiliesTab, applyFamilyFilter, clearFamilyFilter, FILTER_DIALOG, hasTargetCase, openFamilies, openFilterDialog, openRemedy, targetConsultationId } from './ops'
+import { activeFamiliesTab, applyFamilyFilter, clearFamilyFilter, FAMILY_SETS, FILTER_DIALOG, hasTargetCase, openFamilies, openFilterDialog, openRemedy, targetConsultationId } from './ops'
 import { viewBus } from './viewState'
 
 /* The families view keeps its selection on its tab, so commands read the store. */
@@ -49,6 +49,11 @@ export function register(_catalog: Catalog) {
       id: 'families.filter', title: 'Family filter…', category: 'Analysis', keywords: 'limit highlight family kingdom remedies analysis',
       enabled: hasTargetCase, run: () => openFilterDialog(selectedGroup() ? { groups: [selectedGroup()!] } : {}),
     },
+    // Analysis › Limit to a family › <classification>
+    ...FAMILY_SETS.map(f => ({
+      id: `families.limit.${f.id}`, title: f.label, category: 'Analysis', keywords: 'limit family kingdom remedies analysis filter',
+      enabled: hasTargetCase, run: () => openFilterDialog({ mode: 'limit' as const, tops: f.tops, title: f.label }),
+    })),
     {
       id: 'families.limitSelected', title: 'Limit analysis to selected family', category: 'Analysis', keywords: 'family filter restrict',
       enabled: () => !!selectedGroup() && hasTargetCase(), run: () => { const g = selectedGroup(); if (g) applyFamilyFilter([g], 'limit') },
@@ -75,6 +80,19 @@ export function register(_catalog: Catalog) {
     {
       id: 'families.find', title: 'Find family or remedy', category: 'Tools', keys: ['Mod+F', 'F2'], allowInInput: true, scope: '.fam-view',
       keywords: 'search families', enabled: inView, run: () => viewBus.emit('focusSearch'),
+    },
+    {
+      // Search menu > Family finder (RadarOpus): the families list with the caret in its search field
+      id: 'families.finder', title: 'Family finder', category: 'Search', keywords: 'find family kingdom remedy search families',
+      run: () => {
+        openFamilies()
+        let n = 0
+        const tick = () => {
+          if (document.querySelector('.fam-view')) { viewBus.emit('focusSearch'); return }
+          if (++n < 120) requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      },
     },
     { id: 'families.expandAll', title: 'Expand all families', category: 'Tools', enabled: inView, run: () => viewBus.emit('expandAll') },
     { id: 'families.collapseAll', title: 'Collapse all families', category: 'Tools', enabled: inView, run: () => viewBus.emit('collapseAll') },

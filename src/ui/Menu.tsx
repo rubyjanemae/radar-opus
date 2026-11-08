@@ -21,6 +21,11 @@ export type MenuItem =
       label?: string
       run?: () => void
       keys?: string
+      /**
+       * Shortcut text shown right-aligned in place of `keys` when it is not a key chord, e.g. a typed
+       * sequence like RadarOpus's "+1" (display only: not an aria-keyshortcuts value).
+       */
+      hint?: string
       disabled?: boolean
       checked?: boolean
       danger?: boolean
@@ -43,7 +48,7 @@ if (typeof window !== 'undefined') {
 /** Why a menu closed: callers restore focus for keyboard closes and after an item ran. */
 export type MenuCloseReason = 'escape' | 'tab' | 'select' | 'outside' | 'blur'
 
-interface Resolved { label: string; keys?: string; disabled: boolean; checked?: boolean; danger?: boolean; run?: () => void; submenu?: MenuItem[] }
+interface Resolved { label: string; keys?: string; hint?: string; disabled: boolean; checked?: boolean; danger?: boolean; run?: () => void; submenu?: MenuItem[] }
 
 /** Label, shortcut and state of a menu entry; the shortcut shown is never one the browser keeps for itself. */
 export function resolveMenuItem(item: MenuEntry): Resolved {
@@ -58,6 +63,7 @@ export function resolveMenuItem(item: MenuEntry): Resolved {
   return {
     label: label ?? cmd?.title ?? item.command ?? '',
     keys: item.keys !== undefined ? (isReserved(item.keys) ? undefined : item.keys) : displayKey(cmd?.keys),
+    hint: item.hint,
     disabled: item.disabled ?? (cmd ? !isEnabled(cmd) : !item.run && !item.submenu),
     checked: item.checked ?? cmd?.checked?.(),
     danger: item.danger,
@@ -85,10 +91,12 @@ interface MenuListProps {
   flipX?: number
   /** Menus opened at a button: its top edge, used to open the menu above it when it does not fit below. */
   flipY?: number
+  /** Extra class on the list (a menu with its own look, e.g. the toolbar's History popup). */
+  className?: string
 }
 
 /** Floating keyboard-navigable menu list; used for menubar dropdowns and context menus. */
-export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, label, nested, onDone, flipX, flipY, container }: MenuListProps) {
+export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, label, nested, onDone, flipX, flipY, container, className }: MenuListProps) {
   const ref = useRef<HTMLDivElement>(null)
   const baseId = useId()
   const itemId = (i: number) => `${baseId}-item-${i}`
@@ -161,7 +169,7 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
   const list = (
     <div
       ref={ref}
-      className="menu-list"
+      className={className ? `menu-list ${className}` : 'menu-list'}
       role="menu"
       aria-label={label}
       tabIndex={-1}
@@ -221,7 +229,7 @@ export function MenuList({ items, x, y, onClose, onNavigate, autoFocus = true, l
             {/* the check state is aria-checked and the shortcut aria-keyshortcuts: neither belongs in the name */}
             <span className="menu-check" aria-hidden="true">{r.checked ? '✓' : ''}</span>
             <span className="menu-text">{r.label}</span>
-            {r.submenu ? <span className="menu-arrow" aria-hidden="true">›</span> : r.keys ? <span className="menu-keys" aria-hidden="true">{formatKeys(r.keys)}</span> : null}
+            {r.submenu ? <span className="menu-arrow" aria-hidden="true">›</span> : r.hint ? <span className="menu-keys" aria-hidden="true">{r.hint}</span> : r.keys ? <span className="menu-keys" aria-hidden="true">{formatKeys(r.keys)}</span> : null}
           </div>
         )
       })}
@@ -264,7 +272,7 @@ const focusLost = () => { const a = document.activeElement; return !a || a === d
  * item, or by a click that leaves focus nowhere, focus returns to where it was or to the button, never to <body>.
  */
 export function useContextMenu() {
-  const [state, setState] = useState<{ x: number; y: number; flipY?: number; items: MenuItem[] } | null>(null)
+  const [state, setState] = useState<{ x: number; y: number; flipY?: number; items: MenuItem[]; className?: string } | null>(null)
   const restore = useRef<HTMLElement | null>(null)
   const trigger = useRef<HTMLElement | null>(null)
   const setExpanded = (v: boolean) => {
@@ -284,12 +292,15 @@ export function useContextMenu() {
       remember(e.currentTarget instanceof HTMLElement ? e.currentTarget : null)
       setState({ x: e.clientX, y: e.clientY, items })
     },
-    /** Open at an element (a menu button, or Shift+F10 / the ContextMenu key on a focused item). */
-    openAt(el: HTMLElement, items: MenuItem[]) {
+    /**
+     * Open at an element (a menu button, or Shift+F10 / the ContextMenu key on a focused item); with `at`,
+     * at that point instead (a popup that opens where the mouse clicked).
+     */
+    openAt(el: HTMLElement, items: MenuItem[], className?: string, at?: { x: number; y: number }) {
       const r = el.getBoundingClientRect()
       remember(el)
       setExpanded(true)
-      setState({ x: r.left + 12, y: r.bottom, flipY: r.top, items })
+      setState(at ? { x: at.x, y: at.y, items, className } : { x: r.left + 12, y: r.bottom, flipY: r.top, items, className })
     },
     close() { setExpanded(false); setState(null) },
     isOpen: state !== null,
@@ -299,6 +310,7 @@ export function useContextMenu() {
         x={state.x}
         y={state.y}
         flipY={state.flipY}
+        className={state.className}
         label="Context menu"
         onClose={reason => {
           setState(null)

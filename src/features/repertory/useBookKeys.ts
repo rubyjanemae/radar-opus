@@ -85,7 +85,9 @@ export function useBookKeys(tab: RepertoryTab, rep: Repertory, v: BookVirtual, c
     else if (k === 'ArrowLeft' && !mod) { const p = rep.parent(rubric); if (p >= 0) select(p, true) }
     else if ((k === 'PageDown' || k === 'PageUp') && !e.altKey && !mod) pageStep(k === 'PageDown' ? 1 : -1)
     else if ((k === 'Home' || k === 'End') && !e.altKey) select(k === 'Home' ? (mod ? 0 : start) : (mod ? rep.size - 1 : start + count - 1))
-    else if ((k === '+' || k === '=') && !mod && !e.altKey) ctx.openTakeBar(k)
+    // RadarOpus: `=` takes at once with the default options; `+` starts the mini-language (`+2`, `+1>3`, `+!`)
+    else if (k === '=' && !mod && !e.altKey) void takeRefs([rep.ref(rubric)], DEFAULT_TAKE)
+    else if (k === '+' && !mod && !e.altKey) ctx.openTakeBar(k)
     else if (k === 'ContextMenu' || (k === 'F10' && e.shiftKey)) ctx.openMenu(rubric)
     else if (/^[a-z]$/i.test(k) && !mod && !e.altKey) ctx.openChooser(k)
     else handled = false

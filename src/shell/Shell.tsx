@@ -11,11 +11,12 @@ import { ClipStrip, CLIP_STRIP_WIDTH } from './ClipStrip'
 import { chrome, useChrome } from './chrome'
 import { TabDeck } from './TabHost'
 import { tabTitle } from './tabTitle'
-import { Navigator as NavigatorView } from '../features/repertory/Navigator'
+import { TocPanel } from '../features/toc/TocPanel'
 import { ClipboardPanel as ClipboardPanelView } from '../features/clipboard/ClipboardPanel'
 import { CommandPalette } from '../features/command/CommandPalette'
 import { DEFAULT_LAYOUT } from '../state/workspace'
 import { DialogHost } from './DialogHost'
+import { HistoryPopup } from './HistoryPopup'
 import { preloadDialogs } from './dialogs'
 import { lazyRetry } from '../ui/lazyRetry'
 import { WorkspaceChrome as WorkspaceChromeView } from '../features/workspace/WorkspaceChrome'
@@ -27,7 +28,6 @@ import { chromeBackgroundMouseDown } from './focus'
 
 // The panes take no props: memo keeps shell re-renders (layout drags, window resizes) from re-rendering
 // them; each re-renders only on the store slices it subscribes to itself.
-const Navigator = memo(NavigatorView)
 const ClipboardPanel = memo(ClipboardPanelView)
 // the analysis preview dock (hidden by default) brings the analysis grid: its own chunk, loaded when shown
 const AnalysisDock = memo(lazyRetry(() => import('../features/analysis/AnalysisDock'), m => m.AnalysisDock))
@@ -164,7 +164,7 @@ export function Shell() {
       <div className="shell-main" onMouseDown={e => chromeBackgroundMouseDown(e, true)}>
         {layout.showTree && (
           <aside className="pane pane-left" style={{ width: tocWidth }} aria-label="Table of contents">
-            {panesMounted && <ErrorBoundary label="The table of contents"><Navigator /></ErrorBoundary>}
+            {panesMounted && <ErrorBoundary label="The table of contents"><TocPanel /></ErrorBoundary>}
             <Splitter
               orientation="vertical" label="Resize table of contents" value={tocWidth} min={MIN_TREE_WIDTH} max={Math.max(maxSide, tocWidth)}
               onChange={v => { if (chrome.get().tocExpanded) chrome.set({ tocExpanded: false }); actions.setLayout({ treeWidth: v }) }}
@@ -218,6 +218,7 @@ export function Shell() {
       <ErrorBoundary label="The status bar" compact><StatusBar /></ErrorBoundary>
       {paletteOpen && <ErrorBoundary label="The command palette" fallback={() => null} onError={e => { actions.setCommandPalette(false); actions.toast(`The command palette hit an error: ${e.message}`, 'error') }}><CommandPalette onClose={() => actions.setCommandPalette(false)} /></ErrorBoundary>}
       <SafeDialogHost />
+      <HistoryPopup />
       <ErrorBoundary label="The workspace chrome" fallback={() => null} onError={e => actions.toast(`The welcome tour hit an error: ${e.message}`, 'error')}><WorkspaceChrome /></ErrorBoundary>
       <Toasts />
     </div>

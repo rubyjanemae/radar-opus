@@ -193,6 +193,18 @@ describe('visibleRows', () => {
     const rows = visibleRows(fx, new Set(['o:x']), 'solanales')
     expect(rows.map(r => r.id)).toEqual(['k:a', 'o:x', 'f:x', 'f:y'])
   })
+  it('limits the tree to given top groups, at depth 0', () => {
+    const rows = visibleRows(fx, new Set(['o:x']), '', ['o:x', 'k:b'])
+    expect(rows.map(r => r.id)).toEqual(['o:x', 'f:x', 'f:y', 'k:b'])
+    expect(rows.map(r => r.depth)).toEqual([0, 1, 1, 0])
+    expect(visibleRows(fx, new Set(), 'rosa', ['o:x'])).toEqual([])
+    expect(visibleRows(fx, new Set(), 'conv', ['o:x']).map(r => [r.id, r.depth])).toEqual([['o:x', 0], ['f:y', 1]])
+  })
+
+  it('every Limit to a family classification names existing groups', async () => {
+    const { FAMILY_SETS } = await import('./ops')
+    for (const f of FAMILY_SETS) for (const t of f.tops) expect(idx.get(t), t).toBeTruthy()
+  })
 })
 
 describe('text matching', () => {

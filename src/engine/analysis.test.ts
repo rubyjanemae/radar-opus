@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { Grade } from '../data/types'
 import {
   abbrevKey, analyze, analyzeFamilies, applyGroups, classifyChapter, exclusionCode, explainTerm, FACTOR_NOTES, formatScore, gradeValue, qualityLight,
-  remedySizeFactor, resolveSymptom, rubricSizeWeight, smallRubricFactor, STRATEGIES,
+  remedySizeFactor, resolveSymptom, rubricSizeWeight, smallRubricFactor, STRATEGIES, RO_METHODS, strategyInfo,
 } from './analysis'
 import type { AnalysisResult, ChapterClass, RubricSource } from './analysis'
 import { DEFAULT_PARAMS, mergeParams, normalizeStrategy, symptomFlags } from './model'
@@ -82,7 +82,11 @@ describe('Prominence (RadarOpus scale, the default)', () => {
 
   it('is the default strategy', () => {
     expect(normalizeStrategy(undefined)).toBe('graded-prominence')
-    expect(STRATEGIES[0]).toMatchObject({ id: 'graded-prominence', name: 'Prominence' })
+    expect(strategyInfo('nope' as never)).toMatchObject({ id: 'graded-prominence', name: 'Prominence' })
+  })
+  it('lists RadarOpus\'s nine methods first, in its order and wording', () => {
+    expect(STRATEGIES.slice(0, RO_METHODS.length).map(s => s.id)).toEqual([...RO_METHODS])
+    expect(RO_METHODS.map(id => strategyInfo(id).name)).toEqual(['Sum of symptoms (sorted degrees)', 'Sum of degrees (sorted symptoms)', 'Sum of symptoms and degrees', 'Prominence', 'Small remedies', 'Small rubrics (SPF)', 'Small remedies and small rubrics', 'Sum of symptoms', 'Sum of degrees'])
   })
   it('a single rubric at intensity 1 scores 160 / 120 / 100 for grades 3 / 2 / 1, ties by abbreviation', () => {
     expect(out(run(1))).toEqual(['sulph 240', 'calc 160', 'caust 160', 'anac 120', 'acon 100', 'bell 100'])

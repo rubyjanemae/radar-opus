@@ -13,7 +13,7 @@ import * as ops from './ops'
 
 export const POTENCIES = ['6C', '12C', '30C', '200C', '1M', '10M', '50M', 'CM', 'LM1', 'LM2', 'LM3', 'LM4', 'LM5', 'LM6', '6X', '12X', 'Q']
 
-function TextField({ value, onCommit, label, className, multiline, rows, placeholder }: {
+export function TextField({ value, onCommit, label, className, multiline, rows, placeholder }: {
   value: string; onCommit: (v: string) => void; label: string; className?: string; multiline?: boolean; rows?: number; placeholder?: string
 }) {
   const { draft, setDraft, flush } = useDraft(value, onCommit)
@@ -249,7 +249,7 @@ export function Prescriptions({ consultation: c, prefillRemedy = null }: { consu
 }
 
 /** Follow-up evaluation of the previous prescription on the Glasgow Homeopathic Hospital Outcome Scale. */
-function ResponseCard({ consultation: c }: { consultation: Consultation }) {
+export function ResponseCard({ consultation: c }: { consultation: Consultation }) {
   const catalog = useCatalog()
   const all = useApp(s => s.consultations)
   const prev = useMemo(() => previousPrescription(consultationsOf(all, c.patientId), c), [all, c])

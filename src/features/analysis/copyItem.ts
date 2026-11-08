@@ -1,3 +1,4 @@
+import type { Symptom } from '../../engine/model'
 import { actions } from '../../state/store'
 
 /**
@@ -13,6 +14,10 @@ export interface CopyItem {
   text: string | null
   /** Toast after copying ("Copied symptom with 43 remedies"). */
   what: string
+  /** Edit › Delete selection: removes the symptom under the cursor from its clipboard (symptom labels only). */
+  remove?: () => void
+  /** Edit › Cut...: the symptom under the cursor and its clipboard (symptom labels only). */
+  cut?: { clipboardId: string; symptoms: Symptom[] }
 }
 
 interface Entry { el: () => HTMLElement | null; get: () => CopyItem | null }

@@ -20,6 +20,10 @@ interface Props {
   /** Groups checked initially. */
   groups?: string[]
   mode?: FilterMode
+  /** Show only these groups' subtrees (Analysis › Limit to a family › <classification>). */
+  tops?: string[]
+  /** Dialog title (default "Family filter"). */
+  title?: string
   onClose: () => void
 }
 
@@ -31,7 +35,7 @@ export function FamilyFilterDialog(props: Props) {
   const { index, error, retry } = useFamilies()
   if (!index) {
     return (
-      <Dialog title="Family filter" onClose={props.onClose} width={640}>
+      <Dialog title={props.title ?? 'Family filter'} onClose={props.onClose} width={640}>
         {error
           ? <div className="error-state" role="alert"><h3>Families could not be loaded</h3><pre>{error.message}</pre><button className="btn" onClick={retry}>Retry</button></div>
           : <div className="fam-skel" aria-busy="true">{Array.from({ length: 8 }, (_, i) => <div key={i} className="skeleton" style={{ width: `${45 + ((i * 29) % 40)}%`, height: 14 }} />)}</div>}
@@ -41,7 +45,7 @@ export function FamilyFilterDialog(props: Props) {
   return <Loaded {...props} index={index} />
 }
 
-function Loaded({ consultationId, groups, mode: initialMode, onClose, index }: Props & { index: FamilyIndex }) {
+function Loaded({ consultationId, groups, mode: initialMode, tops, title = 'Family filter', onClose, index }: Props & { index: FamilyIndex }) {
   const analysis = useApp(s => s.consultations[consultationId]?.analysis ?? null)
   const [preset] = useState(() => (groups ?? []).filter(g => index.get(g)))
   // the family groups behind the current limit / highlight (null: that filter is not made of families)
@@ -79,12 +83,14 @@ function Loaded({ consultationId, groups, mode: initialMode, onClose, index }: P
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     const s = new Set<string>()
     for (const set of [sel.limit, sel.highlight]) for (const g of set) for (const a of ancestorsOf(index, g)) s.add(a)
+    // a single classification opens on its families
+    for (const t of tops ?? []) if (index.get(t)) s.add(t)
     return s
   })
   const [query, setQuery] = useState('')
   const treeRef = useRef<HTMLDivElement>(null)
 
-  const rows = useMemo(() => visibleRows(index, expanded, query), [index, expanded, query])
+  const rows = useMemo(() => visibleRows(index, expanded, query, tops), [index, expanded, query, tops])
   const union = useMemo(() => index.union(checked), [index, checked])
   const ids = [...checked]
 
@@ -100,7 +106,7 @@ function Loaded({ consultationId, groups, mode: initialMode, onClose, index }: P
   })
 
   if (!analysis) {
-    return <Dialog title="Family filter" onClose={onClose}><div className="empty-state"><strong>This case no longer exists.</strong></div></Dialog>
+    return <Dialog title={title} onClose={onClose}><div className="empty-state"><strong>This case no longer exists.</strong></div></Dialog>
   }
 
   const MODES: FilterMode[] = ['limit', 'highlight']
@@ -150,7 +156,7 @@ function Loaded({ consultationId, groups, mode: initialMode, onClose, index }: P
 
   return (
     <Dialog
-      title="Family filter"
+      title={title}
       onClose={onClose}
       width={680}
       initialFocus=".fam-dlg-search input"

@@ -1,10 +1,14 @@
 import type { Catalog } from '../data/catalog'
 import { getCommand, isEnabled, registerCommands, runCommand } from '../commands/registry'
 import { actions, selectActiveTab, useApp } from '../state/store'
-import type { RepertoryTab } from '../state/workspace'
+import type { RepertoryTab, Tab } from '../state/workspace'
 import { chrome } from './chrome'
 import { returnFocusFromChrome } from './focus'
 import { activeDocumentElement } from './TabHost'
+import { setHistoryBook } from './history'
+import { openHistoryPopup } from './HistoryPopup'
+import { register as registerMenuCommands } from './menuCommands'
+import { canTakeScreenshot, takeScreenshot } from './screenshot'
 
 /**
  * Show or hide part of the window chrome; when the keyboard was in the part that goes away (or is
@@ -89,9 +93,30 @@ function stepCommand(dir: 'back' | 'forward') {
   }
 }
 
+/**
+ * View › "Go to the open … window" (RadarOpus): bring an open document of that kind to the front (the book
+ * last read for repertories, else the most recently opened one); disabled while none is open.
+ */
+function gotoWindow(id: string, title: string, keywords: string, match: (t: Tab) => boolean, prefer?: () => string | undefined) {
+  const target = () => {
+    const s = st()
+    const p = prefer?.()
+    if (p && s.tabs.some(t => t.id === p && match(t))) return p
+    return [...s.tabs].reverse().find(match)?.id
+  }
+  return {
+    id, title, category: 'View', keywords,
+    enabled: () => !!target(),
+    run: () => { const t = target(); if (t) { actions.activateTab(t); returnFocusFromChrome('body') } },
+  }
+}
+
 /** Window chrome commands (RadarOpus View / Window menus and the status strip links). */
 export function register(_catalog: Catalog) {
   void _catalog
+  registerMenuCommands()
+  // History follows the active book, else the one Back would return to
+  setHistoryBook(lastBook)
   useApp.subscribe(s => {
     const t = selectActiveTab(s)
     if (t?.kind === 'repertory') lastBookId = t.id
@@ -100,6 +125,11 @@ export function register(_catalog: Catalog) {
   registerCommands([
     stepCommand('back'),
     stepCommand('forward'),
+    {
+      // RadarOpus's brown popup: "Clear History", then the book's visit log (shell/history.ts)
+      id: 'view.history', title: 'History', category: 'View', keywords: 'history visited rubrics recent popup',
+      run: () => openHistoryPopup(),
+    },
     {
       id: 'view.toc', title: 'Table of contents', category: 'View', keys: ['Mod+F2', 'Mod+B'], allowInInput: true, keywords: 'toc navigator chapters repertories',
       checked: () => st().layout.showTree,
@@ -113,8 +143,17 @@ export function register(_catalog: Catalog) {
     {
       id: 'view.toolbars', title: 'Toolbars and clipboards', category: 'View', keywords: 'hide show toolbar clipboard strip chrome',
       checked: () => !chrome.get().hideBars,
-      run: () => toggleChrome('.toolbar, .clipstrip, .pane-right', () => chrome.set({ hideBars: !chrome.get().hideBars })),
+      // RadarOpus: hiding drops the toolbar, the left panel (table of contents / Patients list) and the
+      // clipboard strip so the document fills the window; showing restores the whole chrome
+      run: () => toggleChrome('.toolbar, .clipstrip, .pane-right, .pane-left', () => {
+        const show = chrome.get().hideBars
+        chrome.set({ hideBars: !show })
+        if (show !== st().layout.showTree) actions.setLayout({ showTree: show })
+      }),
     },
+    gotoWindow('view.gotoRepertory', 'Go to the open repertories window', 'book repertory tab', t => t.kind === 'repertory', () => lastBook()?.id),
+    gotoWindow('view.gotoReference', 'Go to the open references window', 'materia medica reference tab', t => t.kind === 'materia-medica' || t.kind === 'remedy'),
+    gotoWindow('view.gotoPatient', 'Go to the patient window', 'patient file tab', t => t.kind === 'patient'),
     {
       id: 'window.closeAll', title: 'Close all windows', category: 'View', keywords: 'close all tabs documents',
       enabled: () => st().tabs.some(t => !t.pinned),
@@ -127,6 +166,17 @@ export function register(_catalog: Catalog) {
         const id = PRINTERS.find(p => { const c = getCommand(p); return !!c && isEnabled(c) })
         if (id) runCommand(id)
         else window.print()
+      },
+    },
+    {
+      // the toolbar's Screenshot / Tools › Take a screenshot: the window saved as a PNG file
+      id: 'tools.screenshot', title: 'Take a screenshot', category: 'Tools', keywords: 'screenshot capture picture image png',
+      enabled: canTakeScreenshot,
+      run: () => {
+        takeScreenshot().then(
+          name => { if (name) actions.toast(`Screenshot saved as "${name}"`) },
+          (e: unknown) => actions.toast(`The screenshot failed: ${e instanceof Error ? e.message : String(e)}`, 'error'),
+        )
       },
     },
   ])

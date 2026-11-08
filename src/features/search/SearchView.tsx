@@ -502,7 +502,8 @@ function ResultsBody({ tab, rows: allRows, hitCount, hl, status, ms, busy, focus
     else if (e.key === 'Home') move(0)
     else if (e.key === 'End') move(rows.length - 1)
     else if (e.key === ' ') { if (r?.t === 'hit') selection.toggle(tab.id, rowRef(r)) }
-    else if ((e.key === '+' || e.key === '=') && !mod && !e.altKey) { if (targetRefs().length) setTakeBar(e.key) }
+    else if (e.key === '=' && !mod && !e.altKey) { const refs = targetRefs(); if (refs.length) takeRefs(refs, DEFAULT_TAKE) }
+    else if (e.key === '+' && !mod && !e.altKey) { if (targetRefs().length) setTakeBar(e.key) }
     else if (e.key === 'Enter') open(r, mod)
     else if (e.key === 'Backspace' && !mod && !e.altKey) {
       // back to the query, to refine it (the caret goes to the end)

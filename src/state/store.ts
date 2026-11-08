@@ -656,13 +656,15 @@ export const actions = {
 
   // clipboards
   setActiveClipboard(id: string) { set(() => ({ activeClipboardId: id, selectedSymptomIds: [] })) },
-  addClipboard(): string | null {
+  /** inAnalysis false: the new clipboard stays out of the analysis (the clipboard strip's empty slots). */
+  addClipboard(opts: { inAnalysis?: boolean } = {}): string | null {
     const s = get()
     const c = selectActiveConsultation(s)
     if (!c || c.clipboards.length >= MAX_CLIPBOARDS) return null
     const cb = newClipboard(c.clipboards.length)
+    const join = opts.inAnalysis !== false
     const ok = mutateCase('Add clipboard', st => {
-      const patch = updateConsultation(st, c.id, x => ({ ...x, clipboards: [...x.clipboards, cb], analysis: { ...x.analysis, clipboardIds: [...x.analysis.clipboardIds, cb.id] } }))
+      const patch = updateConsultation(st, c.id, x => ({ ...x, clipboards: [...x.clipboards, cb], analysis: join ? { ...x.analysis, clipboardIds: [...x.analysis.clipboardIds, cb.id] } : x.analysis }))
       return patch && { ...patch, activeClipboardId: cb.id, selectedSymptomIds: [] }
     })
     return ok ? cb.id : null
@@ -893,5 +895,6 @@ function sameTarget(a: Tab, b: Tab): boolean {
     case 'patient': return a.patientId === (b as typeof a).patientId
     case 'search': return false
     case 'families': return true
+    case 'maps': return true
   }
 }

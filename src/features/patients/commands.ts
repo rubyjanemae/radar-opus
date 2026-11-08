@@ -18,7 +18,9 @@ export function register(catalog: Catalog) {
   const hasConsultation = () => !!ops.contextConsultationId()
 
   registerCommands([
-    { id: 'patients.open', title: 'Patients', category: 'File', keys: ['Mod+3', 'Alt+3'], allowInInput: true, keywords: 'patient list database toc', run: () => ops.openPatients() },
+    { id: 'patients.open', title: 'Patients', category: 'File', keys: ['Mod+3', 'Alt+3'], allowInInput: true, keywords: 'patient list database toc open list of patients', checked: ops.patientsPanelShown, run: () => ops.togglePatients() },
+    // Search menu > Search in the patient file (RadarOpus): the patients list with the caret in "Look for patient"
+    { id: 'patients.search', title: 'Search in the patient file', category: 'Search', keywords: 'find look for patient name consultation', run: () => ops.openPatients({ focus: 'search' }) },
     { id: 'patient.new', title: 'New patient…', category: 'File', keys: ['Mod+Alt+N'], allowInInput: true, keywords: 'create add patient', run: ops.newPatient },
     {
       id: 'consultation.new', title: 'New consultation', category: 'File', keys: ['Mod+Alt+C'], allowInInput: true, enabled: hasPatient,
@@ -35,6 +37,7 @@ export function register(catalog: Catalog) {
     { id: 'patient.duplicate', title: 'Duplicate patient', category: 'File', enabled: hasPatient, run: () => { const id = ops.contextPatientId(); if (id) ops.duplicate(id) } },
     { id: 'patient.delete', title: 'Delete patient…', category: 'File', enabled: hasPatient, keywords: 'remove erase', run: () => { const id = ops.contextPatientId(); if (id) ops.confirmDeletePatient(id) } },
     { id: 'file.exportCase', title: 'Export case file…', category: 'File', enabled: hasPatient, keywords: 'patient json save download', run: () => ops.exportCase() },
+    { id: 'file.sendClificol', title: 'Send current patient to Clificol', category: 'File', enabled: hasPatient, keywords: 'clificol send upload outcomes case', run: () => void ops.sendToClificol() },
     { id: 'file.importCase', title: 'Import case file…', category: 'File', keywords: 'patient json open load', run: () => ops.importCase() },
     { id: 'case.report', title: 'Case report…', category: 'File', enabled: hasConsultation, keywords: 'print pdf summary', run: () => ops.openReport() },
     {

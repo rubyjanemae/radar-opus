@@ -6,6 +6,8 @@ import type { Weight } from '../../engine/model'
 import { DEFAULT_TAKE, describeTake } from './take'
 import type { TakeOptions } from './take'
 import { clipboardTitle, existingSymptom, refLabel, resolve, subtreeRefs, takeRefs } from './ops'
+import { CancelBox, Tick } from './FindDialog'
+import './find.css'
 
 const GROUPS = 'abdefghijklmnopqrtuvwyz'.split('')
 
@@ -48,8 +50,9 @@ export function TakeOptionsDialog({ onClose, refs = [] }: { onClose: () => void;
       title="Take with options" onClose={onClose} width={500} initialFocus={`input[name="rtake-w"][value="${o.weight}"]`}
       footer={<>
         <span className="rtake-summary">{describeTake(o)}</span>
-        <button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={submit} disabled={!refs.length}>{already ? 'Update' : 'Take'}</button>
+        {/* RadarOpus window buttons, as in the Navigation window: the default action with a green tick, then Cancel */}
+        <button className="rfind-btn rfind-default" onClick={submit} disabled={!refs.length}><Tick /> {already ? 'Update' : 'Take'}</button>
+        <button className="rfind-btn" onClick={onClose}><CancelBox /> Cancel</button>
       </>}
     >
       <form

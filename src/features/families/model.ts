@@ -161,17 +161,20 @@ export function matches(text: string, query: string): boolean {
  * Visible rows of the tree. Without a query: DFS over expanded nodes.
  * With a query: matching groups plus all their ancestors, fully expanded (collapsing is still honoured for matches' own children).
  */
-export function visibleRows(index: FamilyIndex, expanded: ReadonlySet<string>, query = ''): TreeRow[] {
+export function visibleRows(index: FamilyIndex, expanded: ReadonlySet<string>, query = '', tops?: readonly string[]): TreeRow[] {
   const rows: TreeRow[] = []
   const q = query.trim()
+  // `tops`: show only these groups (and their descendants) as the tree's top level
+  const starts = tops?.length ? tops.filter(t => index.get(t)) : index.roots
+  const base = (id: string) => (tops?.length ? index.get(index.get(id)!.path.find(p => starts.includes(p))!)!.depth : 0)
   if (!q) {
-    const walk = (id: string) => {
+    const walk = (id: string, off: number) => {
       const n = index.get(id)!
       const exp = expanded.has(id)
-      rows.push({ id, depth: n.depth, hasChildren: n.children.length > 0, expanded: exp, match: false })
-      if (exp) for (const c of n.children) walk(c)
+      rows.push({ id, depth: n.depth - off, hasChildren: n.children.length > 0, expanded: exp, match: false })
+      if (exp) for (const c of n.children) walk(c, off)
     }
-    for (const r of index.roots) walk(r)
+    for (const r of starts) walk(r, base(r))
     return rows
   }
   const hit = new Set<string>()
@@ -182,18 +185,18 @@ export function visibleRows(index: FamilyIndex, expanded: ReadonlySet<string>, q
       for (const p of n.path) keep.add(p)
     }
   }
-  const walk = (id: string) => {
+  const walk = (id: string, off: number) => {
     const n = index.get(id)!
     const isHit = hit.has(id)
     const kids = n.children.filter(c => keep.has(c))
     // ancestors of hits open automatically; a hit without matching descendants shows its children only when expanded
     const exp = kids.length > 0 || (isHit && expanded.has(id))
-    rows.push({ id, depth: n.depth, hasChildren: n.children.length > 0, expanded: exp && (kids.length > 0 || isHit), match: isHit })
+    rows.push({ id, depth: n.depth - off, hasChildren: n.children.length > 0, expanded: exp && (kids.length > 0 || isHit), match: isHit })
     if (!exp) return
     const show = isHit && expanded.has(id) ? n.children : kids
-    for (const c of show) walk(c)
+    for (const c of show) walk(c, off)
   }
-  for (const r of index.roots) if (keep.has(r)) walk(r)
+  for (const r of starts) if (keep.has(r)) walk(r, base(r))
   return rows
 }
 

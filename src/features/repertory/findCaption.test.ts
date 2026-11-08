@@ -36,3 +36,13 @@ describe('otherInitials', () => {
     expect(otherInitials(['abc', '3 days', 'Über', '(x)', '3rd', 'zed'])).toEqual(['3', 'ü', '('])
   })
 })
+
+describe('chapterShownName', () => {
+  it('puts male / female first, as the tile caption reads, so type-ahead matches the caption', async () => {
+    const { chapterShownName } = await import('./findCaption')
+    expect(chapterShownName('Genitalia male')).toBe('male Genitalia')
+    expect(chapterShownName('Genitalia  female')).toBe('female Genitalia')
+    expect(chapterShownName('Mind')).toBe('Mind')
+    expect(chapterCaption('Genitalia male')).toBe('MALE GE.')
+  })
+})

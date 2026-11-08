@@ -515,7 +515,7 @@ test('F4 results: Enter focuses the first result, + take bar takes like the book
   await page.keyboard.press('Space')
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('Space')
-  await page.keyboard.press('=')
+  await page.keyboard.press('+')
   await expect(bar).toContainText('2 selected rubrics')
   await page.keyboard.type('1>2')
   await page.keyboard.press('Enter')
